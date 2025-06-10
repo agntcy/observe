@@ -8,7 +8,6 @@ IOA observability SDK for your multi-agentic application.
 - [Usage](#usage)
 - [Features](#features)
 - [Contributing](#contributing)
-- [License](#license)
 
 ## Installation
 
