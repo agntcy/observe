@@ -1,0 +1,49 @@
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
+# SPDX-License-Identifier: Apache-2.0
+
+---
+name: sdk-release-python
+
+on:
+  push:
+    tags:
+      - 'sdk-v*'
+  workflow_dispatch:  # Allow manual triggering of the workflow
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-sdk-wheel:
+    name: SDK Python wheel
+    uses: ./.github/workflows/reusable-python-build-wheel.yaml
+
+  pypi-publish:
+    name: Upload release to PyPI
+    runs-on: ubuntu-latest
+    needs:
+      - build-sdk-wheel
+    if: |
+      always() &&
+      (needs.build-sdk-wheel.result == 'skipped' || needs.build-sdk-wheel.result == 'success')
+    environment: pypi
+    permissions:
+      # IMPORTANT: this permission is mandatory for Trusted Publishing
+      id-token: write
+      contents: read
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: ./dist
+
+      - name: Show files
+        run: ls -l ./dist
+
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: ./dist

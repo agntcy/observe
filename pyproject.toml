@@ -1,0 +1,90 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = "ioa-observe-sdk"
+version = "1.0.0"
+description = "IOA Observability SDK"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+        "aiohappyeyeballs==2.4.8",
+        "aiohttp==3.11.18",
+        "aiosignal==1.3.2",
+        "annotated-types==0.7.0",
+        "anyio==4.8.0",
+        "async-timeout==4.0.3",
+        "attrs==25.1.0",
+        "backoff==2.2.1",
+        "certifi==2025.1.31",
+        "charset-normalizer==3.4.1",
+        "colorama==0.4.6",
+        "Deprecated==1.2.18",
+        "distro==1.9.0",
+        "exceptiongroup==1.2.2",
+        "frozenlist==1.5.0",
+        "googleapis-common-protos==1.69.0",
+        "grpcio==1.70.0",
+        "h11==0.16.0",
+        "httpcore==1.0.9",
+        "httpx==0.28.1",
+        "idna==3.10",
+        "importlib_metadata==8.5.0",
+        "Jinja2==3.1.6",
+        "jiter==0.8.2",
+        "MarkupSafe==3.0.2",
+        "monotonic==1.6",
+        "multidict==6.1.0",
+        "openai==1.75.0",
+        "opentelemetry-api==1.33.1",
+        "opentelemetry-distro",
+        "opentelemetry-exporter-otlp==1.33.1",
+        "opentelemetry-exporter-otlp-proto-common==1.33.1",
+        "opentelemetry-exporter-otlp-proto-grpc==1.33.1",
+        "opentelemetry-exporter-otlp-proto-http==1.33.1",
+        "opentelemetry-instrumentation",
+        "opentelemetry-instrumentation-logging==0.54b1",
+        "opentelemetry-instrumentation-openai==0.40.2",
+        "opentelemetry-instrumentation-llamaindex==0.40.2",
+        "opentelemetry-instrumentation-ollama==0.40.2",
+        "opentelemetry-instrumentation-langchain==0.40.2",
+        "opentelemetry-instrumentation-threading==00.54b1",
+        "opentelemetry-instrumentation-urllib3==0.54b1",
+        "opentelemetry-proto==1.33.1",
+        "opentelemetry-sdk==1.33.1",
+        "opentelemetry-semantic-conventions==0.54b1",
+        "opentelemetry-semantic-conventions-ai==0.4.5",
+        "opentelemetry-util-http==0.54b1",
+        "packaging==24.2",
+        "propcache==0.3.0",
+        "protobuf==5.29.3",
+        "pydantic==2.10.6",
+        "pydantic_core==2.27.2",
+        "python-dateutil==2.9.0.post0",
+        "regex==2024.11.6",
+        "requests==2.32.3",
+        "six==1.17.0",
+        "sniffio==1.3.1",
+        "tenacity==9.0.0",
+        "tiktoken==0.9.0",
+        "tqdm==4.67.1",
+        "typing_extensions==4.12.2",
+        "urllib3==2.3.0",
+        "wrapt==1.17.2",
+        "yarl==1.18.3",
+        "zipp==3.21.0",
+        "langgraph==0.4.1",
+        "langchain==0.3.25",
+        "langchain-openai==0.3.21",
+        "opentelemetry-instrumentation-requests",
+        "opentelemetry-instrumentation-transformers>=0.40.2",
+        "opentelemetry-instrumentation-crewai>=0.40.2",
+        "llama-index-utils-workflow>=0.3.1",
+        "pytest",
+        "pytest-vcr"
+]
+
+[tool.setuptools.packages.find]
+include = ["ioa_observe*"]
