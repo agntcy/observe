@@ -1,3 +1,6 @@
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
+# SPDX-License-Identifier: Apache-2.0
+
 from enum import Enum
 
 OBSERVE_SPAN_KIND = "ioa_observe.span.kind"

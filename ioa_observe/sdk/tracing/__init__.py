@@ -1,3 +1,6 @@
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
+# SPDX-License-Identifier: Apache-2.0
+
 from ioa_observe.sdk.tracing.context_manager import get_tracer
 from ioa_observe.sdk.tracing.tracing import (
     set_workflow_name,
