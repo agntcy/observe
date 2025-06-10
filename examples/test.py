@@ -1,12 +1,14 @@
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
+# SPDX-License-Identifier: Apache-2.0
 
-from llama_index.core.workflow import StopEvent, Workflow, StartEvent, step, \
-    Event
+from llama_index.core.workflow import StopEvent, Workflow, StartEvent, step, Event
 from llama_index.llms.openai import OpenAI
 
 from ioa_observe.sdk import Observe
 from ioa_observe.sdk.decorators import agent, graph
 
 Observe.init("joke_workflow", api_endpoint="http://localhost:4318")
+
 
 class JokeEvent(Event):
     joke: str
@@ -33,6 +35,7 @@ class JokeFlow(Workflow):
         response = await self.llm.acomplete(prompt)
         return StopEvent(result=str(response))
 
+
 async def main():
     workflow = JokeFlow(timeout=60, verbose=False)
     result = await workflow.run(topic="pirates")
@@ -41,4 +44,5 @@ async def main():
 
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(main())

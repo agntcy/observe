@@ -1,3 +1,7 @@
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
+# SPDX-License-Identifier: Apache-2.0
+
+
 def topology_dynamism(graph):
     total_edges = len(graph["edges"])
     conditional_edges = sum(1 for edge in graph["edges"] if edge["conditional"])

@@ -1,3 +1,6 @@
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
+# SPDX-License-Identifier: Apache-2.0
+
 from opentelemetry.metrics import get_meter
 from typing import Any, Dict, Optional
 import re

@@ -1,3 +1,6 @@
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
+# SPDX-License-Identifier: Apache-2.0
+
 import json
 from typing import (
     Any,
@@ -72,7 +75,9 @@ class TestStartAsCurrentSpanContextManager:
             chain_span.set_attribute(OBSERVE_ENTITY_INPUT, "plain-text-input")
             chain_span.set_attribute(OBSERVE_ENTITY_OUTPUT, "plain-text-output")
             chain_span.set_attribute("status", Status(StatusCode.OK))
-            chain_span.set_attribute(OBSERVE_SPAN_KIND, ObserveSpanKindValues.AGENT.value)
+            chain_span.set_attribute(
+                OBSERVE_SPAN_KIND, ObserveSpanKindValues.AGENT.value
+            )
 
         spans = in_memory_span_exporter.get_finished_spans()
         assert len(spans) == 1
@@ -100,7 +105,9 @@ class TestStartAsCurrentSpanContextManager:
                 OBSERVE_ENTITY_INPUT,
                 json.dumps({"input-key": "input-value"}),
             )
-            chain_span.set_attribute(OBSERVE_SPAN_KIND, ObserveSpanKindValues.AGENT.value)
+            chain_span.set_attribute(
+                OBSERVE_SPAN_KIND, ObserveSpanKindValues.AGENT.value
+            )
             chain_span.set_attribute(
                 OBSERVE_ENTITY_OUTPUT,
                 json.dumps({"output-key": "output-value"}),
@@ -136,7 +143,9 @@ class TestStartAsCurrentSpanContextManager:
             agent_span.set_attribute(OBSERVE_ENTITY_INPUT, "plain-text-input")
             agent_span.set_attribute(OBSERVE_ENTITY_OUTPUT, "plain-text-output")
             agent_span.set_attribute("status", Status(StatusCode.OK))
-            agent_span.set_attribute(OBSERVE_SPAN_KIND, ObserveSpanKindValues.AGENT.value)
+            agent_span.set_attribute(
+                OBSERVE_SPAN_KIND, ObserveSpanKindValues.AGENT.value
+            )
 
         spans = in_memory_span_exporter.get_finished_spans()
         assert len(spans) == 1
