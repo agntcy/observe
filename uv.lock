@@ -162,11 +162,11 @@ wheels = [
 
 [[package]]
 name = "async-timeout"
-version = "5.0.1"
+version = "4.0.3"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a5/ae/136395dfbfe00dfc94da3f3e136d0b13f394cba8f4841120e34226265780/async_timeout-5.0.1.tar.gz", hash = "sha256:d9321a7a3d5a6a5e187e824d2fa0793ce379a202935782d555d6e9d2735677d3", size = 9274, upload-time = "2024-11-06T16:41:39.6Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/87/d6/21b30a550dafea84b1b8eee21b5e23fa16d010ae006011221f33dcd8d7f8/async-timeout-4.0.3.tar.gz", hash = "sha256:4640d96be84d82d02ed59ea2b7105a0f7b33abe8703703cd0ab0bf87c427522f", size = 8345, upload-time = "2023-08-10T16:35:56.907Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fe/ba/e2081de779ca30d473f21f5b30e0e737c438205440784c7dfc81efc2b029/async_timeout-5.0.1-py3-none-any.whl", hash = "sha256:39e3809566ff85354557ec2398b55e096c8364bacac9405a7a1fa429e77fe76c", size = 6233, upload-time = "2024-11-06T16:41:37.9Z" },
+    { url = "https://files.pythonhosted.org/packages/a7/fa/e01228c2938de91d47b307831c62ab9e4001e747789d0b05baf779a6488c/async_timeout-4.0.3-py3-none-any.whl", hash = "sha256:7405140ff1230c310e51dc27b3145b9092d659ce68ff733fb0cefe3ee42be028", size = 5721, upload-time = "2023-08-10T16:35:55.203Z" },
 ]
 
 [[package]]
@@ -705,7 +705,7 @@ wheels = [
 
 [[package]]
 name = "ioa-observe-sdk"
-version = "0.0.1"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohappyeyeballs" },
@@ -732,6 +732,8 @@ dependencies = [
     { name = "importlib-metadata" },
     { name = "jinja2" },
     { name = "jiter" },
+    { name = "langchain" },
+    { name = "langchain-openai" },
     { name = "langgraph" },
     { name = "llama-index-utils-workflow" },
     { name = "markupsafe" },
@@ -789,7 +791,7 @@ requires-dist = [
     { name = "aiosignal", specifier = "==1.3.2" },
     { name = "annotated-types", specifier = "==0.7.0" },
     { name = "anyio", specifier = "==4.8.0" },
-    { name = "async-timeout", specifier = "==5.0.1" },
+    { name = "async-timeout", specifier = "==4.0.3" },
     { name = "attrs", specifier = "==25.1.0" },
     { name = "backoff", specifier = "==2.2.1" },
     { name = "certifi", specifier = "==2025.1.31" },
@@ -808,6 +810,8 @@ requires-dist = [
     { name = "importlib-metadata", specifier = "==8.5.0" },
     { name = "jinja2", specifier = "==3.1.6" },
     { name = "jiter", specifier = "==0.8.2" },
+    { name = "langchain", specifier = "==0.3.25" },
+    { name = "langchain-openai", specifier = "==0.3.21" },
     { name = "langgraph", specifier = "==0.4.1" },
     { name = "llama-index-utils-workflow", specifier = ">=0.3.1" },
     { name = "markupsafe", specifier = "==3.0.2" },
@@ -1049,6 +1053,25 @@ wheels = [
 ]
 
 [[package]]
+name = "langchain"
+version = "0.3.25"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "async-timeout", marker = "python_full_version < '3.11'" },
+    { name = "langchain-core" },
+    { name = "langchain-text-splitters" },
+    { name = "langsmith" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "requests" },
+    { name = "sqlalchemy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fc/f9/a256609096a9fc7a1b3a6300a97000091efabdf21555a97988f93d4d9258/langchain-0.3.25.tar.gz", hash = "sha256:a1d72aa39546a23db08492d7228464af35c9ee83379945535ceef877340d2a3a", size = 10225045, upload-time = "2025-05-02T18:39:04.353Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ed/5c/5c0be747261e1f8129b875fa3bfea736bc5fe17652f9d5e15ca118571b6f/langchain-0.3.25-py3-none-any.whl", hash = "sha256:931f7d2d1eaf182f9f41c5e3272859cfe7f94fc1f7cef6b3e5a46024b4884c21", size = 1011008, upload-time = "2025-05-02T18:39:02.21Z" },
+]
+
+[[package]]
 name = "langchain-core"
 version = "0.3.64"
 source = { registry = "https://pypi.org/simple" }
@@ -1064,6 +1087,32 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/58/40/89a80157f495d4adc9e5e770171806e3231600647f4ca0e89bdf743702ff/langchain_core-0.3.64.tar.gz", hash = "sha256:71b51bf77003eb57e74b8fa2a84ac380e24aa7357f173b51645c5834b9fc0d62", size = 558483, upload-time = "2025-06-05T21:27:10.817Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c3/43/94b486eeb778443887e4eb76326e704ee0c6244f5fab6a46686e09968e9a/langchain_core-0.3.64-py3-none-any.whl", hash = "sha256:e844c425329d450cb3010001d86b61fd59a6a17691641109bae39322c85e27dd", size = 438113, upload-time = "2025-06-05T21:27:07.981Z" },
+]
+
+[[package]]
+name = "langchain-openai"
+version = "0.3.21"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "langchain-core" },
+    { name = "openai" },
+    { name = "tiktoken" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9c/2b/92f2fe18265bea38c456ea75cb6a38ba7d0f4d1bccb4220de616771b26a1/langchain_openai-0.3.21.tar.gz", hash = "sha256:470126f54b754b55a421bd0ffcb53671355700b42f0689a80187d53df20c6759", size = 545107, upload-time = "2025-06-06T15:48:09.47Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/73/c0/bded8320fb0bbaeb3383fa8a45c287b95e153566f4ba2b749a67074090e5/langchain_openai-0.3.21-py3-none-any.whl", hash = "sha256:9d1f447af2e15d5d6b7e0c5552052e08d1dd4aa1c9b537bcde47534792a7f244", size = 65211, upload-time = "2025-06-06T15:48:08.4Z" },
+]
+
+[[package]]
+name = "langchain-text-splitters"
+version = "0.3.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "langchain-core" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e7/ac/b4a25c5716bb0103b1515f1f52cc69ffb1035a5a225ee5afe3aed28bf57b/langchain_text_splitters-0.3.8.tar.gz", hash = "sha256:116d4b9f2a22dda357d0b79e30acf005c5518177971c66a9f1ab0edfdb0f912e", size = 42128, upload-time = "2025-04-04T14:03:51.521Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8b/a3/3696ff2444658053c01b6b7443e761f28bb71217d82bb89137a978c5f66f/langchain_text_splitters-0.3.8-py3-none-any.whl", hash = "sha256:e75cc0f4ae58dcf07d9f18776400cf8ade27fadd4ff6d264df6278bb302f6f02", size = 32440, upload-time = "2025-04-04T14:03:50.6Z" },
 ]
 
 [[package]]
