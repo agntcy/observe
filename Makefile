@@ -1,3 +1,6 @@
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
+# SPDX-License-Identifier: Apache-2.0
+
 # Check Make version (we need at least GNU Make 3.82)
 ifeq ($(filter undefine,$(value .FEATURES)),)
 $(error Unsupported Make version. \
