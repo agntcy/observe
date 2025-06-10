@@ -1,3 +1,7 @@
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
+# SPDX-License-Identifier: Apache-2.0
+
+
 def cameltosnake(camel_string: str) -> str:
     if not camel_string:
         return ""
