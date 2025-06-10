@@ -12,12 +12,11 @@ IOA observability SDK for your multi-agentic application.
 
 ## Installation
 
-To install the package via internal Artifactory, you need to have the following prerequisites:
+To install the package via PyPI, simply run:
 
-- Go to https://artifactory.devhub-cloud.cisco.com/ and follow the instructions to generate a `token` for the `outshift-pypi` repository
-- The username is your Cisco username, and the password is the token we issued above.
-- Run `ARTIFACTORY_USER=<your-cec-id> ARTIFACTORY_PASSWORD=<generated-token> make install-dependencies`
-
+```bash
+pip install ioa_observe_sdk
+```
 
 Alternatively, to download the SDK from git, you could also use the following command. Ensure you have `uv` installed in your environment.
 
