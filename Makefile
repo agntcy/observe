@@ -100,4 +100,4 @@ test: # Run all unit tests.
 
 install-dependencies: check-env
 > echo "Installing dependencies..."
-> uv pip install observe-sdk --index="https://${ARTIFACTORY_USER}:${ARTIFACTORY_PASSWORD}@https://artifactory.devhub-cloud.cisco.com/artifactory/api/pypi/outshift-pypi/simple"
+> uv pip install ioa_observe_sdk
