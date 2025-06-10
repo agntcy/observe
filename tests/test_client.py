@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
-from ioa_observe.sdk import Client, KVStore, kv_store
+from ioa_observe.sdk.client import Client, KVStore, kv_store
 
 
 def client_initializes_correctly_with_valid_api_key():
