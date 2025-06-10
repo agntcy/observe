@@ -14,7 +14,7 @@ Before getting started:
    ```
 3. Initialize Observe with your service name and Otel collector endpoint:
    ```python
-   from observe.sdk import Observe
+   from ioa_observe.sdk import Observe
    import os
    Observe.init("your_service_name", api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
    ```
@@ -22,7 +22,7 @@ Before getting started:
 ## Core SDK Components
 ### Key Decorators
 ```
-@graph_decorator(name="graph_name"): Instruments LangGraph state graphs for observability
+@graph(name="graph_name"): Instruments LangGraph state graphs for observability
 @agent(name="agent_name"): Tracks individual agent nodes and activities
 @tool(name="tool_name"): Monitors tool usage and performance
 @process_slim_msg("agent_name"): Instruments SLIM message processing for inter-agent communication
@@ -32,7 +32,7 @@ Session Management - Critical Entry Point
 ⚠️ IMPORTANT: session_start() MUST be called at the entry point of execution in Multi-Agentic Systems.
 
 ```python
-from observe.sdk.tracing import session_start
+from ioa_observe.sdk.tracing import session_start
 
 def main():
     load_environment_variables()
@@ -57,7 +57,7 @@ LangGraph is a framework for building stateful, multi-agent applications. Here's
 Use the `@agent` decorator for individual agents:
 
 ```python
-from observe.sdk.decorators import agent
+from ioa_observe.sdk.decorators import agent
 from langchain_core.messages import HumanMessage
 
 @agent(name="processing_agent")
@@ -75,7 +75,7 @@ def processing_node(state: GraphState) -> Dict[str, Any]:
 Use the `@graph` decorator for the entire agent graph:
 
 ```python
-from observe.sdk.decorators import graph
+from ioa_observe.sdk.decorators import graph
 from langgraph.graph import StateGraph, START, END
 
 @graph(name="multi_agent_graph")
@@ -99,7 +99,7 @@ def build_graph():
 Use the `@tool` decorator to track tool operations:
 
 ```python
-from observe.sdk.decorators import tool
+from ioa_observe.sdk.decorators import tool
 
 @tool(name="Python REPL tool")
 def python_repl_tool(code: Annotated[str, "The python code to execute"]):
@@ -121,7 +121,7 @@ LlamaIndex supports two patterns: function-based and class-based agents.
 Decorate individual tool functions:
 
 ```python
-from observe.sdk.decorators import tool
+from ioa_observe.sdk.decorators import tool
 
 @tool(name="multiply")
 def multiply(a: float, b: float) -> float:
@@ -139,7 +139,7 @@ def add(a: float, b: float) -> float:
 Decorate agent classes:
 
 ```python
-from observe.sdk.decorators import agent
+from ioa_observe.sdk.decorators import agent
 from llama_index.core.agent.workflow import FunctionAgent
 
 @agent(name="AgentOne")
@@ -162,7 +162,7 @@ class AgentOne(FunctionAgent):
 Decorate workflow classes with both `@graph` and `@agent`:
 
 ```python
-from observe.sdk.decorators import graph, agent
+from ioa_observe.sdk.decorators import graph, agent
 from llama_index.core.agent.workflow import AgentWorkflow
 
 @graph(name="multi_agent_workflow")
@@ -191,7 +191,7 @@ Implementing the Supervisor Pattern
 Step 1: Initialize Observe
 
 ```python
-from observe.sdk import Observe
+from ioa_observe.sdk import Observe
 import os
 Observe.init("moderator-agent", api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
 ```
@@ -200,7 +200,7 @@ Step 2: Create Individual Specialized Agents
 Decorate each agent with the `@agent` decorator to track its activities:
 
 ```python
-from observe.sdk.decorators import agent
+from ioa_observe.sdk.decorators import agent
 
 @agent(name="ChatbotAgent")
 class ChatbotAgent:
@@ -218,7 +218,7 @@ The `get_agents` method initializes and returns the specialized agents in a list
 2. Or if 'moderator' doesn't exist, we assume all agents are connected to every other agent, which is a fully connected topology.
 
 ```python
-from observe.sdk.decorators import graph
+from ioa_observe.sdk.decorators import graph
 
 class SupervisorAgent:
     def __init__(self):
@@ -258,7 +258,7 @@ class SupervisorAgent:
 When you have a class that represents both an individual agent and manages a complete workflow graph, you need both decorators to capture different aspects:
 
 ```python
-@graph_decorator(name="multi_agent_workflow_graph")  # Captures workflow structure
+@graph(name="multi_agent_workflow_graph")  # Captures workflow structure
 @agent(name="multi_agent_workflow")                  # Tracks this as an agent entity
 class MultiAgentWorkflow(AgentWorkflow):
     """This class IS an agent but MANAGES a graph"""

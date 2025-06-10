@@ -14,7 +14,7 @@ from opentelemetry.semconv_ai import SpanAttributes
 from opentelemetry.trace import Status, StatusCode, Tracer, TracerProvider
 
 from ioa_observe.sdk import Observe
-from ioa_observe.sdk import agent, workflow, tool
+from ioa_observe.sdk.decorators import agent, workflow, tool
 from ioa_observe.sdk.tracing.manual import track_llm_call, LLMMessage
 from ioa_observe.sdk.utils.const import (
     ObserveSpanKindValues,
