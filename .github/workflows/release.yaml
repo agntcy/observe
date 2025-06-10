@@ -6,8 +6,11 @@ name: sdk-release-python
 
 on:
   push:
+    branches:
+      - 'feat/init-bootstrap'
     tags:
       - 'sdk-v*'
+  workflow_dispatch:  # Allow manual triggering of the workflow
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
