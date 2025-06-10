@@ -1,0 +1,28 @@
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
+# SPDX-License-Identifier: Apache-2.0
+
+---
+name: build-wheels-manual
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-sdk-wheel:
+    name: SDK Python wheel
+    uses: ./.github/workflows/reusable-python-build-wheel.yaml
+
+  download-artifacts:
+    name: Download wheel artifacts
+    runs-on: ubuntu-latest
+    needs:
+      - build-sdk-wheel
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: ./dist
+
+      - name: Show files
+        run: ls -l ./dist
