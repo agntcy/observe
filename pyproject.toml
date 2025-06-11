@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ioa-observe-sdk"
-version = "1.0.0"
+version = "1.0.1"
 description = "IOA Observability SDK"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -75,9 +75,9 @@ dependencies = [
         "wrapt==1.17.2",
         "yarl==1.18.3",
         "zipp==3.21.0",
-        "langgraph==0.4.1",
-        "langchain==0.3.25",
-        "langchain-openai==0.3.21",
+        "langgraph>=0.3.2",
+        "langchain>=0.3.19",
+        "langchain-openai>=0.3.8",
         "opentelemetry-instrumentation-requests",
         "opentelemetry-instrumentation-transformers>=0.40.2",
         "opentelemetry-instrumentation-crewai>=0.40.2",
