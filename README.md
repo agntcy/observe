@@ -68,7 +68,8 @@ OPENAI_API_KEY=<KEY> make test
 
 ## Getting Started
 
-For getting started with the SDK, please refer to the [GETTING-STARTED.md](GETTING-STARTED.md) file. It contains detailed instructions on how to set up and use the SDK effectively.
+For getting started with the SDK, please refer to the [Getting Started](https://github.com/agntcy/observe/blob/main/GETTING-STARTED.md)
+ file. It contains detailed instructions on how to set up and use the SDK effectively.
 
 ## SLIM-Based Multi-Agentic Systems
 
