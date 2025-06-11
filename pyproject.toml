@@ -78,6 +78,8 @@ dependencies = [
         "langgraph>=0.3.2",
         "langchain>=0.3.19",
         "langchain-openai>=0.3.8",
+        "langchain-community>=0.3.25",
+        "llama-index>=0.12.34",
         "opentelemetry-instrumentation-requests",
         "opentelemetry-instrumentation-transformers>=0.40.2",
         "opentelemetry-instrumentation-crewai>=0.40.2",
