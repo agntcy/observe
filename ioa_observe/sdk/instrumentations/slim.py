@@ -49,10 +49,6 @@ class SLIMInstrumentor(BaseInstrumentor):
                 # Use the helper function for consistent traceparent
                 traceparent = get_current_traceparent()
 
-                if traceparent:
-                    # Retrieve execution_id using the same traceparent
-                    print("traceparent in publish method:", traceparent)
-
             # Thread-safe access to kv_store
             execution_id = None
             if traceparent:
@@ -60,10 +56,6 @@ class SLIMInstrumentor(BaseInstrumentor):
                     execution_id = kv_store.get(f"execution.{traceparent}")
                     if execution_id:
                         kv_store.set(f"execution.{traceparent}", execution_id)
-
-            print(
-                f"Publishing message with traceparent: {traceparent}, execution_id: {execution_id}"
-            )
             # Add tracing context to the message headers
             headers = {
                 "execution_id": execution_id if execution_id else None,
@@ -130,10 +122,6 @@ class SLIMInstrumentor(BaseInstrumentor):
                 traceparent = headers.get("traceparent")
                 execution_id = headers.get("execution_id")
 
-                print(
-                    f"Received message with traceparent: {traceparent}, execution_id: {execution_id}"
-                )
-
                 # First, extract and restore the trace context from headers
                 carrier = {}
                 for key in ["traceparent", "Traceparent", "baggage", "Baggage"]:
@@ -149,9 +137,6 @@ class SLIMInstrumentor(BaseInstrumentor):
 
                     # Now set execution ID with the restored context
                     if execution_id and execution_id != "None":
-                        print(
-                            f"Setting execution ID with restored context: {execution_id} for traceparent: {traceparent}"
-                        )
                         # Pass the traceparent explicitly to prevent new context creation
                         set_execution_id(execution_id, traceparent=traceparent)
 
@@ -163,9 +148,6 @@ class SLIMInstrumentor(BaseInstrumentor):
                 if traceparent and (not execution_id or execution_id == "None"):
                     with _kv_lock:
                         stored_execution_id = kv_store.get(f"execution.{traceparent}")
-                        print(
-                            f"Stored execution ID for traceparent {traceparent}: {stored_execution_id}"
-                        )
                         if stored_execution_id:
                             execution_id = stored_execution_id
                             set_execution_id(execution_id, traceparent=traceparent)
