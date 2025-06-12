@@ -127,7 +127,7 @@ AGNTGY is contributing the following metrics (identified by `ioa` in their names
         *   `reporting_frequency`: The frequency at which the latency is reported (daily, per-task, real-time, on-demand).
         *   `collection_method`: The method used to collect the latency data (instrumentation, manual logs, OTel).
         *   `outcome_justification`: The justification for the outcome of the request.
-     
+
 **Standard Metrics:**
 
 *   `gen_ai.client.token.usage`: Counts the number of input and output tokens used by the generative AI client (count).
