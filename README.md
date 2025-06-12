@@ -5,6 +5,7 @@ IOA observability SDK for your multi-agentic application.
 ## Table of Contents
 
 - [Installation](#installation)
+- [Schema](#schema)
 - [Dev](#dev)
 - [Testing](#testing)
 - [Getting Started](#getting-started)
@@ -23,6 +24,13 @@ Alternatively, to download the SDK from git, you could also use the following co
 ```bash
 uv add "git+https://github.com/agntcy/observe"
 ```
+
+## Schema
+
+The AGNTCY observability schema is an extension of the OTel LLM Semantic Conventions for Generative AI systems.
+This schema is designed to provide comprehensive observability for Multi-Agent Systems (MAS).
+
+Link: [AGNTCY Observability Schema](https://github.com/agntcy/observe/blob/main/schema/)
 
 ## Dev
 
