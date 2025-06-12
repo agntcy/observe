@@ -5,8 +5,9 @@ IOA observability SDK for your multi-agentic application.
 ## Table of Contents
 
 - [Installation](#installation)
-- [Usage](#usage)
-- [Features](#features)
+- [Dev](#dev)
+- [Testing](#testing)
+- [Getting Started](#getting-started)
 - [Contributing](#contributing)
 
 ## Installation
@@ -70,76 +71,6 @@ OPENAI_API_KEY=<KEY> make test
 
 For getting started with the SDK, please refer to the [Getting Started](https://github.com/agntcy/observe/blob/main/GETTING-STARTED.md)
  file. It contains detailed instructions on how to set up and use the SDK effectively.
-
-## SLIM-Based Multi-Agentic Systems
-
-For distributed agent systems using SLIM protocol, additional instrumentation is available:
-
-
-### Initializing the SLIM Connector with your agent
-
-```python
-from ioa_observe.sdk.connectors.slim import SLIMConnector, process_slim_msg
-from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
-
-# Initialize SLIM connector
-slim_connector = SLIMConnector(
-    remote_org="cisco",
-    remote_namespace="default",
-    shared_space="chat",
-)
-
-# Register agents with the connector
-slim_connector.register("remote_client_agent")
-
-# Instrument SLIM communications
-SLIMInstrumentor().instrument()
-```
-
-### Receiving Messages with a Callback
-
-Add the decorator `process_slim_msg` to the callback function to process incoming messages. This function will be called whenever a message is received in the shared space.
-
-```python
-
-# Define a callback to process incoming messages
-from ioa_observe.sdk.connectors.slim import SLIMConnector, process_slim_msg
-import json
-from typing import Dict, Any
-
-@process_slim_msg("remote_client_agent")
-async def send_and_recv(msg) -> Dict[str, Any]:
-    """Send message to remote endpoint and wait for reply."""
-    gateway = GatewayHolder.gateway
-    session_info = GatewayHolder.session_info
-
-    if gateway is not None:
-        await gateway.publish(session_info, msg.encode(), "cisco", "default", "server")
-        async with gateway:
-            _, recv = await gateway.receive(session=session_info.id)
-    else:
-        raise RuntimeError("Gateway is not initialized yet!")
-
-    response_data = json.loads(recv.decode("utf8"))
-    return {"messages": response_data.get("messages", [])}
-```
-
-### Starting the Message Receiver
-
-```python
-# Start receiving messages from the SLIM shared space
-await slim.receive(callback=on_message_received)
-```
-
-### Publishing Messages
-
-```python
-# Publish a message to the SLIM shared space
-message = {"type": "ChatMessage", "author": "moderator", "message": "Hello, world!"}
-await slim.publish(msg=json.dumps(message).encode("utf-8"))
-```
-
-We will observe various events and metrics being sent to the Otel collector as we interact with other agents in the shared space via SLIM.
 
 ## Contributing
 

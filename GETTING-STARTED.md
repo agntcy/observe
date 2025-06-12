@@ -3,6 +3,28 @@
 This guide illustrates how to integrate IOA Observe SDK with popular agent frameworks including LangGraph, CrewAI, LlamaIndex among others.
 The Observe SDK provides comprehensive observability through decorators to track agent activity, tool usage, workflow execution, and inter-agent communication.
 
+## Table of Contents
+1. [Prerequisites](#prerequisites)
+2. [Core SDK Components](#core-sdk-components)
+   - [Key Decorators](#key-decorators)
+   - [Session Management - Critical Entry Point](#session-management---critical-entry-point)
+3. [LangGraph Integration](#langgraph-integration)
+   - [Decorating Agents](#decorating-agents)
+   - [Decorating Graphs](#decorating-graphs)
+   - [Decorating Tools](#decorating-tools)
+4. [LlamaIndex Integration](#llamaindex-integration)
+   - [Function-Based Tools](#function-based-tools)
+   - [Class-Based Agents](#class-based-agents)
+   - [Workflow Graphs](#workflow-graphs)
+5. [Multi-Agent Supervisor Pattern with Observe SDK](#multi-agent-supervisor-pattern-with-observe-sdk)
+6. [Best Practices](#best-practices)
+7. [SLIM-Based Multi-Agentic Systems](#slim-based-multi-agentic-systems)
+   - [Initializing the SLIM Connector with your agent](#initializing-the-slim-connector-with-your-agent)
+   - [Receiving Messages with a Callback](#receiving-messages-with-a-callback)
+   - [Starting the Message Receiver](#starting-the-message-receiver)
+   - [Publishing Messages](#publishing-messages)
+8. [What's the difference between `@graph` and `@agent` decorators?](#whats-the-difference-between-graph-and-agent-decorators)
+
 ## Prerequisites
 
 Before getting started:
@@ -236,6 +258,82 @@ class SupervisorAgent:
 - **Session Management**: Always call `session_start()` at the main entry point, not within individual agents
 - **SLIM Setup**: Initialize SLIM components before starting inter-agent communication
 - **Environment Setup**: Ensure all required environment variables are properly configured
+
+
+## ## SLIM-Based Multi-Agent Systems
+
+SLIM (Secure Low-Latency Interactive Messaging) enables communication between AI agents, supporting patterns like request-response, publish-subscribe, fire-and-forget, and streaming. Built on gRPC, SLIM provides secure and scalable agent interactions.
+
+Repository: https://github.com/agntcy/slim
+
+For distributed agent systems using the SLIM protocol, the Observe SDK offers additional instrumentation:
+
+
+### Initializing the SLIM Connector with your agent
+
+```python
+from ioa_observe.sdk.connectors.slim import SLIMConnector, process_slim_msg
+from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
+
+# Initialize SLIM connector
+slim_connector = SLIMConnector(
+    remote_org="cisco",
+    remote_namespace="default",
+    shared_space="chat",
+)
+
+# Register agents with the connector
+slim_connector.register("remote_client_agent")
+
+# Instrument SLIM communications
+SLIMInstrumentor().instrument()
+```
+
+### Receiving Messages with a Callback
+
+Add the decorator `process_slim_msg` to the callback function to process incoming messages. This function will be called whenever a message is received in the shared space.
+
+```python
+
+# Define a callback to process incoming messages
+from ioa_observe.sdk.connectors.slim import SLIMConnector, process_slim_msg
+import json
+from typing import Dict, Any
+
+@process_slim_msg("remote_client_agent")
+async def send_and_recv(msg) -> Dict[str, Any]:
+    """Send message to remote endpoint and wait for reply."""
+    gateway = GatewayHolder.gateway
+    session_info = GatewayHolder.session_info
+
+    if gateway is not None:
+        await gateway.publish(session_info, msg.encode(), "cisco", "default", "server")
+        async with gateway:
+            _, recv = await gateway.receive(session=session_info.id)
+    else:
+        raise RuntimeError("Gateway is not initialized yet!")
+
+    response_data = json.loads(recv.decode("utf8"))
+    return {"messages": response_data.get("messages", [])}
+```
+
+### Starting the Message Receiver
+
+```python
+# Start receiving messages from the SLIM shared space
+await slim.receive(callback=on_message_received)
+```
+
+### Publishing Messages
+
+```python
+# Publish a message to the SLIM shared space
+message = {"type": "ChatMessage", "author": "moderator", "message": "Hello, world!"}
+await slim.publish(msg=json.dumps(message).encode("utf-8"))
+```
+
+We will observe various events and metrics being sent to the Otel collector as we interact with other agents in the shared space via SLIM.
+
 
 ## What's the difference between `@graph` and `@agent` decorators?
 
