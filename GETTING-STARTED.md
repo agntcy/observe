@@ -260,7 +260,7 @@ class SupervisorAgent:
 - **Environment Setup**: Ensure all required environment variables are properly configured
 
 
-## ## SLIM-Based Multi-Agent Systems
+## SLIM-Based Multi-Agent Systems
 
 SLIM (Secure Low-Latency Interactive Messaging) enables communication between AI agents, supporting patterns like request-response, publish-subscribe, fire-and-forget, and streaming. Built on gRPC, SLIM provides secure and scalable agent interactions.
 
