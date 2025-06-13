@@ -8,6 +8,7 @@ import os
 import re
 import time
 import uuid
+from contextlib import contextmanager
 
 from colorama import Fore
 from opentelemetry import trace
@@ -404,14 +405,27 @@ def set_workflow_name(workflow_name: str) -> None:
 
 def session_start():
     """
-    Marks the start of a session by setting the workflow name and execution ID.
-    This is typically called at the beginning of a workflow execution.
+    Can be used as a context manager or a normal function.
+    As a context manager, yields session metadata.
+    As a normal function, just sets up the session.
     """
-    # Set execution ID if not already set
-    # execution_id = get_value("execution.id")
-    # if not execution_id:
     execution_id = TracerWrapper.app_name + "_" + str(uuid.uuid4())
     set_execution_id(execution_id)
+    metadata = {
+        "executionID": get_value("execution.id") or execution_id,
+        "traceparent": get_current_traceparent()
+    }
+    import inspect
+    frame = inspect.currentframe().f_back
+    if frame and "__enter__" in frame.f_code.co_names:
+        # Used as a context manager
+        from contextlib import contextmanager
+        @contextmanager
+        def _cm():
+            yield metadata
+        return _cm()
+    # Used as a normal function
+    return None
 
 
 def set_execution_id(execution_id: str, traceparent: str = None) -> None:
@@ -435,8 +449,6 @@ def set_execution_id(execution_id: str, traceparent: str = None) -> None:
 
     # If traceparent is provided (e.g., from incoming message), use it
     if traceparent:
-        print(f"Using provided traceparent: {traceparent}")
-
         # Store execution ID with provided traceparent
         kv_key = f"execution.{traceparent}"
         if kv_store.get(kv_key) is None:
@@ -455,17 +467,13 @@ def set_execution_id(execution_id: str, traceparent: str = None) -> None:
         carrier = {}
         TraceContextTextMapPropagator().inject(carrier)
         extracted_traceparent = carrier.get("traceparent")
-        print(f"Extracted from active span: {extracted_traceparent}")
     else:
         # Only create new span if absolutely necessary (no existing context)
-        print("No active span or existing context, creating new trace context")
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("set_execution_id"):
             carrier = {}
             TraceContextTextMapPropagator().inject(carrier)
             extracted_traceparent = carrier.get("traceparent")
-
-    print("Final traceparent:", extracted_traceparent)
 
     # Store execution ID with traceparent as key
     if extracted_traceparent:
