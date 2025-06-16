@@ -8,7 +8,6 @@ import os
 import re
 import time
 import uuid
-from contextlib import contextmanager
 
 from colorama import Fore
 from opentelemetry import trace
