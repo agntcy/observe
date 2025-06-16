@@ -49,9 +49,14 @@ Before getting started:
 @tool(name="tool_name"): Monitors tool usage and performance
 @process_slim_msg("agent_name"): Instruments SLIM message processing for inter-agent communication
 ```
-Session Management - Critical Entry Point
 
-⚠️ IMPORTANT: session_start() MUST be called at the entry point of execution in Multi-Agentic Systems.
+### Session Management - Critical Entry Point
+
+⚠️ **IMPORTANT:** `session_start()` can be used directly or as a context manager to automatically manage the agent session lifecycle. This is especially useful for propagating session context (such as session IDs) across HTTP or other communication boundaries.
+
+#### Using `session_start()` Directly
+
+Simply use the `session_start()` function, if you use our connectors to manage the agent-agent communication, such as [SLIM](#slim-based-multi-agentic-systems) etc.
 
 ```python
 from ioa_observe.sdk.tracing import session_start
@@ -68,6 +73,90 @@ def main():
     # Execute your multi-agent workflow
     inputs = {"messages": [HumanMessage(content="Write a story about a cat")]}
     result = graph.invoke(inputs)
+```
+
+#### Using `session_start()` as a Context Manager
+
+You can also use `session_start()` in a `with` block to ensure the session is started and properly closed:
+
+```python
+from ioa_observe.sdk.tracing import session_start
+
+def main():
+    load_environment_variables()
+    with session_start() as session_id:
+        graph = build_graph()
+        inputs = {
+            "messages": [HumanMessage(content="Write a story about a cat")],
+            "session_id": session_id,  # Pass session_id to downstream agents/tools
+        }
+        result = graph.invoke(inputs)
+        print(result)
+```
+
+**Manual Session Propagation via HTTP (Agent-to-Agent Communication):**
+
+To enable agent-to-agent communication, you can propagate the session ID by including it in the HTTP headers when sending a request to another agent's server endpoint. This ensures full traceability and observability across distributed agents.
+
+Example:
+
+```python
+from ioa_observe.sdk.decorators import agent
+from ioa_observe.sdk.tracing import session_start
+
+from langchain_core.messages.utils import convert_to_openai_messages
+from langchain_core.messages import BaseMessage, HumanMessage
+from langgraph.graph.message import add_messages
+
+import json
+import os
+import requests
+from typing import Annotated, Any, Dict, List, TypedDict
+import uuid
+
+class GraphState(TypedDict):
+    messages: Annotated[List[BaseMessage], add_messages]
+    session_id: dict
+
+def send_http_request(payload: dict, session_id: dict) -> dict:
+    """Send an HTTP request to another agent's server endpoint with session ID."""
+    endpoint = os.getenv("REMOTE_SERVER_URL", "http://localhost:5000/runs")
+    # Include the session ID and other metadata in the HTTP headers for downstream agent observability
+    headers = session_id or {}
+    headers["Content-Type"] = "application/json"
+
+    try:
+        response = requests.post(endpoint, json=payload, headers=headers)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        # Handle error as needed
+        return {"error": str(e)}
+
+@agent(name="remote_agent_http")
+def node_remote_http(state: GraphState) -> Dict[str, Any]:
+    if not state["messages"]:
+        logger.error(json.dumps({"error": "GraphState contains no messages"}))
+        return {"messages": [HumanMessage(content="Error: No messages in state")]}
+
+    query = state["messages"][-1].content
+    logger.info(json.dumps({"event": "sending_request", "query": query}))
+
+    messages = convert_to_openai_messages(state["messages"])
+
+    payload = {
+        "agent_id": "remote_agent",
+        "input": {"messages": messages},
+        "model": "gpt-4o",
+        "metadata": {"id": str(uuid.uuid4())},
+        "route": "/runs",
+    }
+
+    headers = state["session_id"]
+
+    response_data = send_http_request(payload, headers)
+    print(f"Response from server: {response_data}")
+    return {"messages": [HumanMessage(content=json.dumps(response_data))]}
 ```
 
 ## LangGraph Integration
@@ -260,7 +349,7 @@ class SupervisorAgent:
 - **Environment Setup**: Ensure all required environment variables are properly configured
 
 
-## SLIM-Based Multi-Agent Systems
+## SLIM Based Multi-Agentic Systems
 
 SLIM (Secure Low-Latency Interactive Messaging) enables communication between AI agents, supporting patterns like request-response, publish-subscribe, fire-and-forget, and streaming. Built on gRPC, SLIM provides secure and scalable agent interactions.
 
