@@ -75,7 +75,7 @@ To run the unit tests, ensure you have the `OPENAI_API_KEY` set in your environm
 OPENAI_API_KEY=<KEY> make test
 ```
 
-## Getting Started
+## 🚀 Getting Started
 
 For getting started with the SDK, please refer to the [Getting Started](https://github.com/agntcy/observe/blob/main/GETTING-STARTED.md)
  file. It contains detailed instructions on how to set up and use the SDK effectively.
