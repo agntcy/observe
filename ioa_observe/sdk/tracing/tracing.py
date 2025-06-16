@@ -413,16 +413,19 @@ def session_start():
     set_execution_id(execution_id)
     metadata = {
         "executionID": get_value("execution.id") or execution_id,
-        "traceparent": get_current_traceparent()
+        "traceparent": get_current_traceparent(),
     }
     import inspect
+
     frame = inspect.currentframe().f_back
     if frame and "__enter__" in frame.f_code.co_names:
         # Used as a context manager
         from contextlib import contextmanager
+
         @contextmanager
         def _cm():
             yield metadata
+
         return _cm()
     # Used as a normal function
     return None
