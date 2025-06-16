@@ -16,6 +16,26 @@ P = ParamSpec("P")
 R = TypeVar("R")
 F = TypeVar("F", bound=Callable[P, Union[R, Awaitable[R]]])
 
+from contextlib import ContextDecorator
+
+class DecoratorContextManager(ContextDecorator):
+    def __init__(self, decorator):
+        self.decorator = decorator
+        self._wrapped = None
+
+    def __call__(self, func):
+        return self.decorator(func)
+
+    def __enter__(self):
+        if hasattr(self.decorator, "__enter__"):
+            return self.decorator.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if hasattr(self.decorator, "__exit__"):
+            return self.decorator.__exit__(exc_type, exc_val, exc_tb)
+        return False
+
 
 def task(
     name: Optional[str] = None,
@@ -65,28 +85,28 @@ def graph(
         tlp_span_kind="graph",
     )
 
-
 def agent(
     name: Optional[str] = None,
     version: Optional[int] = None,
     method_name: Optional[str] = None,
 ) -> Callable[[F], F]:
-    return workflow(
+    decorator = workflow(
         name=name,
         version=version,
         method_name=method_name,
         tlp_span_kind=ObserveSpanKindValues.AGENT,
     )
-
+    return DecoratorContextManager(decorator)
 
 def tool(
     name: Optional[str] = None,
     version: Optional[int] = None,
     method_name: Optional[str] = None,
 ) -> Callable[[F], F]:
-    return task(
+    decorator = task(
         name=name,
         version=version,
         method_name=method_name,
         tlp_span_kind=ObserveSpanKindValues.TOOL,
     )
+    return DecoratorContextManager(decorator)
