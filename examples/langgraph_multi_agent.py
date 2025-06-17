@@ -16,18 +16,17 @@ from langgraph.types import Command
 from langchain_community.tools.tavily_search import TavilySearchResults
 
 from ioa_observe.sdk import Observe
-from ioa_observe.sdk.decorators import agent, workflow, graph
+from ioa_observe.sdk.decorators import agent, graph
 from ioa_observe.sdk.decorators import tool as observe_tool
+from ioa_observe.sdk.tracing import session_start
 
 # This executes code locally, which can be unsafe
 repl = PythonREPL()
 serviceName = "multi-agent-service"
-execution_id = serviceName + "_" + str(uuid.uuid4())
 
 Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
 
 tavily_tool = TavilySearchResults(max_results=5)
-
 
 @observe_tool(name="Python REPL tool")
 def python_repl_tool(
@@ -70,7 +69,6 @@ class State(MessagesState):
     next: str
 
 
-@workflow(name="chatbot")
 def chatbot(state: State):
     ans = llm.invoke(state["messages"])
     messages = {"messages": [ans]}
@@ -138,6 +136,7 @@ def build_graph():
 if __name__ == "__main__":
     while True:
         user_input = input("User: ")
+        session_start() # Start a new session for each user input i.e., entry point in execution
         if user_input:
             if user_input.lower() in ["quit", "exit", "q"]:
                 print("Goodbye!")

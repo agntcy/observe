@@ -159,6 +159,36 @@ def node_remote_http(state: GraphState) -> Dict[str, Any]:
     return {"messages": [HumanMessage(content=json.dumps(response_data))]}
 ```
 
+Then in your other agent, you can retrieve the session ID from the headers:
+
+```python
+
+from ioa_observe.sdk.tracing.context_utils import set_context_from_headers
+
+# Flask app
+app = Flask(__name__)
+logger = logging.getLogger("app")
+
+@app.route("/runs", methods=["POST"])
+def process_message():
+    """
+    Process incoming messages from agents and set context from headers.
+    """
+    try:
+        payload = request.get_json(force=True)
+        # get headers
+        headers = request.headers
+        print("Headers:", headers)
+        if headers:
+            set_context_from_headers(headers)
+        logger.debug("Received payload: %s", payload)
+        # Process the payload as needed
+    except Exception as e:
+        logger.error("Error processing message: %s", str(e))
+        return jsonify({"error": str(e)}), 500
+
+```
+
 ## LangGraph Integration
 
 LangGraph is a framework for building stateful, multi-agent applications. Here's how to use it with Observe SDK:

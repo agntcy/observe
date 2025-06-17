@@ -6,6 +6,7 @@ from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.tracing import set_execution_id, get_current_traceparent
 from opentelemetry import context as otel_context
+from opentelemetry.context import attach
 
 """
 Usage Example:
@@ -42,21 +43,21 @@ def set_context_from_headers(headers):
     """
     Restores the trace context, baggage, and execution_id from headers.
     """
-    # Extract trace context and baggage
-    _global_tracer = TracerWrapper().get_tracer()
-    with _global_tracer.start_as_current_span("set_context_from_headers"):
-        ctx = TraceContextTextMapPropagator().extract(carrier=headers)
-        ctx = W3CBaggagePropagator().extract(carrier=headers, context=ctx)
-        # Restore execution_id if present
-        if headers is not None:
-            if "traceparent" in headers:
-                traceparent = headers.get("traceparent")
-            if "executionID" in headers:
-                execution_id = headers.get("executionID")
-        if traceparent and execution_id and execution_id != "None":
-            set_execution_id(execution_id, traceparent=traceparent)
-            kv_store.set(f"execution.{traceparent}", execution_id)
-        return ctx
+    carrierHeaders = {}
+    if "traceparentID" in headers:
+        carrierHeaders["traceparent"] = headers["traceparentID"]
+    if "executionID" in headers:
+        carrierHeaders["execution_id"] = headers["executionID"]
+    ctx = TraceContextTextMapPropagator().extract(carrier=carrierHeaders)
+    ctx = W3CBaggagePropagator().extract(carrier=carrierHeaders, context=ctx)
+    attach(ctx)
+    # Restore execution_id if present
+    traceparent = headers.get("traceparentID")
+    execution_id = headers.get("executionID")
+    if traceparent and execution_id and execution_id != "None":
+        set_execution_id(execution_id, traceparent=traceparent)
+        kv_store.set(f"execution.{traceparent}", execution_id)
+    return ctx
 
 
 def set_baggage_item(key, value):

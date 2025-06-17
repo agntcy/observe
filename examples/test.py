@@ -6,6 +6,7 @@ from llama_index.llms.openai import OpenAI
 
 from ioa_observe.sdk import Observe
 from ioa_observe.sdk.decorators import agent, graph
+from ioa_observe.sdk.tracing import session_start
 
 Observe.init("joke_workflow", api_endpoint="http://localhost:4318")
 
@@ -38,6 +39,7 @@ class JokeFlow(Workflow):
 
 async def main():
     workflow = JokeFlow(timeout=60, verbose=False)
+    session_start() # Start a new session for tracing
     result = await workflow.run(topic="pirates")
     print(str(result))
 

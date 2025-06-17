@@ -7,6 +7,7 @@ from openai import OpenAI
 
 from ioa_observe.sdk import Observe
 from ioa_observe.sdk.decorators import agent, tool
+from ioa_observe.sdk.tracing import session_start
 
 Observe.init("agent_service_1", api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
 
@@ -39,5 +40,5 @@ def history_jokes_tool():
 
     return completion.choices[0].message.content
 
-
+session_start() # Start a new session for tracing
 print(translate_joke_to_pirate("Why did the chicken cross the road?"))
