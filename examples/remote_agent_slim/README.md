@@ -36,7 +36,7 @@ client <-----> SLIM <----> Server
    source .venv/bin/activate
    pip install -r requirements.txt
    ```
-   
+
 3. Ensure you have an Otel collector running. You can use the provided `otel-collector.yaml` file to set up a local collector with Docker:
 
    ```bash

@@ -49,12 +49,12 @@ python <filename.py>
 <details>
 <summary><strong>agent.py</strong></summary>
 
-**Highlight:**  
+**Highlight:**
 Shows how to create a simple agent using the OpenAI API and the `ioa_observe` SDK.
 
 **Speciality:**
-- Demonstrates agent and tool decorators  
-- Translates a joke to "pirate" English and fetches history jokes  
+- Demonstrates agent and tool decorators
+- Translates a joke to "pirate" English and fetches history jokes
 - Tracing is enabled for observability
 
 </details>
@@ -64,12 +64,12 @@ Shows how to create a simple agent using the OpenAI API and the `ioa_observe` SD
 <details>
 <summary><strong>llama-index-example.py</strong></summary>
 
-**Highlight:**  
+**Highlight:**
 Demonstrates a math agent using LlamaIndex's agent workflow and tools.
 
 **Speciality:**
-- Uses LlamaIndex's `AgentWorkflow` with custom tools for addition and multiplication  
-- Shows how to set up callback managers for debugging and tracing  
+- Uses LlamaIndex's `AgentWorkflow` with custom tools for addition and multiplication
+- Shows how to set up callback managers for debugging and tracing
 - Tracing is enabled for observability
 
 </details>
@@ -79,12 +79,12 @@ Demonstrates a math agent using LlamaIndex's agent workflow and tools.
 <details>
 <summary><strong>llama-index-multi-agent-example.py</strong></summary>
 
-**Highlight:**  
+**Highlight:**
 Shows a multi-agent workflow using LlamaIndex, with explicit agent handoff.
 
 **Speciality:**
-- Defines two agents, each with their own tool and role  
-- Demonstrates agent-to-agent handoff and multi-step processing  
+- Defines two agents, each with their own tool and role
+- Demonstrates agent-to-agent handoff and multi-step processing
 - Tracing is enabled for observability
 
 </details>
@@ -94,13 +94,13 @@ Shows a multi-agent workflow using LlamaIndex, with explicit agent handoff.
 <details>
 <summary><strong>langgraph_multi_agent.py</strong></summary>
 
-**Highlight:**  
+**Highlight:**
 Implements a multi-agent workflow using LangGraph, with a supervisor agent managing researcher and coder agents.
 
 **Speciality:**
-- Uses LangGraph's stateful graph to coordinate agents  
-- Researcher agent uses a search tool; coder agent can execute Python code  
-- Supervisor agent decides workflow progression  
+- Uses LangGraph's stateful graph to coordinate agents
+- Researcher agent uses a search tool; coder agent can execute Python code
+- Supervisor agent decides workflow progression
 - Tracing is enabled for observability
 
 </details>
@@ -110,12 +110,12 @@ Implements a multi-agent workflow using LangGraph, with a supervisor agent manag
 <details>
 <summary><strong>test.py</strong></summary>
 
-**Highlight:**  
+**Highlight:**
 Shows a simple workflow using LlamaIndex to generate and critique a joke.
 
 **Speciality:**
-- Demonstrates step-based workflow with LlamaIndex  
-- Uses an LLM to generate a joke and then critique it  
+- Demonstrates step-based workflow with LlamaIndex
+- Uses an LLM to generate a joke and then critique it
 - Tracing is enabled for observability
 
 </details>

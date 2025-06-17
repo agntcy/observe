@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 Cisco and/or its affiliates.
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -18,8 +18,6 @@ from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
 
 from agent.lg import invoke_graph
 from core.logging_config import configure_logging
-
-# from poirot.sdk.decorators.metrics_decorator import *
 
 # Define logger at the module level
 logger = logging.getLogger("app")

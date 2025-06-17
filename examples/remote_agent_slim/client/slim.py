@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 Cisco and/or its affiliates.
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -26,9 +26,6 @@ from ioa_observe.sdk.connectors.slim import SLIMConnector, process_slim_msg
 from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
 
 from logging_config import configure_logging
-
-# from poirot.sdk.decorators.metrics_decorator import log_connection_events, measure_connection_latency, \
-#    measure_chain_completion_time
 
 logger = configure_logging()
 

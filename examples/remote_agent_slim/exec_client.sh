@@ -11,4 +11,3 @@ fi
 EXECUTION_ID="$1" \
 OTLP_HTTP_ENDPOINT="http://localhost:4318" \
 python3 client/slim.py
-
