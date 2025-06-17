@@ -66,7 +66,6 @@ def upgrade_packages(requirements_file):
 
         package_name = req.name
         extras = req.extras  # Set of extras
-        specifier = req.specifier  # SpecifierSet
         markers = req.marker
         url = req.url  # For VCS or URL requirements.txt
 

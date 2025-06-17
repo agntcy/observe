@@ -1,10 +1,8 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-import json
 import logging
 import os
-from datetime import datetime
 
 from dotenv import find_dotenv, load_dotenv
 from flask import Flask, request, jsonify

@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
-import uuid
 
 from langchain_openai import ChatOpenAI
 from typing import Annotated, TypedDict, Literal

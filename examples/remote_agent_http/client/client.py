@@ -17,8 +17,6 @@ from langgraph.graph.message import add_messages
 from ioa_observe.sdk import Observe
 from ioa_observe.sdk.tracing import session_start
 from ioa_observe.sdk.decorators import graph as graph_decorator, agent
-from ioa_observe.sdk.tracing.context_utils import get_current_context_headers
-from ioa_observe.sdk import TracerWrapper
 
 from logging_config import configure_logging
 

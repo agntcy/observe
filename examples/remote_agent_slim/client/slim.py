@@ -242,7 +242,6 @@ def init_gateway_conn():
 async def set_session_info(gateway):
     organization = ORGANIZATION
     namespace = NAMESPACE
-    local_agent = LOCAL_AGENT
     remote_agent = REMOTE_AGENT
 
     return await gateway.create_session(

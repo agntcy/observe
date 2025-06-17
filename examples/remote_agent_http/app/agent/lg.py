@@ -3,11 +3,10 @@
 import logging
 import os
 import sys
-import uuid
 from typing import Annotated, Any, Dict, List, Optional, TypedDict
 
 from dotenv import load_dotenv
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.messages.utils import convert_to_openai_messages
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
@@ -23,7 +22,7 @@ parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 # Add the parent directory to sys.path
 sys.path.insert(0, parent_dir)
 
-from agent.prompts import Prompts
+from agent.prompts import Prompts # noqa: E402
 from core.logging_config import configure_logging  # noqa: E402
 
 serviceName = "remote-server-agent_http"
