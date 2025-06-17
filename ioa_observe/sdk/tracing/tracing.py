@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import atexit
+import contextlib
 import json
 import logging
 import os
@@ -412,7 +413,7 @@ def session_start():
     set_execution_id(execution_id)
     metadata = {
         "executionID": get_value("execution.id") or execution_id,
-        "traceparent": get_current_traceparent(),
+        "traceparentID": get_current_traceparent(),
     }
     import inspect
 
@@ -427,7 +428,7 @@ def session_start():
 
         return _cm()
     # Used as a normal function
-    return None
+    return contextlib.nullcontext(metadata)
 
 
 def set_execution_id(execution_id: str, traceparent: str = None) -> None:

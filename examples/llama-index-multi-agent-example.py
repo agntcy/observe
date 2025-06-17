@@ -13,6 +13,7 @@ from llama_index.llms.openai import OpenAI
 
 from ioa_observe.sdk import Observe
 from ioa_observe.sdk.decorators import graph, agent, tool
+from ioa_observe.sdk.tracing import session_start
 
 Observe.init("multi_agent_new_workflow", api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
 
@@ -89,7 +90,7 @@ class MultiAgentWorkflow(AgentWorkflow):
 
 # Create an instance of our custom workflow
 multi_agent_workflow_instance = MultiAgentWorkflow()
-
+session_start()  # Start a new session for tracing
 response = asyncio.run(
     multi_agent_workflow_instance.run(
         user_msg="Can you analyze this data for me? Lorem ipsum dolor sit amet, consectetur adipiscing elit."

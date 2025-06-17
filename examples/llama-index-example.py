@@ -14,6 +14,8 @@ from llama_index.core.agent.workflow import AgentWorkflow
 from llama_index.core import Settings  # Import Settings
 from llama_index.core.callbacks import CallbackManager, LlamaDebugHandler
 
+from ioa_observe.sdk.tracing import session_start
+
 load_dotenv()
 
 Observe.init("math_agent_service", api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
@@ -70,6 +72,7 @@ workflow = MathAgentWorkflow(
 
 
 async def main():
+    session_start()  # Start a new session for tracing
     response = await workflow.run(user_msg="What is 20+(2*4)?")
     print(response)
 

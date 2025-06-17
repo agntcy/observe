@@ -1,0 +1,37 @@
+
+services:
+  slim_gateway:
+    image: ghcr.io/agntcy/slim:0.3.15
+    container_name: slim_gateway
+    ports:
+      - "46357:46357"
+    environment:
+      - PASSWORD=${PASSWORD:-dummy}  # Default password if not set
+    volumes:
+      - ./gw/config/base/server-config.yaml:/config.yaml
+    command: ["/slim", "--config", "/config.yaml"]
+    restart: unless-stopped
+    networks:
+      - slim_network  # Ensure both services are on the same network
+
+  # slim_remote_agent:
+  #   image: slim_remote_agent:latest
+  #   # build:
+  #   #  context: .  # Set project root as the build context
+  #   #  dockerfile: remote_agent_docker/Dockerfile  # Dockerfile is inside remote_agent_docker/
+  #   container_name: slim_remote_agent
+  #   depends_on:
+  #     - slim_gateway
+  #   environment:
+  #     - SLIM_ADDRESS=http://slim_gateway  # Inside Compose, use slim_gateway
+  #   env_file:
+  #     - ../.env
+  #   volumes:
+  #     - ../.env:/app/.env  # <== This explicitly mounts .env at /app/.env
+  #   networks:
+  #     - slim_network
+  #   restart: unless-stopped
+
+networks:
+  slim_network:
+    driver: bridge
