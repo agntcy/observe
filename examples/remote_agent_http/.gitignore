@@ -165,9 +165,6 @@ terraform_output.json
 # IntelliJ / PyCharm
 .idea
 
-
-*.txt
-
 .dockerconfigjson
 
 app/src/bedrock_agent/deploy
