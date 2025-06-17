@@ -104,17 +104,23 @@ def process_message(payload) -> str:
     # Retrieve the 'messages' list from the 'input' dictionary.
     messages = input_field.get("messages")
     if not isinstance(messages, list) or not messages:
-        return create_error("The 'input.messages' field should be a non-empty list.", 500)
+        return create_error(
+            "The 'input.messages' field should be a non-empty list.", 500
+        )
 
     # Access the last message in the list.
     last_message = messages[-1]
     if not isinstance(last_message, dict):
-        return create_error("The first element in 'input.messages' should be a dictionary.", 500)
+        return create_error(
+            "The first element in 'input.messages' should be a dictionary.", 500
+        )
 
     # Extract the 'content' from the first message.
     human_input_content = last_message.get("content")
     if human_input_content is None:
-        return create_error("Missing 'content' in the first message of 'input.messages'.", 500)
+        return create_error(
+            "Missing 'content' in the first message of 'input.messages'.", 500
+        )
 
     # We send all messaages to graph
     graph_result = invoke_graph(messages)
@@ -158,12 +164,7 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
 
     # init tracing
     slim_bindings.init_tracing(
-        {
-          "log_level": "info",
-          "opentelemetry": {
-            "enabled": enable_opentelemetry
-          }
-        }
+        {"log_level": "info", "opentelemetry": {"enabled": enable_opentelemetry}}
     )
 
     # Create participant
@@ -203,7 +204,12 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
         )
     )
     try:
-        logger.info("SLIM client started for agent: %s/%s/%s", organization, namespace, local_agent)
+        logger.info(
+            "SLIM client started for agent: %s/%s/%s",
+            organization,
+            namespace,
+            local_agent,
+        )
         async with participant:
             while True:
                 src, recv = await participant.receive(session=session_info.id)
@@ -213,7 +219,9 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
                 logger.info("Received message %s, from agent %s", msg, src)
 
                 # Publish reply message to src agent
-                await participant.publish(src, msg.encode(), organization, namespace, local_agent)
+                await participant.publish(
+                    src, msg.encode(), organization, namespace, local_agent
+                )
 
                 # Store the last received source and message
                 last_src = src
@@ -253,9 +261,13 @@ async def try_connect_to_gateway(address, port, max_duration=300, initial_delay=
             src, msg = await connect_to_gateway(f"{address}:{port}")
             return src, msg
         except Exception as e:
-            logger.warning("Connection attempt failed: %s. Retrying in %s seconds...", e, delay)
+            logger.warning(
+                "Connection attempt failed: %s. Retrying in %s seconds...", e, delay
+            )
             await asyncio.sleep(delay)
-            delay = min(delay * 2, 30)  # Exponential backoff, max delay capped at 30 sec
+            delay = min(
+                delay * 2, 30
+            )  # Exponential backoff, max delay capped at 30 sec
 
     raise TimeoutError("Failed to connect within the allowed time frame")
 

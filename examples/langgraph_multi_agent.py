@@ -27,6 +27,7 @@ Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
 
 tavily_tool = TavilySearchResults(max_results=5)
 
+
 @observe_tool(name="Python REPL tool")
 def python_repl_tool(
     code: Annotated[str, "The python code to execute to generate your chart."],
@@ -135,7 +136,7 @@ def build_graph():
 if __name__ == "__main__":
     while True:
         user_input = input("User: ")
-        session_start() # Start a new session for each user input i.e., entry point in execution
+        session_start()  # Start a new session for each user input i.e., entry point in execution
         if user_input:
             if user_input.lower() in ["quit", "exit", "q"]:
                 print("Goodbye!")

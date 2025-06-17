@@ -72,7 +72,7 @@ workflow = MathAgentWorkflow(
 
 
 async def main():
-    session_start() # Start a new session for tracing
+    session_start()  # Start a new session for tracing
     response = await workflow.run(user_msg="What is 20+(2*4)?")
     print(response)
 

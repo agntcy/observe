@@ -258,7 +258,7 @@ def main():
     load_environment_variables()
     init_gateway_conn()
 
-    session_start() # entry point in execution
+    session_start()  # entry point in execution
 
     graph = build_graph()
     # Determine gateway address from environment variables or use the default

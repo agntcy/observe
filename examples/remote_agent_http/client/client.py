@@ -95,9 +95,12 @@ def node_remote_http(state: GraphState) -> Dict[str, Any]:
     parsed = decode_response(response_data)
     if "messages" not in parsed:
         logger.error("Invalid response format")
-        return {"messages": [HumanMessage(content="Error: Invalid response from server")]}
+        return {
+            "messages": [HumanMessage(content="Error: Invalid response from server")]
+        }
 
     return {"messages": parsed["messages"]}
+
 
 @graph_decorator(name="remote_client_graph")
 def build_graph() -> Any:
@@ -113,7 +116,10 @@ def main():
     # using session_start as a context manager to ensure proper session handling
     with session_start() as s:
         graph = build_graph()
-        inputs = {"messages": [HumanMessage(content="Write a story about a cat")], "session_id": s}
+        inputs = {
+            "messages": [HumanMessage(content="Write a story about a cat")],
+            "session_id": s,
+        }
         logger.info({"event": "invoking_graph", "inputs": inputs})
         result = graph.invoke(inputs)
         logger.info({"event": "final_result", "result": result})

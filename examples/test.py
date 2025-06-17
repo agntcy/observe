@@ -39,7 +39,7 @@ class JokeFlow(Workflow):
 
 async def main():
     workflow = JokeFlow(timeout=60, verbose=False)
-    session_start() # Start a new session for tracing
+    session_start()  # Start a new session for tracing
     result = await workflow.run(topic="pirates")
     print(str(result))
 

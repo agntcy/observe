@@ -40,5 +40,6 @@ def history_jokes_tool():
 
     return completion.choices[0].message.content
 
-session_start() # Start a new session for tracing
+
+session_start()  # Start a new session for tracing
 print(translate_joke_to_pirate("Why did the chicken cross the road?"))

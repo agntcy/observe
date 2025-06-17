@@ -16,7 +16,7 @@ from ioa_observe.sdk import Observe
 
 from ioa_observe.sdk.decorators import graph as graph_decorator, agent
 
-from agent.prompts import Prompts # noqa: E402
+from agent.prompts import Prompts  # noqa: E402
 from core.logging_config import configure_logging  # noqa: E402
 
 # Get the absolute path of the parent directory
@@ -44,6 +44,7 @@ class GraphState(TypedDict):
 def end_node(state: GraphState) -> Dict[str, Any]:
     logger.info(f"Thread end: {state.values()}")
     return {"messages": []}
+
 
 @agent(name="remote_llm_node")
 def llm_node(state: GraphState) -> Dict[str, Any]:
@@ -73,15 +74,15 @@ def llm_node(state: GraphState) -> Dict[str, Any]:
     base_url = os.getenv("LLM_BASE_URL")
     if base_url is not None and base_url != "":
         llm = ChatOpenAI(
-                model=os.getenv("OPENAI_MODEL_NAME", "gpt-4o"),
-                temperature=1.0,
-                base_url=base_url,
-            )
+            model=os.getenv("OPENAI_MODEL_NAME", "gpt-4o"),
+            temperature=1.0,
+            base_url=base_url,
+        )
     else:
         llm = ChatOpenAI(
-                model=os.getenv("OPENAI_MODEL_NAME", "gpt-4o"),
-                temperature=1.0,
-            )
+            model=os.getenv("OPENAI_MODEL_NAME", "gpt-4o"),
+            temperature=1.0,
+        )
     generate = partial_prompt | llm
 
     try:
@@ -90,6 +91,7 @@ def llm_node(state: GraphState) -> Dict[str, Any]:
     except RuntimeError as e:
         logger.error(f"Error in generation_node: {e}")
         return {"messages": []}
+
 
 @graph_decorator(name="remote_server_agent_graph")
 def build_graph() -> Any:

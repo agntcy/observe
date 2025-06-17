@@ -58,7 +58,9 @@ def process_message():
 
         messages = input_field.get("messages")
         if not isinstance(messages, list) or not messages:
-            return create_error("The 'input.messages' field should be a non-empty list.", 500)
+            return create_error(
+                "The 'input.messages' field should be a non-empty list.", 500
+            )
 
         last_message = messages[-1]
         if not isinstance(last_message, dict):
@@ -66,7 +68,9 @@ def process_message():
 
         human_input_content = last_message.get("content")
         if human_input_content is None:
-            return create_error("Missing 'content' in the last message of 'input.messages'.", 500)
+            return create_error(
+                "Missing 'content' in the last message of 'input.messages'.", 500
+            )
 
         graph_result = invoke_graph(messages)
 

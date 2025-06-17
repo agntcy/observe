@@ -90,7 +90,7 @@ class MultiAgentWorkflow(AgentWorkflow):
 
 # Create an instance of our custom workflow
 multi_agent_workflow_instance = MultiAgentWorkflow()
-session_start() # Start a new session for tracing
+session_start()  # Start a new session for tracing
 response = asyncio.run(
     multi_agent_workflow_instance.run(
         user_msg="Can you analyze this data for me? Lorem ipsum dolor sit amet, consectetur adipiscing elit."
