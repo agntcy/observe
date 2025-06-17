@@ -17,7 +17,7 @@ python-json-logger==3.3.0
 # Windows
 # ./windows_dist/slim_bindings-0.1.7-cp313-cp313-win_amd64.whl
 
-# Unix. 
+# Unix.
 # Do not uncomment on windows....
 slim-bindings==0.3.6
 
