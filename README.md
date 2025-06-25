@@ -122,7 +122,7 @@ docker run -d -p 3000:3000 --name=grafana grafana/grafana
 2. Access Grafana by navigating to `http://localhost:3000` in your web browser.
    - Default username: `admin`
    - Default password: `admin`
-   
+
 3. Add a new data source:
    - Choose "ClickHouse" as the data source type.
    - Set the URL to `http://0.0.0.0:8123`.
