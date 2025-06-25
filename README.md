@@ -36,6 +36,20 @@ Link: [AGNTCY Observability Schema](https://github.com/agntcy/observe/blob/main/
 
 ## Dev
 
+Any Opentelemetry compatible backend can be used, but for this guide, we will use ClickhouseDB as the backend database.
+
+### Opentelemetry collector
+
+The OpenTelemetry Collector offers a vendor-agnostic implementation of how to receive, process and export telemetry data. It removes the need to run, operate, and maintain multiple agents/collectors.
+
+### Clickhouse DB
+
+ClickhouseDB is used as a backend database to store and query the collected telemetry data efficiently, enabling you to analyze and visualize observability information for your multi-agentic applications.
+
+### Grafana (optional)
+
+Grafana can be used to visualize the telemetry data collected by the OpenTelemetry Collector and stored in ClickhouseDB.
+
 To get started with development, start a Clickhouse DB and an OTel collector container locally using docker-compose like so:
 
 ```
@@ -43,12 +57,26 @@ cd deploy/
 docker compose up -d
 ```
 
+Running both locally allows you to test, monitor, and debug your observability setup in a development environment before deploying to production.
+
 Ensure the contents of `otel-collector.yaml` is correct.
 
 Check the logs of the collector to ensure it is running correctly:
 
 ```
 docker logs -f otel-collector
+```
+
+Viewing data in Clickhouse DB can be done using the Clickhouse client. The collector is configured to export telemetry data to Clickhouse.
+
+The clickhouse exporter creates various tables in the Clickhouse DB, including `otel_traces`, which is used to store trace data.
+
+For more info, refer to the [OpenTelemetry Clickhouse Exporter documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/clickhouseexporter/README.md)
+
+```bash
+docker exec -it clickhouse-server clickhouse-client
+
+select * from otel_traces LIMIT 10;
 ```
 
 Create a `.env` file with the following content:
@@ -81,6 +109,28 @@ OPENAI_API_KEY=<KEY> make test
 
 For getting started with the SDK, please refer to the [Getting Started](https://github.com/agntcy/observe/blob/main/GETTING-STARTED.md)
  file. It contains detailed instructions on how to set up and use the SDK effectively.
+
+### Grafana
+
+To configure Grafana to visualize the telemetry data, follow these steps:
+
+1. Spin up Grafana locally using Docker:
+
+```bash
+docker run -d -p 3000:3000 --name=grafana grafana/grafana
+```
+2. Access Grafana by navigating to `http://localhost:3000` in your web browser.
+   - Default username: `admin`
+   - Default password: `admin`
+
+3. Add a new data source:
+   - Choose "ClickHouse" as the data source type.
+   - Set the URL to `http://0.0.0.0:8123`.
+   - Configure the authentication settings if necessary.
+   - Save and test the connection to ensure it works correctly.
+
+Refer to the [Grafana ClickHouse plugin documentation](https://grafana.com/grafana/plugins/grafana-clickhouse-datasource/) for more details on configuring ClickHouse as a data source.
+
 
 ## Contributing
 
