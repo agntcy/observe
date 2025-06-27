@@ -230,7 +230,7 @@ def build_graph():
     builder.add_edge("supervisor", "researcher")
     builder.add_edge("researcher", "coder")
     builder.add_edge("coder", END)
-    return builder.compile() 
+    return builder.compile()
 ```
 
 
