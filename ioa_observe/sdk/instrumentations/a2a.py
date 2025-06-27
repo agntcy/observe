@@ -18,6 +18,7 @@ _instruments = ("python-a2a >= 0.2.5",)
 _global_tracer = None
 _kv_lock = threading.RLock()  # Add thread-safety for kv_store operations
 
+
 class A2AInstrumentor(BaseInstrumentor):
     def __init__(self):
         super().__init__()
@@ -31,15 +32,15 @@ class A2AInstrumentor(BaseInstrumentor):
         try:
             import a2a
         except ImportError:
-            raise ImportError(
-                "No module named 'a2a'. Please install it first."
-            )
+            raise ImportError("No module named 'a2a'. Please install it first.")
 
         # Instrument `publish`
         original_send_message = a2a.client.A2AClient.send_message
 
         @functools.wraps(original_send_message)
-        async def instrumented_send_message(self, request, *, http_kwargs=None, context=None):
+        async def instrumented_send_message(
+            self, request, *, http_kwargs=None, context=None
+        ):
             with _global_tracer.start_as_current_span("a2a.send_message"):
                 traceparent = get_current_traceparent()
                 execution_id = None
@@ -56,7 +57,9 @@ class A2AInstrumentor(BaseInstrumentor):
                     headers["execution_id"] = execution_id
                     baggage.set_baggage(f"execution.{traceparent}", execution_id)
                 http_kwargs["headers"] = headers
-            return await original_send_message(self, request, http_kwargs=http_kwargs, context=context)
+            return await original_send_message(
+                self, request, http_kwargs=http_kwargs, context=context
+            )
 
         a2a.client.A2AClient.send_message = instrumented_send_message
 
@@ -68,7 +71,11 @@ class A2AInstrumentor(BaseInstrumentor):
             headers = getattr(getattr(context, "request", None), "headers", {})
             traceparent = headers.get("traceparent")
             execution_id = headers.get("execution_id")
-            carrier = {k.lower(): v for k, v in headers.items() if k.lower() in ["traceparent", "baggage"]}
+            carrier = {
+                k.lower(): v
+                for k, v in headers.items()
+                if k.lower() in ["traceparent", "baggage"]
+            }
             if carrier and traceparent:
                 ctx = TraceContextTextMapPropagator().extract(carrier=carrier)
                 ctx = W3CBaggagePropagator().extract(carrier=carrier, context=ctx)
@@ -83,12 +90,14 @@ class A2AInstrumentor(BaseInstrumentor):
         try:
             import a2a
         except ImportError:
-            raise ImportError(
-                "No module named 'a2a'. Please install it first."
-            )
+            raise ImportError("No module named 'a2a'. Please install it first.")
 
         # Uninstrument `send_message`
-        a2a.client.A2AClient.send_message = a2a.client.A2AClient.send_message.__wrapped__
+        a2a.client.A2AClient.send_message = (
+            a2a.client.A2AClient.send_message.__wrapped__
+        )
 
         # Uninstrument `execute`
-        a2a.server.agent_execution.AgentExecutor.execute = a2a.server.agent_execution.AgentExecutor.execute.__wrapped__
+        a2a.server.agent_execution.AgentExecutor.execute = (
+            a2a.server.agent_execution.AgentExecutor.execute.__wrapped__
+        )
