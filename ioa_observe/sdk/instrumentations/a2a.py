@@ -12,7 +12,7 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 
 from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
-from ioa_observe.sdk.tracing import set_execution_id, get_current_traceparent
+from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
 
 _instruments = ("python-a2a >= 0.2.5",)
 _global_tracer = None
@@ -43,19 +43,19 @@ class A2AInstrumentor(BaseInstrumentor):
         ):
             with _global_tracer.start_as_current_span("a2a.send_message"):
                 traceparent = get_current_traceparent()
-                execution_id = None
+                session_id = None
                 if traceparent:
-                    execution_id = kv_store.get(f"execution.{traceparent}")
-                    if execution_id:
-                        kv_store.set(f"execution.{traceparent}", execution_id)
+                    session_id = kv_store.get(f"execution.{traceparent}")
+                    if session_id:
+                        kv_store.set(f"execution.{traceparent}", session_id)
                 # Inject headers into http_kwargs
                 if http_kwargs is None:
                     http_kwargs = {}
                 headers = http_kwargs.get("headers", {})
                 headers["traceparent"] = traceparent
-                if execution_id:
-                    headers["execution_id"] = execution_id
-                    baggage.set_baggage(f"execution.{traceparent}", execution_id)
+                if session_id:
+                    headers["session_id"] = session_id
+                    baggage.set_baggage(f"execution.{traceparent}", session_id)
                 http_kwargs["headers"] = headers
             return await original_send_message(
                 self, request, http_kwargs=http_kwargs, context=context
@@ -70,7 +70,7 @@ class A2AInstrumentor(BaseInstrumentor):
             # Extract headers from context (assume context.request.headers)
             headers = getattr(getattr(context, "request", None), "headers", {})
             traceparent = headers.get("traceparent")
-            execution_id = headers.get("execution_id")
+            session_id = headers.get("session_id")
             carrier = {
                 k.lower(): v
                 for k, v in headers.items()
@@ -79,9 +79,9 @@ class A2AInstrumentor(BaseInstrumentor):
             if carrier and traceparent:
                 ctx = TraceContextTextMapPropagator().extract(carrier=carrier)
                 ctx = W3CBaggagePropagator().extract(carrier=carrier, context=ctx)
-                if execution_id and execution_id != "None":
-                    set_execution_id(execution_id, traceparent=traceparent)
-                    kv_store.set(f"execution.{traceparent}", execution_id)
+                if session_id and session_id != "None":
+                    set_session_id(session_id, traceparent=traceparent)
+                    kv_store.set(f"execution.{traceparent}", session_id)
             return await original_execute(self, context, event_queue)
 
         a2a.server.agent_execution.AgentExecutor.execute = instrumented_execute
