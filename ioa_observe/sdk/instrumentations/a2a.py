@@ -3,8 +3,6 @@
 
 from typing import Collection
 import functools
-import json
-import base64
 import threading
 
 from opentelemetry import baggage
