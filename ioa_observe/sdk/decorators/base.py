@@ -100,8 +100,8 @@ def _setup_span(
     ]:
         set_workflow_name(entity_name)
         # if tlp_span_kind == "graph":
-        #     execution_id = entity_name + "_" + str(uuid.uuid4())
-        #     set_execution_id(execution_id)
+        #     session_id = entity_name + "_" + str(uuid.uuid4())
+        #     set_session_id(session_id)
     if tlp_span_kind == "graph":
         span_name = f"{entity_name}.{tlp_span_kind}"
     else:
@@ -126,9 +126,9 @@ def _setup_span(
                     },
                 )
             # start_span.end()  # end the span immediately
-        # execution_id = get_value("execution.id")
-        # if execution_id is not None:
-        #     span.set_attribute("execution.id", execution_id)
+        # session_id = get_value("session.id")
+        # if session_id is not None:
+        #     span.set_attribute("session.id", session_id)
         if tlp_span_kind in [
             ObserveSpanKindValues.TASK,
             ObserveSpanKindValues.TOOL,
@@ -145,9 +145,9 @@ def _setup_span(
         if version:
             span.set_attribute(OBSERVE_ENTITY_VERSION, version)
 
-        # if execution_id:
-        #     print(f"Execution ID: {execution_id}")
-        #     span.set_attribute("execution.id", execution_id)
+        # if session_id:
+        #     print(f"Execution ID: {session_id}")
+        #     span.set_attribute("session.id", session_id)
 
     return span, ctx, ctx_token
 

@@ -262,9 +262,9 @@ class TracerWrapper(object):
         if workflow_name is not None:
             span.set_attribute(OBSERVE_WORKFLOW_NAME, workflow_name)
 
-        execution_id = get_value("execution.id")
-        if execution_id is not None:
-            span.set_attribute("execution.id", execution_id)
+        session_id = get_value("session.id")
+        if session_id is not None:
+            span.set_attribute("session.id", session_id)
 
         entity_path = get_value("entity_path")
         if entity_path is not None:
@@ -409,10 +409,10 @@ def session_start():
     As a context manager, yields session metadata.
     As a normal function, just sets up the session.
     """
-    execution_id = TracerWrapper.app_name + "_" + str(uuid.uuid4())
-    set_execution_id(execution_id)
+    session_id = TracerWrapper.app_name + "_" + str(uuid.uuid4())
+    set_session_id(session_id)
     metadata = {
-        "executionID": get_value("execution.id") or execution_id,
+        "executionID": get_value("session.id") or session_id,
         "traceparentID": get_current_traceparent(),
     }
     import inspect
@@ -431,7 +431,7 @@ def session_start():
     return contextlib.nullcontext(metadata)
 
 
-def set_execution_id(execution_id: str, traceparent: str = None) -> None:
+def set_session_id(session_id: str, traceparent: str = None) -> None:
     """
     Sets the execution ID in both the key-value store and OpenTelemetry context.
 
@@ -439,10 +439,10 @@ def set_execution_id(execution_id: str, traceparent: str = None) -> None:
     proper trace correlation across distributed systems.
 
     Args:
-        execution_id: The execution ID to set
+        session_id: The execution ID to set
         traceparent: Optional traceparent to use (if None, will extract from context)
     """
-    if not execution_id:
+    if not session_id:
         return
 
     from opentelemetry import trace
@@ -455,10 +455,10 @@ def set_execution_id(execution_id: str, traceparent: str = None) -> None:
         # Store execution ID with provided traceparent
         kv_key = f"execution.{traceparent}"
         if kv_store.get(kv_key) is None:
-            kv_store.set(kv_key, execution_id)
+            kv_store.set(kv_key, session_id)
 
         # Store in OpenTelemetry context
-        attach(set_value("execution.id", execution_id))
+        attach(set_value("session.id", session_id))
         attach(set_value("current_traceparent", traceparent))
         return
 
@@ -473,7 +473,7 @@ def set_execution_id(execution_id: str, traceparent: str = None) -> None:
     else:
         # Only create new span if absolutely necessary (no existing context)
         tracer = trace.get_tracer(__name__)
-        with tracer.start_as_current_span("set_execution_id"):
+        with tracer.start_as_current_span("set_session_id"):
             carrier = {}
             TraceContextTextMapPropagator().inject(carrier)
             extracted_traceparent = carrier.get("traceparent")
@@ -482,10 +482,10 @@ def set_execution_id(execution_id: str, traceparent: str = None) -> None:
     if extracted_traceparent:
         kv_key = f"execution.{extracted_traceparent}"
         if kv_store.get(kv_key) is None:
-            kv_store.set(kv_key, execution_id)
+            kv_store.set(kv_key, session_id)
 
         # Also store in OpenTelemetry context
-        attach(set_value("execution.id", execution_id))
+        attach(set_value("session.id", session_id))
         attach(set_value("current_traceparent", extracted_traceparent))
 
 

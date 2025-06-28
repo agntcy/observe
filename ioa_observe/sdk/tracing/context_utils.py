@@ -4,7 +4,7 @@ from opentelemetry import baggage
 
 from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
-from ioa_observe.sdk.tracing import set_execution_id, get_current_traceparent
+from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
 from opentelemetry import context as otel_context
 from opentelemetry.context import attach
 
@@ -21,7 +21,7 @@ After receiving a message, extract headers and call set_context_from_headers(hea
 
 def get_current_context_headers():
     """
-    Extracts the current trace context, baggage, and execution_id into headers.
+    Extracts the current trace context, baggage, and session_id into headers.
     """
     _global_tracer = TracerWrapper().get_tracer()
     with _global_tracer.start_as_current_span("get_current_context_headers"):
@@ -31,32 +31,32 @@ def get_current_context_headers():
         TraceContextTextMapPropagator().inject(carrier, context=current_ctx)
         W3CBaggagePropagator().inject(carrier, context=current_ctx)
         traceparent = carrier.get("traceparent")
-        execution_id = None
+        session_id = None
         if traceparent:
-            execution_id = kv_store.get(f"execution.{traceparent}")
-            if execution_id:
-                carrier["execution_id"] = execution_id
+            session_id = kv_store.get(f"execution.{traceparent}")
+            if session_id:
+                carrier["session_id"] = session_id
         return carrier
 
 
 def set_context_from_headers(headers):
     """
-    Restores the trace context, baggage, and execution_id from headers.
+    Restores the trace context, baggage, and session_id from headers.
     """
     carrierHeaders = {}
     if "traceparentID" in headers:
         carrierHeaders["traceparent"] = headers["traceparentID"]
     if "executionID" in headers:
-        carrierHeaders["execution_id"] = headers["executionID"]
+        carrierHeaders["session_id"] = headers["executionID"]
     ctx = TraceContextTextMapPropagator().extract(carrier=carrierHeaders)
     ctx = W3CBaggagePropagator().extract(carrier=carrierHeaders, context=ctx)
     attach(ctx)
-    # Restore execution_id if present
+    # Restore session_id if present
     traceparent = headers.get("traceparentID")
-    execution_id = headers.get("executionID")
-    if traceparent and execution_id and execution_id != "None":
-        set_execution_id(execution_id, traceparent=traceparent)
-        kv_store.set(f"execution.{traceparent}", execution_id)
+    session_id = headers.get("executionID")
+    if traceparent and session_id and session_id != "None":
+        set_session_id(session_id, traceparent=traceparent)
+        kv_store.set(f"execution.{traceparent}", session_id)
     return ctx
 
 
@@ -68,16 +68,16 @@ def get_baggage_item(key):
     return baggage.get_baggage(key)
 
 
-def get_current_execution_id():
+def get_current_session_id():
     traceparent = get_current_traceparent()
     if traceparent:
         return kv_store.get(f"execution.{traceparent}")
     return None
 
 
-def set_execution_id_from_headers(headers):
+def set_session_id_from_headers(headers):
     traceparent = headers.get("traceparent")
-    execution_id = headers.get("execution_id")
-    if traceparent and execution_id:
-        set_execution_id(execution_id, traceparent=traceparent)
-        kv_store.set(f"execution.{traceparent}", execution_id)
+    session_id = headers.get("session_id")
+    if traceparent and session_id:
+        set_session_id(session_id, traceparent=traceparent)
+        kv_store.set(f"execution.{traceparent}", session_id)
