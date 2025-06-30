@@ -14,7 +14,7 @@ from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
 
-_instruments = ("python-a2a >= 0.2.5", "a2a-sdk >= 0.2.5")
+_instruments = ("a2a-sdk >= 0.2.5",)
 _global_tracer = None
 _kv_lock = threading.RLock()  # Add thread-safety for kv_store operations
 
@@ -29,10 +29,9 @@ class A2AInstrumentor(BaseInstrumentor):
         return _instruments
 
     def _instrument(self, **kwargs):
-        try:
-            import a2a
-        except ImportError:
-            raise ImportError("No module named 'a2a'. Please install it first.")
+        import importlib
+        if importlib.util.find_spec("a2a") is None:
+            raise ImportError("No module named 'a2a-sdk'. Please install it first.")
 
         # Instrument `publish`
         from a2a.client import A2AClient
@@ -91,10 +90,9 @@ class A2AInstrumentor(BaseInstrumentor):
         DefaultRequestHandler.on_message_send = instrumented_execute
 
     def _uninstrument(self, **kwargs):
-        try:
-            import a2a
-        except ImportError:
-            raise ImportError("No module named 'python-a2a'. Please install it first.")
+        import importlib
+        if importlib.util.find_spec("a2a") is None:
+            raise ImportError("No module named 'a2a-sdk'. Please install it first.")
 
         # Uninstrument `send_message`
         from a2a.client import A2AClient
