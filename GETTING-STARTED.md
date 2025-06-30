@@ -46,7 +46,7 @@ Before getting started:
 ## Core SDK Components
 ### Key Decorators
 ```
-@graph(name="graph_name"): Instruments LangGraph state graphs for observability
+@graph(name="graph_name"): Captures MAS topology state for observability
 @agent(name="agent_name"): Tracks individual agent nodes and activities
 @tool(name="tool_name"): Monitors tool usage and performance
 @process_slim_msg("agent_name"): Instruments SLIM message processing for inter-agent communication
