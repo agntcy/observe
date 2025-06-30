@@ -21,6 +21,10 @@ def determine_workflow_type(workflow_obj: Any) -> Union[None, dict]:
         for key, value in workflow_obj.items()
     ):
         return build_agent_dict_topology(workflow_obj)
+
+    # Check if it's a list of agent names
+    elif isinstance(workflow_obj, list) and all(isinstance(item, str) for item in workflow_obj):
+        return build_agent_dict_topology(workflow_obj)
     # Try LlamaIndex built-in workflow types first
     result = determine_llama_index_workflow_type(workflow_obj)
     if result:

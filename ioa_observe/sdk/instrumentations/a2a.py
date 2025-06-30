@@ -14,7 +14,7 @@ from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
 
-_instruments = ("python-a2a >= 0.2.5",)
+_instruments = ("python-a2a >= 0.2.5", "a2a-sdk >= 0.2.5")
 _global_tracer = None
 _kv_lock = threading.RLock()  # Add thread-safety for kv_store operations
 
@@ -35,7 +35,8 @@ class A2AInstrumentor(BaseInstrumentor):
             raise ImportError("No module named 'a2a'. Please install it first.")
 
         # Instrument `publish`
-        original_send_message = a2a.client.A2AClient.send_message
+        from a2a.client import A2AClient
+        original_send_message = A2AClient.send_message
 
         @functools.wraps(original_send_message)
         async def instrumented_send_message(
@@ -58,22 +59,24 @@ class A2AInstrumentor(BaseInstrumentor):
                     baggage.set_baggage(f"execution.{traceparent}", session_id)
                 http_kwargs["headers"] = headers
             return await original_send_message(
-                self, request, http_kwargs=http_kwargs, context=context
+                self, request, http_kwargs=http_kwargs
             )
 
-        a2a.client.A2AClient.send_message = instrumented_send_message
+        from a2a.client import A2AClient
+        A2AClient.send_message = instrumented_send_message
 
-        original_execute = a2a.server.agent_execution.AgentExecutor.execute
+        from a2a.server.request_handlers import DefaultRequestHandler
+        original_server_on_message_send = DefaultRequestHandler.on_message_send
 
-        @functools.wraps(original_execute)
-        async def instrumented_execute(self, context, event_queue):
+        @functools.wraps(original_server_on_message_send)
+        async def instrumented_execute(self, params, context):
             # Extract headers from context (assume context.request.headers)
-            headers = getattr(getattr(context, "request", None), "headers", {})
-            traceparent = headers.get("traceparent")
-            session_id = headers.get("session_id")
+
+            traceparent = context.state.get("headers", {}).get("traceparent")
+            session_id = context.state.get("headers", {}).get("session_id")
             carrier = {
                 k.lower(): v
-                for k, v in headers.items()
+                for k, v in context.state.get("headers", {}).items()
                 if k.lower() in ["traceparent", "baggage"]
             }
             if carrier and traceparent:
@@ -82,22 +85,25 @@ class A2AInstrumentor(BaseInstrumentor):
                 if session_id and session_id != "None":
                     set_session_id(session_id, traceparent=traceparent)
                     kv_store.set(f"execution.{traceparent}", session_id)
-            return await original_execute(self, context, event_queue)
+            return await original_server_on_message_send(self, params, context)
 
-        a2a.server.agent_execution.AgentExecutor.execute = instrumented_execute
+        from a2a.server.request_handlers import DefaultRequestHandler
+        DefaultRequestHandler.on_message_send = instrumented_execute
 
     def _uninstrument(self, **kwargs):
         try:
             import a2a
         except ImportError:
-            raise ImportError("No module named 'a2a'. Please install it first.")
+            raise ImportError("No module named 'python-a2a'. Please install it first.")
 
         # Uninstrument `send_message`
-        a2a.client.A2AClient.send_message = (
-            a2a.client.A2AClient.send_message.__wrapped__
+        from a2a.client import A2AClient
+        A2AClient.send_message = (
+            A2AClient.send_message.__wrapped__
         )
 
         # Uninstrument `execute`
-        a2a.server.agent_execution.AgentExecutor.execute = (
-            a2a.server.agent_execution.AgentExecutor.execute.__wrapped__
+        from a2a.server.request_handlers import DefaultRequestHandler
+        DefaultRequestHandler.on_message_send = (
+            DefaultRequestHandler.on_message_send.__wrapped__
         )
