@@ -12,9 +12,9 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 
 from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
-from ioa_observe.sdk.tracing import set_execution_id, get_current_traceparent
+from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
 
-_instruments = ("python-a2a >= 0.2.5",)
+_instruments = ("a2a-sdk >= 0.2.5",)
 _global_tracer = None
 _kv_lock = threading.RLock()  # Add thread-safety for kv_store operations
 
@@ -29,13 +29,15 @@ class A2AInstrumentor(BaseInstrumentor):
         return _instruments
 
     def _instrument(self, **kwargs):
-        try:
-            import a2a
-        except ImportError:
-            raise ImportError("No module named 'a2a'. Please install it first.")
+        import importlib
+
+        if importlib.util.find_spec("a2a") is None:
+            raise ImportError("No module named 'a2a-sdk'. Please install it first.")
 
         # Instrument `publish`
-        original_send_message = a2a.client.A2AClient.send_message
+        from a2a.client import A2AClient
+
+        original_send_message = A2AClient.send_message
 
         @functools.wraps(original_send_message)
         async def instrumented_send_message(
@@ -43,61 +45,67 @@ class A2AInstrumentor(BaseInstrumentor):
         ):
             with _global_tracer.start_as_current_span("a2a.send_message"):
                 traceparent = get_current_traceparent()
-                execution_id = None
+                session_id = None
                 if traceparent:
-                    execution_id = kv_store.get(f"execution.{traceparent}")
-                    if execution_id:
-                        kv_store.set(f"execution.{traceparent}", execution_id)
+                    session_id = kv_store.get(f"execution.{traceparent}")
+                    if session_id:
+                        kv_store.set(f"execution.{traceparent}", session_id)
                 # Inject headers into http_kwargs
                 if http_kwargs is None:
                     http_kwargs = {}
                 headers = http_kwargs.get("headers", {})
                 headers["traceparent"] = traceparent
-                if execution_id:
-                    headers["execution_id"] = execution_id
-                    baggage.set_baggage(f"execution.{traceparent}", execution_id)
+                if session_id:
+                    headers["session_id"] = session_id
+                    baggage.set_baggage(f"execution.{traceparent}", session_id)
                 http_kwargs["headers"] = headers
-            return await original_send_message(
-                self, request, http_kwargs=http_kwargs, context=context
-            )
+            return await original_send_message(self, request, http_kwargs=http_kwargs)
 
-        a2a.client.A2AClient.send_message = instrumented_send_message
+        from a2a.client import A2AClient
 
-        original_execute = a2a.server.agent_execution.AgentExecutor.execute
+        A2AClient.send_message = instrumented_send_message
 
-        @functools.wraps(original_execute)
-        async def instrumented_execute(self, context, event_queue):
+        from a2a.server.request_handlers import DefaultRequestHandler
+
+        original_server_on_message_send = DefaultRequestHandler.on_message_send
+
+        @functools.wraps(original_server_on_message_send)
+        async def instrumented_execute(self, params, context):
             # Extract headers from context (assume context.request.headers)
-            headers = getattr(getattr(context, "request", None), "headers", {})
-            traceparent = headers.get("traceparent")
-            execution_id = headers.get("execution_id")
+
+            traceparent = context.state.get("headers", {}).get("traceparent")
+            session_id = context.state.get("headers", {}).get("session_id")
             carrier = {
                 k.lower(): v
-                for k, v in headers.items()
+                for k, v in context.state.get("headers", {}).items()
                 if k.lower() in ["traceparent", "baggage"]
             }
             if carrier and traceparent:
                 ctx = TraceContextTextMapPropagator().extract(carrier=carrier)
                 ctx = W3CBaggagePropagator().extract(carrier=carrier, context=ctx)
-                if execution_id and execution_id != "None":
-                    set_execution_id(execution_id, traceparent=traceparent)
-                    kv_store.set(f"execution.{traceparent}", execution_id)
-            return await original_execute(self, context, event_queue)
+                if session_id and session_id != "None":
+                    set_session_id(session_id, traceparent=traceparent)
+                    kv_store.set(f"execution.{traceparent}", session_id)
+            return await original_server_on_message_send(self, params, context)
 
-        a2a.server.agent_execution.AgentExecutor.execute = instrumented_execute
+        from a2a.server.request_handlers import DefaultRequestHandler
+
+        DefaultRequestHandler.on_message_send = instrumented_execute
 
     def _uninstrument(self, **kwargs):
-        try:
-            import a2a
-        except ImportError:
-            raise ImportError("No module named 'a2a'. Please install it first.")
+        import importlib
+
+        if importlib.util.find_spec("a2a") is None:
+            raise ImportError("No module named 'a2a-sdk'. Please install it first.")
 
         # Uninstrument `send_message`
-        a2a.client.A2AClient.send_message = (
-            a2a.client.A2AClient.send_message.__wrapped__
-        )
+        from a2a.client import A2AClient
+
+        A2AClient.send_message = A2AClient.send_message.__wrapped__
 
         # Uninstrument `execute`
-        a2a.server.agent_execution.AgentExecutor.execute = (
-            a2a.server.agent_execution.AgentExecutor.execute.__wrapped__
+        from a2a.server.request_handlers import DefaultRequestHandler
+
+        DefaultRequestHandler.on_message_send = (
+            DefaultRequestHandler.on_message_send.__wrapped__
         )

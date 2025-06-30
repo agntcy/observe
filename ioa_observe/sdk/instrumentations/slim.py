@@ -14,7 +14,7 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 
 from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
-from ioa_observe.sdk.tracing import set_execution_id, get_current_traceparent
+from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
 
 _instruments = ("slim-bindings >= 0.2",)
 _global_tracer = None
@@ -50,21 +50,21 @@ class SLIMInstrumentor(BaseInstrumentor):
                 traceparent = get_current_traceparent()
 
             # Thread-safe access to kv_store
-            execution_id = None
+            session_id = None
             if traceparent:
                 with _kv_lock:
-                    execution_id = kv_store.get(f"execution.{traceparent}")
-                    if execution_id:
-                        kv_store.set(f"execution.{traceparent}", execution_id)
+                    session_id = kv_store.get(f"execution.{traceparent}")
+                    if session_id:
+                        kv_store.set(f"execution.{traceparent}", session_id)
             # Add tracing context to the message headers
             headers = {
-                "execution_id": execution_id if execution_id else None,
+                "session_id": session_id if session_id else None,
                 "traceparent": traceparent,
             }
 
             # Set baggage context
-            if traceparent and execution_id:
-                baggage.set_baggage(f"execution.{traceparent}", execution_id)
+            if traceparent and session_id:
+                baggage.set_baggage(f"execution.{traceparent}", session_id)
 
             # Process message payload
             if isinstance(message, bytes):
@@ -120,7 +120,7 @@ class SLIMInstrumentor(BaseInstrumentor):
 
                 # Extract traceparent from headers
                 traceparent = headers.get("traceparent")
-                execution_id = headers.get("execution_id")
+                session_id = headers.get("session_id")
 
                 # First, extract and restore the trace context from headers
                 carrier = {}
@@ -130,27 +130,27 @@ class SLIMInstrumentor(BaseInstrumentor):
                             if k.lower() == key.lower():
                                 carrier[key.lower()] = headers[k]
 
-                # Restore the trace context BEFORE calling set_execution_id
+                # Restore the trace context BEFORE calling set_session_id
                 if carrier and traceparent:
                     ctx = TraceContextTextMapPropagator().extract(carrier=carrier)
                     ctx = W3CBaggagePropagator().extract(carrier=carrier, context=ctx)
 
                     # Now set execution ID with the restored context
-                    if execution_id and execution_id != "None":
+                    if session_id and session_id != "None":
                         # Pass the traceparent explicitly to prevent new context creation
-                        set_execution_id(execution_id, traceparent=traceparent)
+                        set_session_id(session_id, traceparent=traceparent)
 
                         # Store in kv_store with thread safety
                         with _kv_lock:
-                            kv_store.set(f"execution.{traceparent}", execution_id)
+                            kv_store.set(f"execution.{traceparent}", session_id)
 
                 # Fallback: check stored execution ID if not found in headers
-                if traceparent and (not execution_id or execution_id == "None"):
+                if traceparent and (not session_id or session_id == "None"):
                     with _kv_lock:
-                        stored_execution_id = kv_store.get(f"execution.{traceparent}")
-                        if stored_execution_id:
-                            execution_id = stored_execution_id
-                            set_execution_id(execution_id, traceparent=traceparent)
+                        stored_session_id = kv_store.get(f"execution.{traceparent}")
+                        if stored_session_id:
+                            session_id = stored_session_id
+                            set_session_id(session_id, traceparent=traceparent)
 
                 # Process payload
                 payload = message_dict.get("payload", raw_message)
