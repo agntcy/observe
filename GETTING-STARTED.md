@@ -23,7 +23,9 @@ The Observe SDK provides comprehensive observability through decorators to track
    - [Receiving Messages with a Callback](#receiving-messages-with-a-callback)
    - [Starting the Message Receiver](#starting-the-message-receiver)
    - [Publishing Messages](#publishing-messages)
-8. [What's the difference between `@graph` and `@agent` decorators?](#whats-the-difference-between-graph-and-agent-decorators)
+8. [A2A Protocol support](#a2a-protocol-support)
+   - [Initializing the A2A Instrumentor (Agent-to-Agent Communication)](#initializing-the-a2a-instrumentor)
+9. [What's the difference between `@graph` and `@agent` decorators?](#whats-the-difference-between-graph-and-agent-decorators)
 
 ## Prerequisites
 
@@ -455,6 +457,19 @@ await slim.publish(msg=json.dumps(message).encode("utf-8"))
 We will observe various events and metrics being sent to the Otel collector as we interact with other agents in the shared space via SLIM.
 
 
+## A2A Protocol support
+
+The Agent-to-Agent (A2A) Protocol, introduced by Google, is a cross-platform specification for enabling AI agents to communicate, collaborate, and delegate tasks across heterogeneous systems.
+The IOA Observe SDK provides built-in support for A2A protocol, allowing you to instrument your agents for A2A communication.
+
+### Initializing the A2A Instrumentor
+To enable agent-to-agent communication, you can use the `A2AInstrumentor` to instrument your agents for A2A protocol support.
+
+```python
+from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
+# Initialize the A2A instrumentor
+A2AInstrumentor().instrument()
+```
 ## What's the difference between `@graph` and `@agent` decorators?
 
 ### Different Observability Purposes
