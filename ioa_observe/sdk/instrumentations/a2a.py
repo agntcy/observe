@@ -30,11 +30,13 @@ class A2AInstrumentor(BaseInstrumentor):
 
     def _instrument(self, **kwargs):
         import importlib
+
         if importlib.util.find_spec("a2a") is None:
             raise ImportError("No module named 'a2a-sdk'. Please install it first.")
 
         # Instrument `publish`
         from a2a.client import A2AClient
+
         original_send_message = A2AClient.send_message
 
         @functools.wraps(original_send_message)
@@ -57,14 +59,14 @@ class A2AInstrumentor(BaseInstrumentor):
                     headers["session_id"] = session_id
                     baggage.set_baggage(f"execution.{traceparent}", session_id)
                 http_kwargs["headers"] = headers
-            return await original_send_message(
-                self, request, http_kwargs=http_kwargs
-            )
+            return await original_send_message(self, request, http_kwargs=http_kwargs)
 
         from a2a.client import A2AClient
+
         A2AClient.send_message = instrumented_send_message
 
         from a2a.server.request_handlers import DefaultRequestHandler
+
         original_server_on_message_send = DefaultRequestHandler.on_message_send
 
         @functools.wraps(original_server_on_message_send)
@@ -87,21 +89,23 @@ class A2AInstrumentor(BaseInstrumentor):
             return await original_server_on_message_send(self, params, context)
 
         from a2a.server.request_handlers import DefaultRequestHandler
+
         DefaultRequestHandler.on_message_send = instrumented_execute
 
     def _uninstrument(self, **kwargs):
         import importlib
+
         if importlib.util.find_spec("a2a") is None:
             raise ImportError("No module named 'a2a-sdk'. Please install it first.")
 
         # Uninstrument `send_message`
         from a2a.client import A2AClient
-        A2AClient.send_message = (
-            A2AClient.send_message.__wrapped__
-        )
+
+        A2AClient.send_message = A2AClient.send_message.__wrapped__
 
         # Uninstrument `execute`
         from a2a.server.request_handlers import DefaultRequestHandler
+
         DefaultRequestHandler.on_message_send = (
             DefaultRequestHandler.on_message_send.__wrapped__
         )
