@@ -20,25 +20,31 @@ from ioa_observe.sdk.tracing import session_start
 PUBLIC_AGENT_CARD_PATH = "/.well-known/agent.json"
 BASE_URL = "http://localhost:9999"
 
-Observe.init("a2a-random-number-generator-client", api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
+Observe.init(
+    "a2a-random-number-generator-client", api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT")
+)
 
 A2AInstrumentor().instrument()
 
+
 @graph(name="get_agents")
 def get_agents() -> list:
-    """ Returns a list of agents that we can register with ioa_observe SDK.
+    """Returns a list of agents that we can register with ioa_observe SDK.
      We have two agents:
     - a2a-random-number-generator-client: The client that sends requests to the server.
     - a2a-random-number-generator-server: The server that processes requests, finds an appropriate agent, and returns a response.
     """
     return ["a2a-random-number-generator-client", "a2a-random-number-generator-server"]
 
+
 async def main() -> None:
     async with httpx.AsyncClient() as httpx_client:
         # Fetch the agent card
         resolver = A2ACardResolver(httpx_client=httpx_client, base_url=BASE_URL)
         try:
-            print(f"Fetching public agent card from: {BASE_URL}{PUBLIC_AGENT_CARD_PATH}")
+            print(
+                f"Fetching public agent card from: {BASE_URL}{PUBLIC_AGENT_CARD_PATH}"
+            )
             agent_card: AgentCard = await resolver.get_agent_card()
             print("Agent card fetched successfully:")
             print(agent_card.model_dump_json(indent=2))
@@ -66,7 +72,7 @@ async def main() -> None:
 
         # Send message
         print("Sending message...")
-        
+
         response = await client.send_message(request)
 
         # Print response
@@ -76,4 +82,5 @@ async def main() -> None:
 
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(main())

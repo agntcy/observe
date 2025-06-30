@@ -10,9 +10,12 @@ from agent_executor import RandomNumberAgentExecutor
 from ioa_observe.sdk import Observe
 from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
 
-Observe.init("a2a-random-number-generator-server", api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
+Observe.init(
+    "a2a-random-number-generator-server", api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT")
+)
 
 A2AInstrumentor().instrument()
+
 
 def main():
     # Define the skill metadata
