@@ -42,7 +42,6 @@ from ioa_observe.sdk.client import kv_store
 
 from ioa_observe.sdk.utils.const import (
     OBSERVE_WORKFLOW_NAME,
-    OBSERVE_ENTITY_PATH,
     OBSERVE_ASSOCIATION_PROPERTIES,
     OBSERVE_ENTITY_NAME,
     OBSERVE_PROMPT_TEMPLATE_VARIABLES,
