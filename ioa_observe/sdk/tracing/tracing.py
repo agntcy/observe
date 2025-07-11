@@ -266,9 +266,9 @@ class TracerWrapper(object):
         if session_id is not None:
             span.set_attribute("session.id", session_id)
 
-        entity_path = get_value("entity_path")
-        if entity_path is not None:
-            span.set_attribute(OBSERVE_ENTITY_PATH, entity_path)
+        agent_id = get_value("agent_id")
+        if agent_id is not None:
+            span.set_attribute("agent_id", agent_id)
 
         if is_llm_span(span):
             self.llm_call_counter.add(1, attributes=span.attributes)

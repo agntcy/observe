@@ -91,6 +91,7 @@ def _setup_span(
     entity_name,
     tlp_span_kind: Optional[ObserveSpanKindValues] = None,
     version: Optional[int] = None,
+    description: Optional[str] = None,
 ):
     """Sets up the OpenTelemetry span and context"""
     if tlp_span_kind in [
@@ -122,6 +123,7 @@ def _setup_span(
                     "agent_start_event",
                     {
                         "agent_name": entity_name,
+                        "description": description if description else "",
                         "type": tlp_span_kind.value,
                     },
                 )
@@ -249,6 +251,7 @@ def _cleanup_span(span, ctx_token):
 
 def entity_method(
     name: Optional[str] = None,
+    description: Optional[str] = None,
     version: Optional[int] = None,
     tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
 ) -> Callable[[F], F]:
@@ -266,7 +269,7 @@ def entity_method(
                         return
 
                     span, ctx, ctx_token = _setup_span(
-                        entity_name, tlp_span_kind, version
+                        entity_name, tlp_span_kind, version, description if description else None
                     )
                     _handle_span_input(span, args, kwargs, cls=JSONEncoder)
 
@@ -284,7 +287,7 @@ def entity_method(
                         return await fn(*args, **kwargs)
 
                     span, ctx, ctx_token = _setup_span(
-                        entity_name, tlp_span_kind, version
+                        entity_name, tlp_span_kind, version, description if description else None
                     )
                     _handle_span_input(span, args, kwargs, cls=JSONEncoder)
                     success = False
@@ -370,10 +373,10 @@ def entity_method(
                 if not TracerWrapper.verify_initialized():
                     return fn(*args, **kwargs)
 
-                span, ctx, ctx_token = _setup_span(entity_name, tlp_span_kind, version)
+                span, ctx, ctx_token = _setup_span(entity_name, tlp_span_kind, version, description if description else None)
 
                 _handle_span_input(span, args, kwargs, cls=JSONEncoder)
-                _handle_agent_span(span, entity_name, tlp_span_kind)
+                _handle_agent_span(span, entity_name, description, tlp_span_kind)
                 success = False
 
                 # Record heartbeat for agent
@@ -469,6 +472,7 @@ def entity_method(
 
 def entity_class(
     name: Optional[str],
+    description: Optional[str],
     version: Optional[int],
     method_name: str,
     tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
@@ -479,7 +483,7 @@ def entity_class(
         setattr(
             cls,
             method_name,
-            entity_method(name=task_name, version=version, tlp_span_kind=tlp_span_kind)(
+            entity_method(name=task_name, description=description, version=version, tlp_span_kind=tlp_span_kind)(
                 method
             ),
         )
@@ -488,14 +492,16 @@ def entity_class(
     return decorator
 
 
-def _handle_agent_span(span, entity_name, tlp_span_kind):
+def _handle_agent_span(span, entity_name, description, tlp_span_kind):
     if tlp_span_kind == ObserveSpanKindValues.AGENT:
         try:
             set_agent_id_event(entity_name)
+            print("Description:", description)
             span.add_event(
                 "agent_start_event",
                 {
                     "agent_name": entity_name,
+                    "description": description if description else "",
                     "type": tlp_span_kind.value
                     if tlp_span_kind != "graph"
                     else "graph",
@@ -581,7 +587,8 @@ def _handle_graph_response(span, res, tlp_span_kind):
             }
 
             # Convert to JSON string
-            s_graph_json = json.dumps(graph_dict, indent=2)
+            s_graph_json = json.dumps(graph_dict)
+            # convert to JSON and set as attribute
             span.set_attribute("gen_ai.ioa.graph", s_graph_json)
 
             # get graph dynamism

@@ -64,15 +64,15 @@ class MathAgentWorkflow:
         return await self.workflow.run(user_msg=user_msg)
 
 
-workflow = MathAgentWorkflow(
-    tools=[multiply, add],
-    llm=llm,
-    system_prompt="You are an agent that can perform basic mathematical operations using tools.",
-)
-
 
 async def main():
     session_start()  # Start a new session for tracing
+    workflow = MathAgentWorkflow(
+        tools=[multiply, add],
+        llm=llm,
+        system_prompt="You are an agent that can perform basic mathematical operations using tools.",
+    )
+
     response = await workflow.run(user_msg="What is 20+(2*4)?")
     print(response)
 
