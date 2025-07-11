@@ -25,7 +25,12 @@ def task(
     tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
 ) -> Callable[[F], F]:
     if method_name is None:
-        return entity_method(name=name, description=description,  version=version, tlp_span_kind=tlp_span_kind)
+        return entity_method(
+            name=name,
+            description=description,
+            version=version,
+            tlp_span_kind=tlp_span_kind,
+        )
     else:
         return entity_class(
             name=name,
@@ -46,7 +51,12 @@ def workflow(
     ] = ObserveSpanKindValues.WORKFLOW,
 ) -> Callable[[F], F]:
     if method_name is None:
-        return entity_method(name=name, description=description,version=version, tlp_span_kind=tlp_span_kind)
+        return entity_method(
+            name=name,
+            description=description,
+            version=version,
+            tlp_span_kind=tlp_span_kind,
+        )
     else:
         return entity_class(
             name=name,

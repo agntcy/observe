@@ -269,7 +269,10 @@ def entity_method(
                         return
 
                     span, ctx, ctx_token = _setup_span(
-                        entity_name, tlp_span_kind, version, description if description else None
+                        entity_name,
+                        tlp_span_kind,
+                        version,
+                        description if description else None,
                     )
                     _handle_span_input(span, args, kwargs, cls=JSONEncoder)
 
@@ -287,7 +290,10 @@ def entity_method(
                         return await fn(*args, **kwargs)
 
                     span, ctx, ctx_token = _setup_span(
-                        entity_name, tlp_span_kind, version, description if description else None
+                        entity_name,
+                        tlp_span_kind,
+                        version,
+                        description if description else None,
                     )
                     _handle_span_input(span, args, kwargs, cls=JSONEncoder)
                     success = False
@@ -373,7 +379,12 @@ def entity_method(
                 if not TracerWrapper.verify_initialized():
                     return fn(*args, **kwargs)
 
-                span, ctx, ctx_token = _setup_span(entity_name, tlp_span_kind, version, description if description else None)
+                span, ctx, ctx_token = _setup_span(
+                    entity_name,
+                    tlp_span_kind,
+                    version,
+                    description if description else None,
+                )
 
                 _handle_span_input(span, args, kwargs, cls=JSONEncoder)
                 _handle_agent_span(span, entity_name, description, tlp_span_kind)
@@ -483,9 +494,12 @@ def entity_class(
         setattr(
             cls,
             method_name,
-            entity_method(name=task_name, description=description, version=version, tlp_span_kind=tlp_span_kind)(
-                method
-            ),
+            entity_method(
+                name=task_name,
+                description=description,
+                version=version,
+                tlp_span_kind=tlp_span_kind,
+            )(method),
         )
         return cls
 

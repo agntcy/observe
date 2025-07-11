@@ -75,7 +75,10 @@ def chatbot(state: State):
     return messages
 
 
-@agent(name="supervisor", description="A supervisor agent that manages the conversation between researchers and coders.")
+@agent(
+    name="supervisor",
+    description="A supervisor agent that manages the conversation between researchers and coders.",
+)
 def supervisor_node(state: State) -> Command[Literal["researcher", "coder", "__end__"]]:
     messages = [
         {"role": "system", "content": system_prompt},
@@ -93,7 +96,10 @@ research_agent = create_react_agent(
 )
 
 
-@agent(name="research", description="A researcher agent that performs web searches and returns results.")
+@agent(
+    name="research",
+    description="A researcher agent that performs web searches and returns results.",
+)
 def research_node(state: State) -> Command[Literal["supervisor"]]:
     result = research_agent.invoke(state)
     return Command(
@@ -109,7 +115,11 @@ def research_node(state: State) -> Command[Literal["supervisor"]]:
 # NOTE: THIS PERFORMS ARBITRARY CODE EXECUTION, WHICH CAN BE UNSAFE WHEN NOT SANDBOXED
 code_agent = create_react_agent(llm, tools=[python_repl_tool])
 
-@agent(name="code", description="A coder agent that executes Python code and returns results.")
+
+@agent(
+    name="code",
+    description="A coder agent that executes Python code and returns results.",
+)
 def code_node(state: State) -> Command[Literal["supervisor"]]:
     result = code_agent.invoke(state)
     return Command(
@@ -120,6 +130,7 @@ def code_node(state: State) -> Command[Literal["supervisor"]]:
         },
         goto="supervisor",
     )
+
 
 @graph(name="multi_agent_graph")
 def build_graph():

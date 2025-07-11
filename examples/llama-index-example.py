@@ -64,7 +64,6 @@ class MathAgentWorkflow:
         return await self.workflow.run(user_msg=user_msg)
 
 
-
 async def main():
     session_start()  # Start a new session for tracing
     workflow = MathAgentWorkflow(
