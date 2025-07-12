@@ -63,6 +63,10 @@ class MathAgentWorkflow:
     async def run(self, user_msg: str):
         return await self.workflow.run(user_msg=user_msg)
 
+    def get_workflow(self):
+        """Return the underlying workflow for topology detection"""
+        return self.workflow
+
 
 async def main():
     session_start()  # Start a new session for tracing

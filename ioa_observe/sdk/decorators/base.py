@@ -247,7 +247,6 @@ def _cleanup_span(span, ctx_token):
     """End the span process and detach the context token"""
 
     # Calculate agent chain completion time before ending span
-    print(span.attributes)
     span_kind = span.attributes.get(OBSERVE_SPAN_KIND)
     if span_kind == ObserveSpanKindValues.AGENT.value:
         start_time = span.attributes.get("agent_chain_start_time")
@@ -525,7 +524,6 @@ def _handle_agent_span(span, entity_name, description, tlp_span_kind):
     if tlp_span_kind == ObserveSpanKindValues.AGENT:
         try:
             set_agent_id_event(entity_name)
-            print("Description:", description)
             span.add_event(
                 "agent_start_event",
                 {
