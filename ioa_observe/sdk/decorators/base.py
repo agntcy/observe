@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import time
 import traceback
 from functools import wraps
 import os
@@ -147,9 +148,8 @@ def _setup_span(
         if version:
             span.set_attribute(OBSERVE_ENTITY_VERSION, version)
 
-        # if session_id:
-        #     print(f"Execution ID: {session_id}")
-        #     span.set_attribute("session.id", session_id)
+        if tlp_span_kind == ObserveSpanKindValues.AGENT:
+            span.set_attribute("agent_chain_start_time", time.time())
 
     return span, ctx, ctx_token
 
@@ -245,6 +245,21 @@ def _handle_span_output(span, tlp_span_kind, res, cls=None):
 
 def _cleanup_span(span, ctx_token):
     """End the span process and detach the context token"""
+
+    # Calculate agent chain completion time before ending span
+    print(span.attributes)
+    span_kind = span.attributes.get(OBSERVE_SPAN_KIND)
+    if span_kind == ObserveSpanKindValues.AGENT.value:
+        start_time = span.attributes.get("agent_chain_start_time")
+        if start_time is not None:
+            import time
+
+            completion_time = time.time() - start_time
+
+            # Emit the metric
+            TracerWrapper().agent_chain_completion_time_histogram.record(
+                completion_time, attributes=span.attributes
+            )
     span.end()
     context_api.detach(ctx_token)
 

@@ -226,6 +226,11 @@ class TracerWrapper(object):
             obj.error_counter = meter.create_counter(
                 "slim.errors", description="Number of SLIM message errors or drops"
             )
+            obj.agent_chain_completion_time_histogram = meter.create_histogram(
+                name="gen_ai.client.ioa.agent.end_to_end_chain_completion_time",
+                description="Records the end-to-end chain completion time for a single agent",
+                unit="s",
+            )
             if propagator:
                 set_global_textmap(propagator)
 
