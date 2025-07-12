@@ -285,7 +285,7 @@ def get_multi_agent_workflow_graph_as_json(agent_workflow_instance):
 
 def detect_custom_agent_workflow(obj: Any) -> Union[None, dict]:
     # Check if object has a workflow attribute that's a LlamaIndex workflow
-    if hasattr(obj, 'workflow') and isinstance(obj.workflow, (Workflow, AgentWorkflow)):
+    if hasattr(obj, "workflow") and isinstance(obj.workflow, (Workflow, AgentWorkflow)):
         return determine_llama_index_workflow_type(obj.workflow)
 
     # Detects and generates topology for custom agent workflows not built with LlamaIndex."""
