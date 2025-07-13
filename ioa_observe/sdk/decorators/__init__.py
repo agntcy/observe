@@ -50,21 +50,14 @@ def workflow(
         Union[ObserveSpanKindValues, str]
     ] = ObserveSpanKindValues.WORKFLOW,
 ) -> Callable[[F], F]:
-    if method_name is None:
-        return entity_method(
-            name=name,
-            description=description,
-            version=version,
-            tlp_span_kind=tlp_span_kind,
-        )
-    else:
-        return entity_class(
-            name=name,
-            description=description,
-            version=version,
-            method_name=method_name,
-            tlp_span_kind=tlp_span_kind,
-        )
+    # Always use entity_class for class decorators
+    return entity_class(
+        name=name,
+        description=description,
+        version=version,
+        method_name=method_name,
+        tlp_span_kind=tlp_span_kind,
+    )
 
 
 def graph(
