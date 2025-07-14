@@ -19,6 +19,7 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
     OTLPSpanExporter as GRPCExporter,
 )
+from opentelemetry.metrics import Observation
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider, SpanProcessor
 from opentelemetry.propagators.textmap import TextMapPropagator
@@ -128,6 +129,7 @@ class TracerWrapper(object):
                 return obj
 
             obj.__image_uploader = image_uploader
+            obj._agent_execution_counts = {}  # {(agent_name): [success_count, total_count]}
             TracerWrapper.app_name = TracerWrapper.resource_attributes.get(
                 "service.name", "observe"
             )
@@ -231,6 +233,12 @@ class TracerWrapper(object):
                 description="Records the end-to-end chain completion time for a single agent",
                 unit="s",
             )
+            obj.agent_execution_success_rate = meter.create_observable_gauge(
+                name="gen_ai.client.ioa.agent.execution_success_rate",
+                description="Success rate of agent executions",
+                unit="1",
+                callbacks=[obj._observe_agent_execution_success_rate],
+            )
             if propagator:
                 set_global_textmap(propagator)
 
@@ -331,22 +339,12 @@ class TracerWrapper(object):
 
     def span_processor_on_ending(self, span):
         determine_reliability_score(span)
-
-        # self.rename_span_attribute(span)
         start_time = span.attributes.get("ioa_start_time")
         # publish span to the exporter
 
         if start_time is not None:
             latency = (time.time() - start_time) * 1000
             self.response_latency_histogram.record(latency, attributes=span.attributes)
-
-    def rename_span_attribute(self, span):
-        # for each span attribute, if the span attribute name contains traceloop, replace it with ioa
-        for key in list(span.attributes.keys()):
-            if "traceloop" in key:
-                new_key = key.replace("traceloop", "ioa")
-                span[new_key] = span.attributes[key]
-                del span[key]
 
     @staticmethod
     def set_static_params(
@@ -387,6 +385,24 @@ class TracerWrapper(object):
 
     def get_tracer(self):
         return self.__tracer_provider.get_tracer(TRACER_NAME)
+
+    def record_agent_execution(self, agent_name: str, success: bool):
+        counts = self._agent_execution_counts.setdefault(agent_name, [0, 0])
+        if success:
+            counts[0] += 1  # success count
+        counts[1] += 1  # total count
+
+    def _observe_agent_execution_success_rate(self, observer):
+        measurements = []
+        for agent_name, (
+            success_count,
+            total_count,
+        ) in self._agent_execution_counts.items():
+            rate = (success_count / total_count) if total_count > 0 else 0.0
+            measurements.append(
+                Observation(value=rate, attributes={"agent_name": agent_name})
+            )
+        return measurements
 
 
 def set_association_properties(properties: dict) -> None:

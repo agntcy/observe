@@ -382,6 +382,8 @@ def entity_method(
                         _handle_agent_failure_event(str(e), span, tlp_span_kind)
                         raise e
                     finally:
+                        if tlp_span_kind == ObserveSpanKindValues.AGENT:
+                            TracerWrapper().record_agent_execution(entity_name, success)
                         _cleanup_span(span, ctx_token)
                     return res
 
@@ -487,6 +489,8 @@ def entity_method(
                     _handle_agent_failure_event(str(e), span, tlp_span_kind)
                     raise e
                 finally:
+                    if tlp_span_kind == ObserveSpanKindValues.AGENT:
+                        TracerWrapper().record_agent_execution(entity_name, success)
                     _cleanup_span(span, ctx_token)
                 return res
 
