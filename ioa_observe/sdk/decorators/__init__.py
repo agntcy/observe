@@ -1,6 +1,6 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
-
+import inspect
 from typing import Optional, Union, TypeVar, Callable, Awaitable
 
 from typing_extensions import ParamSpec
@@ -50,18 +50,31 @@ def workflow(
         Union[ObserveSpanKindValues, str]
     ] = ObserveSpanKindValues.WORKFLOW,
 ) -> Callable[[F], F]:
-    # Always use entity_class for class decorators
-    return entity_class(
-        name=name,
-        description=description,
-        version=version,
-        method_name=method_name,
-        tlp_span_kind=tlp_span_kind,
-    )
+    def decorator(target):
+        # Check if target is a class
+        if inspect.isclass(target):
+            return entity_class(
+                name=name,
+                description=description,
+                version=version,
+                method_name=method_name,
+                tlp_span_kind=tlp_span_kind,
+            )(target)
+        else:
+            # Target is a function/method
+            return entity_method(
+                name=name,
+                description=description,
+                version=version,
+                tlp_span_kind=tlp_span_kind,
+            )(target)
+
+    return decorator
 
 
 def graph(
     name: Optional[str] = None,
+    description: Optional[str] = None,
     version: Optional[int] = None,
     method_name: Optional[str] = None,
 ) -> Callable[[F], F]:
