@@ -158,15 +158,41 @@ def _handle_span_input(span, args, kwargs, cls=None):
     """Handles entity input logging in JSON for both sync and async functions"""
     try:
         if _should_send_prompts():
-            json_input = json.dumps(
-                {"args": args, "kwargs": kwargs}, **({"cls": cls} if cls else {})
-            )
+            # Use a safer serialization approach to avoid recursion
+            safe_args = []
+            safe_kwargs = {}
+
+            # Safely convert args
+            for arg in args:
+                try:
+                    # Test if the object can be JSON serialized
+                    json.dumps(arg)
+                    safe_args.append(arg)
+                except (TypeError, ValueError, PydanticSerializationError):
+                    # If it can't be serialized, use string representation
+                    safe_args.append(str(arg))
+
+            # Safely convert kwargs
+            for key, value in kwargs.items():
+                try:
+                    # Test if the object can be JSON serialized
+                    json.dumps(value)
+                    safe_kwargs[key] = value
+                except (TypeError, ValueError, PydanticSerializationError):
+                    # If it can't be serialized, use string representation
+                    safe_kwargs[key] = str(value)
+
+            # Create the JSON without custom encoder to avoid recursion
+            json_input = json.dumps({"args": safe_args, "kwargs": safe_kwargs})
+
             if _is_json_size_valid(json_input):
                 span.set_attribute(
                     OBSERVE_ENTITY_INPUT,
                     json_input,
                 )
-    except TypeError as e:
+    except Exception as e:
+        # Log the exception but don't fail the actual function call
+        print(f"Warning: Failed to serialize input for span: {e}")
         Telemetry().log_exception(e)
 
 
@@ -219,27 +245,32 @@ def _handle_span_output(span, tlp_span_kind, res, cls=None):
                             "gen_ai.ioa.agent.connection_reliability", reliability
                         )
 
-        if _should_send_prompts():
-            try:
-                json_output = json.dumps(res, **({"cls": cls} if cls else {}))
-            except (TypeError, PydanticSerializationError):
-                # Fallback for objects that can't be directly serialized
+            if _should_send_prompts():
                 try:
-                    # Try to serialize a string representation
-                    safe_output = str(res)
-                    json_output = json.dumps({"__str_representation__": safe_output})
-                except Exception:
-                    # If all serialization fails, skip output attribute
-                    json_output = None
-            if _is_json_size_valid(json_output):
-                span.set_attribute(
-                    OBSERVE_ENTITY_OUTPUT,
-                    json_output,
-                )
-                TracerWrapper().span_processor_on_ending(
-                    span
-                )  # record the response latency
-    except TypeError as e:
+                    # Try direct JSON serialization first (without custom encoder)
+                    json_output = json.dumps(res)
+                except (TypeError, PydanticSerializationError, ValueError):
+                    # Fallback for objects that can't be directly serialized
+                    try:
+                        # Try to serialize a string representation
+                        safe_output = str(res)
+                        json_output = json.dumps(
+                            {"__str_representation__": safe_output}
+                        )
+                    except Exception:
+                        # If all serialization fails, skip output attribute
+                        json_output = None
+
+                if json_output and _is_json_size_valid(json_output):
+                    span.set_attribute(
+                        OBSERVE_ENTITY_OUTPUT,
+                        json_output,
+                    )
+                    TracerWrapper().span_processor_on_ending(
+                        span
+                    )  # record the response latency
+    except Exception as e:
+        print(f"Warning: Failed to serialize output for span: {e}")
         Telemetry().log_exception(e)
 
 
@@ -286,7 +317,7 @@ def entity_method(
                         entity_name,
                         tlp_span_kind,
                         version,
-                        description if description else None,
+                        description,
                     )
                     _handle_span_input(span, args, kwargs, cls=JSONEncoder)
 
@@ -307,8 +338,12 @@ def entity_method(
                         entity_name,
                         tlp_span_kind,
                         version,
-                        description if description else None,
+                        description,
                     )
+
+                    # Handle case where span setup failed
+                    if span is None:
+                        return fn(*args, **kwargs)
                     _handle_span_input(span, args, kwargs, cls=JSONEncoder)
                     success = False
                     try:
@@ -399,8 +434,12 @@ def entity_method(
                     entity_name,
                     tlp_span_kind,
                     version,
-                    description if description else None,
+                    description,
                 )
+
+                # Handle case where span setup failed
+                if span is None:
+                    return fn(*args, **kwargs)
 
                 _handle_span_input(span, args, kwargs, cls=JSONEncoder)
                 _handle_agent_span(span, entity_name, description, tlp_span_kind)
@@ -571,15 +610,15 @@ def _handle_agent_failure_event(res, span, tlp_span_kind):
         # Skip if span is already ended
         return
     if tlp_span_kind == ObserveSpanKindValues.AGENT:
-        TracerWrapper().failing_agents_counter.add(
-            1,
-            attributes={
-                "agent_name": span.attributes["observe.workflow.name"]
-                if "observe.workflow.name" in span.attributes
-                else span.attributes["traceloop.workflow.name"],
-                "failure_reason": res,  # or could be "none" if you don't want to specify
-            },
-        )
+        attributes = {}
+        attributes["failure_reason"] = res
+
+        if "observe.workflow.name" in span.attributes:
+            attributes["agent_name"] = span.attributes["observe.workflow.name"]
+        elif "traceloop.workflow.name" in span.attributes:
+            attributes["agent_name"] = span.attributes["traceloop.workflow.name"]
+
+        TracerWrapper().failing_agents_counter.add(1, attributes=attributes)
 
 
 def _handle_execution_result(span, success):
