@@ -42,7 +42,6 @@ from ioa_observe.sdk.client import kv_store
 
 from ioa_observe.sdk.utils.const import (
     OBSERVE_WORKFLOW_NAME,
-    OBSERVE_ENTITY_PATH,
     OBSERVE_ASSOCIATION_PROPERTIES,
     OBSERVE_ENTITY_NAME,
     OBSERVE_PROMPT_TEMPLATE_VARIABLES,
@@ -227,6 +226,11 @@ class TracerWrapper(object):
             obj.error_counter = meter.create_counter(
                 "slim.errors", description="Number of SLIM message errors or drops"
             )
+            obj.agent_chain_completion_time_histogram = meter.create_histogram(
+                name="gen_ai.client.ioa.agent.end_to_end_chain_completion_time",
+                description="Records the end-to-end chain completion time for a single agent",
+                unit="s",
+            )
             if propagator:
                 set_global_textmap(propagator)
 
@@ -266,9 +270,9 @@ class TracerWrapper(object):
         if session_id is not None:
             span.set_attribute("session.id", session_id)
 
-        entity_path = get_value("entity_path")
-        if entity_path is not None:
-            span.set_attribute(OBSERVE_ENTITY_PATH, entity_path)
+        agent_id = get_value("agent_id")
+        if agent_id is not None:
+            span.set_attribute("agent_id", agent_id)
 
         if is_llm_span(span):
             self.llm_call_counter.add(1, attributes=span.attributes)

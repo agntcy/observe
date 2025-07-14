@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import time
 import traceback
 from functools import wraps
 import os
@@ -91,6 +92,7 @@ def _setup_span(
     entity_name,
     tlp_span_kind: Optional[ObserveSpanKindValues] = None,
     version: Optional[int] = None,
+    description: Optional[str] = None,
 ):
     """Sets up the OpenTelemetry span and context"""
     if tlp_span_kind in [
@@ -122,6 +124,7 @@ def _setup_span(
                     "agent_start_event",
                     {
                         "agent_name": entity_name,
+                        "description": description if description else "",
                         "type": tlp_span_kind.value,
                     },
                 )
@@ -145,9 +148,8 @@ def _setup_span(
         if version:
             span.set_attribute(OBSERVE_ENTITY_VERSION, version)
 
-        # if session_id:
-        #     print(f"Execution ID: {session_id}")
-        #     span.set_attribute("session.id", session_id)
+        if tlp_span_kind == ObserveSpanKindValues.AGENT:
+            span.set_attribute("agent_chain_start_time", time.time())
 
     return span, ctx, ctx_token
 
@@ -243,12 +245,27 @@ def _handle_span_output(span, tlp_span_kind, res, cls=None):
 
 def _cleanup_span(span, ctx_token):
     """End the span process and detach the context token"""
+
+    # Calculate agent chain completion time before ending span
+    span_kind = span.attributes.get(OBSERVE_SPAN_KIND)
+    if span_kind == ObserveSpanKindValues.AGENT.value:
+        start_time = span.attributes.get("agent_chain_start_time")
+        if start_time is not None:
+            import time
+
+            completion_time = time.time() - start_time
+
+            # Emit the metric
+            TracerWrapper().agent_chain_completion_time_histogram.record(
+                completion_time, attributes=span.attributes
+            )
     span.end()
     context_api.detach(ctx_token)
 
 
 def entity_method(
     name: Optional[str] = None,
+    description: Optional[str] = None,
     version: Optional[int] = None,
     tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
 ) -> Callable[[F], F]:
@@ -266,7 +283,10 @@ def entity_method(
                         return
 
                     span, ctx, ctx_token = _setup_span(
-                        entity_name, tlp_span_kind, version
+                        entity_name,
+                        tlp_span_kind,
+                        version,
+                        description if description else None,
                     )
                     _handle_span_input(span, args, kwargs, cls=JSONEncoder)
 
@@ -284,7 +304,10 @@ def entity_method(
                         return await fn(*args, **kwargs)
 
                     span, ctx, ctx_token = _setup_span(
-                        entity_name, tlp_span_kind, version
+                        entity_name,
+                        tlp_span_kind,
+                        version,
+                        description if description else None,
                     )
                     _handle_span_input(span, args, kwargs, cls=JSONEncoder)
                     success = False
@@ -370,10 +393,15 @@ def entity_method(
                 if not TracerWrapper.verify_initialized():
                     return fn(*args, **kwargs)
 
-                span, ctx, ctx_token = _setup_span(entity_name, tlp_span_kind, version)
+                span, ctx, ctx_token = _setup_span(
+                    entity_name,
+                    tlp_span_kind,
+                    version,
+                    description if description else None,
+                )
 
                 _handle_span_input(span, args, kwargs, cls=JSONEncoder)
-                _handle_agent_span(span, entity_name, tlp_span_kind)
+                _handle_agent_span(span, entity_name, description, tlp_span_kind)
                 success = False
 
                 # Record heartbeat for agent
@@ -469,26 +497,51 @@ def entity_method(
 
 def entity_class(
     name: Optional[str],
+    description: Optional[str],
     version: Optional[int],
-    method_name: str,
+    method_name: Optional[str],
     tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
 ):
     def decorator(cls):
         task_name = name if name else camel_to_snake(cls.__qualname__)
-        method = getattr(cls, method_name)
-        setattr(
-            cls,
-            method_name,
-            entity_method(name=task_name, version=version, tlp_span_kind=tlp_span_kind)(
-                method
-            ),
-        )
+
+        methods_to_wrap = []
+
+        if method_name:
+            # Specific method specified - existing behavior
+            methods_to_wrap = [method_name]
+        else:
+            # No method specified - wrap all public methods
+            for attr_name in dir(cls):
+                if (
+                    not attr_name.startswith("_")  # Skip private/built-in methods
+                    and attr_name != "mro"  # Skip class method
+                    and hasattr(cls, attr_name)
+                    and callable(getattr(cls, attr_name))
+                    and not isinstance(
+                        getattr(cls, attr_name), (classmethod, staticmethod, property)
+                    )
+                ):
+                    methods_to_wrap.append(attr_name)
+
+        # Wrap all detected methods
+        for method_to_wrap in methods_to_wrap:
+            if hasattr(cls, method_to_wrap):
+                method = getattr(cls, method_to_wrap)
+                wrapped_method = entity_method(
+                    name=f"{task_name}.{method_to_wrap}",
+                    description=description,
+                    version=version,
+                    tlp_span_kind=tlp_span_kind,
+                )(method)
+                setattr(cls, method_to_wrap, wrapped_method)
+
         return cls
 
     return decorator
 
 
-def _handle_agent_span(span, entity_name, tlp_span_kind):
+def _handle_agent_span(span, entity_name, description, tlp_span_kind):
     if tlp_span_kind == ObserveSpanKindValues.AGENT:
         try:
             set_agent_id_event(entity_name)
@@ -496,6 +549,7 @@ def _handle_agent_span(span, entity_name, tlp_span_kind):
                 "agent_start_event",
                 {
                     "agent_name": entity_name,
+                    "description": description if description else "",
                     "type": tlp_span_kind.value
                     if tlp_span_kind != "graph"
                     else "graph",
@@ -581,7 +635,8 @@ def _handle_graph_response(span, res, tlp_span_kind):
             }
 
             # Convert to JSON string
-            s_graph_json = json.dumps(graph_dict, indent=2)
+            s_graph_json = json.dumps(graph_dict)
+            # convert to JSON and set as attribute
             span.set_attribute("gen_ai.ioa.graph", s_graph_json)
 
             # get graph dynamism

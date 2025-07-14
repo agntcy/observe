@@ -48,17 +48,14 @@ def determine_workflow_type(workflow_obj: Any) -> Union[None, dict]:
     return None
 
 
-# This function generates a graph topology dict for the workflow.
 def determine_llama_index_workflow_type(workflow_obj: Any) -> Union[None, dict]:
     """Generates a graph topology dict for the llama-index compatible workflow."""
-    if isinstance(workflow_obj, Workflow) and "agent.Workflow" in str(
-        workflow_obj.__class__.__bases__
-    ):
-        return generate_topology_dict(workflow_obj)
-    elif isinstance(
-        workflow_obj, AgentWorkflow
-    ) and "multi_agent_workflow.AgentWorkflow" in str(workflow_obj.__class__.__bases__):
+    # Check for AgentWorkflow first (more specific)
+    if isinstance(workflow_obj, AgentWorkflow):
         return get_multi_agent_workflow_graph_as_json(workflow_obj)
+    # Check for general Workflow (less specific)
+    elif isinstance(workflow_obj, Workflow):
+        return generate_topology_dict(workflow_obj)
     else:
         return None
 
@@ -177,7 +174,6 @@ def generate_topology_dict(workflow: Workflow) -> Union[None, dict]:
                 else:
                     # No next step? Ignore or log
                     pass
-
     return {"nodes": nodes, "edges": edges}
 
 
@@ -288,8 +284,13 @@ def get_multi_agent_workflow_graph_as_json(agent_workflow_instance):
 
 
 def detect_custom_agent_workflow(obj: Any) -> Union[None, dict]:
-    """Detects and generates topology for custom agent workflows not built with LlamaIndex."""
+    # Check if object has a workflow attribute that's a LlamaIndex workflow
+    if hasattr(obj, "workflow") and isinstance(obj.workflow, (Workflow, AgentWorkflow)):
+        return determine_llama_index_workflow_type(obj.workflow)
+
+    # Detects and generates topology for custom agent workflows not built with LlamaIndex."""
     # Check if this is a dictionary of agents returned from a get_agents method
+
     if isinstance(obj, dict) and all(
         hasattr(agent, "invoke") for agent in obj.values()
     ):

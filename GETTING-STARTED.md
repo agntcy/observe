@@ -47,8 +47,8 @@ Before getting started:
 ### Key Decorators
 ```
 @graph(name="graph_name"): Captures MAS topology state for observability
-@agent(name="agent_name"): Tracks individual agent nodes and activities
-@tool(name="tool_name"): Monitors tool usage and performance
+@agent(name="agent_name", description="Some description"): Tracks individual agent nodes and activities
+@tool(name="tool_name", description="Some description"): Monitors tool usage and performance
 @process_slim_msg("agent_name"): Instruments SLIM message processing for inter-agent communication
 ```
 
@@ -135,7 +135,7 @@ def send_http_request(payload: dict, session_id: dict) -> dict:
         # Handle error as needed
         return {"error": str(e)}
 
-@agent(name="remote_agent_http")
+@agent(name="remote_agent_http", description="Remote agent that communicates via HTTP")
 def node_remote_http(state: GraphState) -> Dict[str, Any]:
     if not state["messages"]:
         logger.error(json.dumps({"error": "GraphState contains no messages"}))
@@ -203,7 +203,7 @@ Use the `@agent` decorator for individual agents:
 from ioa_observe.sdk.decorators import agent
 from langchain_core.messages import HumanMessage
 
-@agent(name="processing_agent")
+@agent(name="processing_agent", description="Agent that processes user input")
 def processing_node(state: GraphState) -> Dict[str, Any]:
     """Process user input and generate response."""
     # Agent processing logic
@@ -245,7 +245,7 @@ Use the `@tool` decorator to track tool operations:
 ```python
 from ioa_observe.sdk.decorators import tool
 
-@tool(name="Python REPL tool")
+@tool(name="Python REPL tool", description="Execute Python code in a REPL environment")
 def python_repl_tool(code: Annotated[str, "The python code to execute"]):
     """Execute Python code and do math."""
     try:
@@ -267,12 +267,12 @@ Decorate individual tool functions:
 ```python
 from ioa_observe.sdk.decorators import tool
 
-@tool(name="multiply")
+@tool(name="multiply", description="Multiply two numbers")
 def multiply(a: float, b: float) -> float:
     """Multiply two numbers and returns the product"""
     return a * b
 
-@tool(name="add")
+@tool(name="add", description="Add two numbers")
 def add(a: float, b: float) -> float:
     """Add two numbers and returns the sum"""
     return a + b
@@ -286,7 +286,7 @@ Decorate agent classes:
 from ioa_observe.sdk.decorators import agent
 from llama_index.core.agent.workflow import FunctionAgent
 
-@agent(name="AgentOne")
+@agent(name="AgentOne", description="Agent for basic data processing")
 class AgentOne(FunctionAgent):
     """Agent One class for initial processing tasks."""
 
@@ -310,7 +310,7 @@ from ioa_observe.sdk.decorators import graph, agent
 from llama_index.core.agent.workflow import AgentWorkflow
 
 @graph(name="multi_agent_workflow")
-@agent(name="multi_agent_workflow")
+@agent(name="multi_agent_workflow", description="Workflow managing multiple agents")
 class MultiAgentWorkflow(AgentWorkflow):
     """Custom workflow class that manages multiple agents."""
 
@@ -346,7 +346,7 @@ Decorate each agent with the `@agent` decorator to track its activities:
 ```python
 from ioa_observe.sdk.decorators import agent
 
-@agent(name="ChatbotAgent")
+@agent(name="ChatbotAgent", description="Agent that handles chatbot interactions")
 class ChatbotAgent:
     def __init__(self):
         # Agent initialization code...
@@ -491,8 +491,8 @@ A2AInstrumentor().instrument()
 When you have a class that represents both an individual agent and manages a complete workflow graph, you need both decorators to capture different aspects:
 
 ```python
-@graph(name="multi_agent_workflow_graph")  # Captures workflow structure
-@agent(name="multi_agent_workflow")                  # Tracks this as an agent entity
+@graph(name="multi_agent_workflow_graph")                 # Captures workflow structure
+@agent(name="multi_agent_workflow", description="Multi agent workflow")       # Tracks this as an agent entity
 class MultiAgentWorkflow(AgentWorkflow):
     """This class IS an agent but MANAGES a graph"""
 ```
