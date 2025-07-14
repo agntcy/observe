@@ -128,6 +128,7 @@ class TracerWrapper(object):
                 return obj
 
             obj.__image_uploader = image_uploader
+            obj._agent_execution_counts = {}  # {(agent_name): [success_count, total_count]}
             TracerWrapper.app_name = TracerWrapper.resource_attributes.get(
                 "service.name", "observe"
             )
@@ -230,6 +231,12 @@ class TracerWrapper(object):
                 name="gen_ai.client.ioa.agent.end_to_end_chain_completion_time",
                 description="Records the end-to-end chain completion time for a single agent",
                 unit="s",
+            )
+            obj.agent_execution_success_rate = meter.create_observable_gauge(
+                name="gen_ai.client.ioa.agent.execution_success_rate",
+                description="Success rate of agent executions",
+                unit="1",
+                callbacks=[obj._observe_agent_execution_success_rate],
             )
             if propagator:
                 set_global_textmap(propagator)
@@ -387,6 +394,20 @@ class TracerWrapper(object):
 
     def get_tracer(self):
         return self.__tracer_provider.get_tracer(TRACER_NAME)
+
+    def record_agent_execution(self, agent_name: str, success: bool):
+        counts = self._agent_execution_counts.setdefault(agent_name, [0, 0])
+        if success:
+            counts[0] += 1  # success count
+        counts[1] += 1  # total count
+
+    def _observe_agent_execution_success_rate(self, observer):
+        for agent_name, (success_count, total_count) in self._agent_execution_counts.items():
+            rate = (success_count / total_count) if total_count > 0 else 0.0
+            observer.observe(
+                rate,
+                attributes={"agent_name": agent_name}
+            )
 
 
 def set_association_properties(properties: dict) -> None:
