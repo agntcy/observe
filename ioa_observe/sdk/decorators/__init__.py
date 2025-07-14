@@ -65,13 +65,15 @@ def graph(
     version: Optional[int] = None,
     method_name: Optional[str] = None,
 ) -> Callable[[F], F]:
-    return workflow(
-        name=name,
-        description=None,
-        version=version,
-        method_name=method_name,
-        tlp_span_kind="graph",
-    )
+    if method_name is None:
+        return entity_method(name=name, version=version, tlp_span_kind="graph")
+    else:
+        return entity_class(
+            name=name,
+            version=version,
+            method_name=method_name,
+            tlp_span_kind="graph",
+        )
 
 
 def agent(
