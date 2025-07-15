@@ -539,11 +539,11 @@ def entity_method(
 
 
 def entity_class(
-    name: Optional[str],
-    description: Optional[str],
-    version: Optional[int],
-    method_name: Optional[str],
-    tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
+        name: Optional[str],
+        description: Optional[str],
+        version: Optional[int],
+        method_name: Optional[str],
+        tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
 ):
     def decorator(cls):
         task_name = name if name else camel_to_snake(cls.__qualname__)
@@ -557,27 +557,30 @@ def entity_class(
             # No method specified - wrap all public methods
             for attr_name in dir(cls):
                 if (
-                    not attr_name.startswith("_")  # Skip private/built-in methods
-                    and attr_name != "mro"  # Skip class method
-                    and hasattr(cls, attr_name)
-                    and callable(getattr(cls, attr_name))
-                    and not isinstance(
-                        getattr(cls, attr_name), (classmethod, staticmethod, property)
-                    )
+                        not attr_name.startswith("_")  # Skip private/built-in methods
+                        and attr_name != "mro"  # Skip class method
+                        and hasattr(cls, attr_name)
+                        and callable(getattr(cls, attr_name))
+                        and not isinstance(
+                    getattr(cls, attr_name), (classmethod, staticmethod, property)
+                )
                 ):
                     methods_to_wrap.append(attr_name)
 
         # Wrap all detected methods
         for method_to_wrap in methods_to_wrap:
             if hasattr(cls, method_to_wrap):
-                method = getattr(cls, method_to_wrap)
-                wrapped_method = entity_method(
-                    name=f"{task_name}.{method_to_wrap}",
-                    description=description,
-                    version=version,
-                    tlp_span_kind=tlp_span_kind,
-                )(method)
-                setattr(cls, method_to_wrap, wrapped_method)
+                original_method = getattr(cls, method_to_wrap)
+
+                # Check if it's actually a method defined in this class
+                if inspect.isfunction(original_method):
+                    wrapped_method = entity_method(
+                        name=f"{task_name}.{method_to_wrap}",
+                        description=description,
+                        version=version,
+                        tlp_span_kind=tlp_span_kind,
+                    )(original_method)
+                    setattr(cls, method_to_wrap, wrapped_method)
 
         return cls
 
