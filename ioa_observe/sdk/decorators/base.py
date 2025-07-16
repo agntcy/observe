@@ -43,7 +43,6 @@ from ioa_observe.sdk.utils.const import (
 from ioa_observe.sdk.utils.json_encoder import JSONEncoder
 from ioa_observe.sdk.metrics.agent import topology_dynamism, determinism_score
 
-
 P = ParamSpec("P")
 
 R = TypeVar("R")
@@ -554,30 +553,53 @@ def entity_class(
             # Specific method specified - existing behavior
             methods_to_wrap = [method_name]
         else:
-            # No method specified - wrap all public methods
+            # No method specified - wrap all public methods defined in this class
             for attr_name in dir(cls):
                 if (
                     not attr_name.startswith("_")  # Skip private/built-in methods
                     and attr_name != "mro"  # Skip class method
                     and hasattr(cls, attr_name)
-                    and callable(getattr(cls, attr_name))
-                    and not isinstance(
-                        getattr(cls, attr_name), (classmethod, staticmethod, property)
-                    )
                 ):
-                    methods_to_wrap.append(attr_name)
+                    attr = getattr(cls, attr_name)
+                    # Only wrap functions defined in this class (not inherited methods or built-ins)
+                    if (
+                        inspect.isfunction(attr)  # Functions defined in the class
+                        and not isinstance(attr, (classmethod, staticmethod, property))
+                        and hasattr(attr, "__qualname__")  # Has qualname attribute
+                        and attr.__qualname__.startswith(
+                            cls.__name__ + "."
+                        )  # Defined in this class
+                    ):
+                        # Additional check: ensure the function has a proper signature with 'self' parameter
+                        try:
+                            sig = inspect.signature(attr)
+                            params = list(sig.parameters.keys())
+                            if params and params[0] == "self":
+                                methods_to_wrap.append(attr_name)
+                        except (ValueError, TypeError):
+                            # Skip methods that can't be inspected
+                            continue
 
         # Wrap all detected methods
         for method_to_wrap in methods_to_wrap:
             if hasattr(cls, method_to_wrap):
-                method = getattr(cls, method_to_wrap)
-                wrapped_method = entity_method(
-                    name=f"{task_name}.{method_to_wrap}",
-                    description=description,
-                    version=version,
-                    tlp_span_kind=tlp_span_kind,
-                )(method)
-                setattr(cls, method_to_wrap, wrapped_method)
+                original_method = getattr(cls, method_to_wrap)
+                # Only wrap actual functions defined in this class
+                if inspect.isfunction(original_method):
+                    try:
+                        # Verify the method has a proper signature
+                        sig = inspect.signature(original_method)
+                        wrapped_method = entity_method(
+                            name=f"{task_name}.{method_to_wrap}",
+                            description=description,
+                            version=version,
+                            tlp_span_kind=tlp_span_kind,
+                        )(original_method)
+                        # Set the wrapped method on the class
+                        setattr(cls, method_to_wrap, wrapped_method)
+                    except Exception:
+                        # Don't wrap methods that can't be properly decorated
+                        continue
 
         return cls
 
