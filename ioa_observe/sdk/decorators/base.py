@@ -75,7 +75,7 @@ async def _ahandle_generator(span, ctx_token, res):
 
 def _should_send_prompts():
     return (
-            os.getenv("OBSERVE_TRACE_CONTENT") or "true"
+        os.getenv("OBSERVE_TRACE_CONTENT") or "true"
     ).lower() == "true" or context_api.get_value("override_enable_content_tracing")
 
 
@@ -88,10 +88,10 @@ def _is_async_method(fn):
 
 
 def _setup_span(
-        entity_name,
-        tlp_span_kind: Optional[ObserveSpanKindValues] = None,
-        version: Optional[int] = None,
-        description: Optional[str] = None,
+    entity_name,
+    tlp_span_kind: Optional[ObserveSpanKindValues] = None,
+    version: Optional[int] = None,
+    description: Optional[str] = None,
 ):
     """Sets up the OpenTelemetry span and context"""
     if tlp_span_kind in [
@@ -117,7 +117,7 @@ def _setup_span(
         ) if tlp_span_kind == ObserveSpanKindValues.AGENT else None
         if tlp_span_kind == ObserveSpanKindValues.AGENT:
             with trace.get_tracer(__name__).start_span(
-                    "agent_start_event", context=trace.set_span_in_context(span)
+                "agent_start_event", context=trace.set_span_in_context(span)
             ) as start_span:
                 start_span.add_event(
                     "agent_start_event",
@@ -203,7 +203,7 @@ def _handle_span_output(span, tlp_span_kind, res, cls=None):
                 agent_id = span.attributes["agent_id"]
                 if agent_id:
                     with trace.get_tracer(__name__).start_span(
-                            "agent_end_event", context=trace.set_span_in_context(span)
+                        "agent_end_event", context=trace.set_span_in_context(span)
                     ) as end_span:
                         end_span.add_event(
                             "agent_end_event",
@@ -213,8 +213,8 @@ def _handle_span_output(span, tlp_span_kind, res, cls=None):
                     set_agent_id_event("")  # reset the agent id event
                 # Add agent interpretation scoring
             if (
-                    tlp_span_kind == ObserveSpanKindValues.AGENT
-                    or tlp_span_kind == ObserveSpanKindValues.WORKFLOW
+                tlp_span_kind == ObserveSpanKindValues.AGENT
+                or tlp_span_kind == ObserveSpanKindValues.WORKFLOW
             ):
                 current_agent = span.attributes.get("agent_id", "unknown")
 
@@ -224,7 +224,7 @@ def _handle_span_output(span, tlp_span_kind, res, cls=None):
                     next_agent = res["goto"]
                     # Check if there's an error flag in the response
                     success = not (
-                            res.get("error", False) or res.get("goto") == "__end__"
+                        res.get("error", False) or res.get("goto") == "__end__"
                     )
 
                     # If we have a chain of communication, compute interpretation score
@@ -294,10 +294,10 @@ def _cleanup_span(span, ctx_token):
 
 
 def entity_method(
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        version: Optional[int] = None,
-        tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    version: Optional[int] = None,
+    tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
 ) -> Callable[[F], F]:
     def decorate(fn: F) -> F:
         is_async = _is_async_method(fn)
@@ -321,7 +321,7 @@ def entity_method(
                     _handle_span_input(span, args, kwargs, cls=JSONEncoder)
 
                     async for item in _ahandle_generator(
-                            span, ctx_token, fn(*args, **kwargs)
+                        span, ctx_token, fn(*args, **kwargs)
                     ):
                         yield item
 
@@ -538,11 +538,11 @@ def entity_method(
 
 
 def entity_class(
-        name: Optional[str],
-        description: Optional[str],
-        version: Optional[int],
-        method_name: Optional[str],
-        tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
+    name: Optional[str],
+    description: Optional[str],
+    version: Optional[int],
+    method_name: Optional[str],
+    tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
 ):
     def decorator(cls):
         task_name = name if name else camel_to_snake(cls.__qualname__)
@@ -556,23 +556,25 @@ def entity_class(
             # No method specified - wrap all public methods defined in this class
             for attr_name in dir(cls):
                 if (
-                        not attr_name.startswith("_")  # Skip private/built-in methods
-                        and attr_name != "mro"  # Skip class method
-                        and hasattr(cls, attr_name)
+                    not attr_name.startswith("_")  # Skip private/built-in methods
+                    and attr_name != "mro"  # Skip class method
+                    and hasattr(cls, attr_name)
                 ):
                     attr = getattr(cls, attr_name)
                     # Only wrap functions defined in this class (not inherited methods or built-ins)
                     if (
-                            inspect.isfunction(attr)  # Functions defined in the class
-                            and not isinstance(attr, (classmethod, staticmethod, property))
-                            and hasattr(attr, "__qualname__")  # Has qualname attribute
-                            and attr.__qualname__.startswith(cls.__name__ + ".")  # Defined in this class
+                        inspect.isfunction(attr)  # Functions defined in the class
+                        and not isinstance(attr, (classmethod, staticmethod, property))
+                        and hasattr(attr, "__qualname__")  # Has qualname attribute
+                        and attr.__qualname__.startswith(
+                            cls.__name__ + "."
+                        )  # Defined in this class
                     ):
                         # Additional check: ensure the function has a proper signature with 'self' parameter
                         try:
                             sig = inspect.signature(attr)
                             params = list(sig.parameters.keys())
-                            if params and params[0] == 'self':
+                            if params and params[0] == "self":
                                 methods_to_wrap.append(attr_name)
                         except (ValueError, TypeError):
                             # Skip methods that can't be inspected
