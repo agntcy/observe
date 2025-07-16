@@ -597,7 +597,7 @@ def entity_class(
                         )(original_method)
                         # Set the wrapped method on the class
                         setattr(cls, method_to_wrap, wrapped_method)
-                    except Exception as e:
+                    except Exception:
                         # Don't wrap methods that can't be properly decorated
                         continue
 
