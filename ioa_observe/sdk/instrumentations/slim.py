@@ -66,26 +66,71 @@ class SLIMInstrumentor(BaseInstrumentor):
             if traceparent and session_id:
                 baggage.set_baggage(f"execution.{traceparent}", session_id)
 
-            # Process message payload
+            # Process message payload and preserve original structure
             if isinstance(message, bytes):
                 try:
                     decoded_message = message.decode("utf-8")
                     try:
-                        json.loads(decoded_message)
-                        payload = decoded_message
+                        # If it's already a JSON structure, preserve it
+                        original_message = json.loads(decoded_message)
+                        if isinstance(original_message, dict):
+                            # Preserve all original fields and merge/update headers
+                            wrapped_message = original_message.copy()
+                            existing_headers = wrapped_message.get("headers", {})
+                            existing_headers.update(headers)
+                            wrapped_message["headers"] = existing_headers
+                        else:
+                            # If it's not a dict, wrap it as payload
+                            wrapped_message = {
+                                "headers": headers,
+                                "payload": original_message,
+                            }
                     except json.JSONDecodeError:
-                        payload = decoded_message
+                        # If it's not JSON, treat as raw payload
+                        wrapped_message = {
+                            "headers": headers,
+                            "payload": decoded_message,
+                        }
                 except UnicodeDecodeError:
-                    payload = base64.b64encode(message).decode("utf-8")
+                    # If it can't be decoded, base64 encode it
+                    wrapped_message = {
+                        "headers": headers,
+                        "payload": base64.b64encode(message).decode("utf-8"),
+                    }
             elif isinstance(message, str):
-                payload = message
+                try:
+                    # Try to parse as JSON first
+                    original_message = json.loads(message)
+                    if isinstance(original_message, dict):
+                        # Preserve all original fields and merge/update headers
+                        wrapped_message = original_message.copy()
+                        existing_headers = wrapped_message.get("headers", {})
+                        existing_headers.update(headers)
+                        wrapped_message["headers"] = existing_headers
+                    else:
+                        # If it's not a dict, wrap it as payload
+                        wrapped_message = {
+                            "headers": headers,
+                            "payload": original_message,
+                        }
+                except json.JSONDecodeError:
+                    # If it's not JSON, treat as raw payload
+                    wrapped_message = {
+                        "headers": headers,
+                        "payload": message,
+                    }
+            elif isinstance(message, dict):
+                # If it's already a dict, preserve all fields and merge headers
+                wrapped_message = message.copy()
+                existing_headers = wrapped_message.get("headers", {})
+                existing_headers.update(headers)
+                wrapped_message["headers"] = existing_headers
             else:
-                payload = json.dumps(message)
-
-            wrapped_message = {
-                "headers": headers,
-                "payload": payload,
-            }
+                # For other types, convert to JSON and wrap as payload
+                wrapped_message = {
+                    "headers": headers,
+                    "payload": json.dumps(message),
+                }
 
             message_to_send = json.dumps(wrapped_message).encode("utf-8")
 
@@ -152,20 +197,39 @@ class SLIMInstrumentor(BaseInstrumentor):
                             session_id = stored_session_id
                             set_session_id(session_id, traceparent=traceparent)
 
-                # Process payload
-                payload = message_dict.get("payload", raw_message)
-                if isinstance(payload, str):
-                    try:
-                        payload_dict = json.loads(payload)
-                        return recv_session, json.dumps(payload_dict).encode("utf-8")
-                    except json.JSONDecodeError:
-                        return recv_session, payload.encode("utf-8") if isinstance(
-                            payload, str
-                        ) else payload
+                # Process the complete message structure
+                # Remove tracing headers before returning the message
+                message_to_return = message_dict.copy()
+                if "headers" in message_to_return:
+                    headers_copy = message_to_return["headers"].copy()
+                    # Remove tracing-specific headers but keep other headers
+                    headers_copy.pop("traceparent", None)
+                    headers_copy.pop("session_id", None)
+                    if headers_copy:
+                        message_to_return["headers"] = headers_copy
+                    else:
+                        message_to_return.pop("headers", None)
 
-                return recv_session, json.dumps(payload).encode("utf-8") if isinstance(
-                    payload, (dict, list)
-                ) else payload
+                # If the message only contains a payload field and no other fields,
+                # return just the payload for backward compatibility
+                if len(message_to_return) == 1 and "payload" in message_to_return:
+                    payload = message_to_return["payload"]
+                    if isinstance(payload, str):
+                        try:
+                            payload_dict = json.loads(payload)
+                            return recv_session, json.dumps(payload_dict).encode(
+                                "utf-8"
+                            )
+                        except json.JSONDecodeError:
+                            return recv_session, payload.encode("utf-8") if isinstance(
+                                payload, str
+                            ) else payload
+                    return recv_session, json.dumps(payload).encode(
+                        "utf-8"
+                    ) if isinstance(payload, (dict, list)) else payload
+                else:
+                    # Return the complete message structure with all original fields
+                    return recv_session, json.dumps(message_to_return).encode("utf-8")
 
             except Exception as e:
                 print(f"Error processing message: {e}")
