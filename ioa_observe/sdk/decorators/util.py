@@ -31,7 +31,7 @@ def _serialize_object(obj, max_depth=5, current_depth=0):
                 _serialize_object(item, max_depth, current_depth + 1)
                 for item in obj[:10]
             ]  # Limit to first 10 items
-        except:
+        except Exception:
             return f"<{type(obj).__name__}:length={len(obj)}>"
 
     # Handle dictionaries
@@ -43,7 +43,7 @@ def _serialize_object(obj, max_depth=5, current_depth=0):
                     value, max_depth, current_depth + 1
                 )
             return serialized
-        except:
+        except Exception:
             return f"<dict:keys={len(obj)}>"
 
     # Handle common object types with meaningful attributes
@@ -64,7 +64,7 @@ def _serialize_object(obj, max_depth=5, current_depth=0):
                         )
                         if len(class_attrs) >= 5:  # Limit attributes
                             break
-                except:
+                except Exception:
                     continue
 
         # Check if object has a __dict__ with interesting attributes
@@ -81,7 +81,7 @@ def _serialize_object(obj, max_depth=5, current_depth=0):
                             )
                             if len(instance_attrs) >= 5:  # Limit attributes
                                 break
-                        except:
+                        except Exception:
                             continue
 
         # Combine class and instance attributes
@@ -106,7 +106,7 @@ def _serialize_object(obj, max_depth=5, current_depth=0):
                     "__class__": type(obj).__name__,
                     "message_content": parts_content,
                 }
-            except:
+            except Exception:
                 pass
 
         # Check for common readable attributes
@@ -121,7 +121,7 @@ def _serialize_object(obj, max_depth=5, current_depth=0):
                                 attr_value, max_depth, current_depth + 1
                             ),
                         }
-                except:
+                except Exception:
                     continue
 
         # Fallback to class information
