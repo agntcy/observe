@@ -10,13 +10,20 @@ import types
 from typing import Optional, TypeVar, Callable, Awaitable, Any, cast, Union
 import inspect
 
+from ioa_observe.sdk.decorators.helpers import (
+    _is_async_method,
+    _get_original_function_name,
+    _is_async_generator,
+)
+
+
 from langgraph.graph.state import CompiledStateGraph
 from opentelemetry import trace
 from opentelemetry import context as context_api
 from pydantic_core import PydanticSerializationError
 from typing_extensions import ParamSpec
 
-from ioa_observe.sdk.decorators.util import determine_workflow_type
+from ioa_observe.sdk.decorators.util import determine_workflow_type, _serialize_object
 from ioa_observe.sdk.metrics.agents.availability import agent_availability
 from ioa_observe.sdk.metrics.agents.recovery_tracker import agent_recovery_tracker
 from ioa_observe.sdk.metrics.agents.tool_call_tracker import tool_call_tracker
@@ -77,14 +84,6 @@ def _should_send_prompts():
     return (
         os.getenv("OBSERVE_TRACE_CONTENT") or "true"
     ).lower() == "true" or context_api.get_value("override_enable_content_tracing")
-
-
-# Unified Decorators : handles both sync and async operations
-
-
-def _is_async_method(fn):
-    # check if co-routine function or async generator( example : using async & yield)
-    return inspect.iscoroutinefunction(fn) or inspect.isasyncgenfunction(fn)
 
 
 def _setup_span(
@@ -164,24 +163,24 @@ def _handle_span_input(span, args, kwargs, cls=None):
             # Safely convert args
             for arg in args:
                 try:
-                    # Test if the object can be JSON serialized
+                    # Check if the object can be JSON serialized directly
                     json.dumps(arg)
                     safe_args.append(arg)
                 except (TypeError, ValueError, PydanticSerializationError):
-                    # If it can't be serialized, use string representation
-                    safe_args.append(str(arg))
+                    # Use intelligent serialization
+                    safe_args.append(_serialize_object(arg))
 
             # Safely convert kwargs
             for key, value in kwargs.items():
                 try:
-                    # Test if the object can be JSON serialized
+                    # Test if the object can be JSON serialized directly
                     json.dumps(value)
                     safe_kwargs[key] = value
                 except (TypeError, ValueError, PydanticSerializationError):
-                    # If it can't be serialized, use string representation
-                    safe_kwargs[key] = str(value)
+                    # Use intelligent serialization
+                    safe_kwargs[key] = _serialize_object(value)
 
-            # Create the JSON without custom encoder to avoid recursion
+            # Create the JSON
             json_input = json.dumps({"args": safe_args, "kwargs": safe_kwargs})
 
             if _is_json_size_valid(json_input):
@@ -212,62 +211,55 @@ def _handle_span_output(span, tlp_span_kind, res, cls=None):
                     # end_span.end()  # end the span immediately
                     set_agent_id_event("")  # reset the agent id event
                 # Add agent interpretation scoring
-            if (
-                tlp_span_kind == ObserveSpanKindValues.AGENT
-                or tlp_span_kind == ObserveSpanKindValues.WORKFLOW
-            ):
-                current_agent = span.attributes.get("agent_id", "unknown")
+        if (
+            tlp_span_kind == ObserveSpanKindValues.AGENT
+            or tlp_span_kind == ObserveSpanKindValues.WORKFLOW
+        ):
+            current_agent = span.attributes.get("agent_id", "unknown")
 
-                # Determine next agent from response (if Command object with goto)
-                next_agent = None
-                if isinstance(res, dict) and "goto" in res:
-                    next_agent = res["goto"]
-                    # Check if there's an error flag in the response
-                    success = not (
-                        res.get("error", False) or res.get("goto") == "__end__"
+            # Determine next agent from response (if Command object with goto)
+            next_agent = None
+            if isinstance(res, dict) and "goto" in res:
+                next_agent = res["goto"]
+                # Check if there's an error flag in the response
+                success = not (res.get("error", False) or res.get("goto") == "__end__")
+
+                # If we have a chain of communication, compute interpretation score
+                if next_agent and next_agent != "__end__":
+                    score = compute_agent_interpretation_score(
+                        sender_agent=current_agent,
+                        receiver_agent=next_agent,
+                        data=res,
                     )
-
-                    # If we have a chain of communication, compute interpretation score
-                    if next_agent and next_agent != "__end__":
-                        score = compute_agent_interpretation_score(
-                            sender_agent=current_agent,
-                            receiver_agent=next_agent,
-                            data=res,
-                        )
-                        span.set_attribute(
-                            "gen_ai.ioa.agent.interpretation_score", score
-                        )
-                        reliability = connection_tracker.record_connection(
-                            sender=current_agent, receiver=next_agent, success=success
-                        )
-                        span.set_attribute(
-                            "gen_ai.ioa.agent.connection_reliability", reliability
-                        )
-
-            if _should_send_prompts():
-                try:
-                    # Try direct JSON serialization first (without custom encoder)
-                    json_output = json.dumps(res)
-                except (TypeError, PydanticSerializationError, ValueError):
-                    # Fallback for objects that can't be directly serialized
-                    try:
-                        # Try to serialize a string representation
-                        safe_output = str(res)
-                        json_output = json.dumps(
-                            {"__str_representation__": safe_output}
-                        )
-                    except Exception:
-                        # If all serialization fails, skip output attribute
-                        json_output = None
-
-                if json_output and _is_json_size_valid(json_output):
+                    span.set_attribute("gen_ai.ioa.agent.interpretation_score", score)
+                    reliability = connection_tracker.record_connection(
+                        sender=current_agent, receiver=next_agent, success=success
+                    )
                     span.set_attribute(
-                        OBSERVE_ENTITY_OUTPUT,
-                        json_output,
+                        "gen_ai.ioa.agent.connection_reliability", reliability
                     )
-                    TracerWrapper().span_processor_on_ending(
-                        span
-                    )  # record the response latency
+
+        if _should_send_prompts():
+            try:
+                # Try direct JSON serialization first
+                json_output = json.dumps(res)
+            except (TypeError, PydanticSerializationError, ValueError):
+                # Use intelligent serialization for complex objects
+                try:
+                    serialized_res = _serialize_object(res)
+                    json_output = json.dumps(serialized_res)
+                except Exception:
+                    # If all serialization fails, skip output attribute
+                    json_output = None
+
+            if json_output and _is_json_size_valid(json_output):
+                span.set_attribute(
+                    OBSERVE_ENTITY_OUTPUT,
+                    json_output,
+                )
+                TracerWrapper().span_processor_on_ending(
+                    span
+                )  # record the response latency
     except Exception as e:
         print(f"Warning: Failed to serialize output for span: {e}")
         Telemetry().log_exception(e)
@@ -301,9 +293,9 @@ def entity_method(
 ) -> Callable[[F], F]:
     def decorate(fn: F) -> F:
         is_async = _is_async_method(fn)
-        entity_name = name or fn.__qualname__
+        entity_name = name or _get_original_function_name(fn)
         if is_async:
-            if inspect.isasyncgenfunction(fn):
+            if _is_async_generator(fn):
 
                 @wraps(fn)
                 async def async_gen_wrap(*args: Any, **kwargs: Any) -> Any:
