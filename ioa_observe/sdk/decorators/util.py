@@ -13,7 +13,7 @@ from llama_index.core.workflow.utils import (
 )
 
 
-def _serialize_object(obj, max_depth=5, current_depth=0):
+def _serialize_object(obj, max_depth=3, current_depth=0):
     """
     Intelligently serialize an object to a more meaningful representation
     """
