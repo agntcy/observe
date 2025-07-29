@@ -666,15 +666,15 @@ def _handle_execution_result(span, success):
 
 def _handle_graph_response(span, res, protocol, tlp_span_kind):
     if tlp_span_kind == "graph":
+        if protocol:
+            protocol = protocol.upper()
+            span.set_attribute("gen_ai.ioa.graph.protocol", protocol)
         # Check if the response is a Llama Index Workflow object
         graph = determine_workflow_type(res)
         if graph is not None:
             # Convert the graph to JSON string
             graph_json = json.dumps(graph, indent=2)
             span.set_attribute("gen_ai.ioa.graph", graph_json)
-            if protocol:
-                span.set_attribute("gen_ai.ioa.graph.protocol", protocol)
-
             # get graph dynamism
             dynamism = topology_dynamism(graph)
             span.set_attribute("gen_ai.ioa.graph_dynamism", dynamism)
