@@ -7,7 +7,7 @@ import traceback
 from functools import wraps
 import os
 import types
-from typing import Optional, TypeVar, Callable, Awaitable, Any, cast, Union
+from typing import Optional, TypeVar, Callable, Awaitable, Any, Union
 import inspect
 
 from ioa_observe.sdk.decorators.helpers import (
@@ -285,13 +285,23 @@ def _cleanup_span(span, ctx_token):
     context_api.detach(ctx_token)
 
 
+def _unwrap_structured_tool(fn):
+    # Unwraps StructuredTool or similar wrappers to get the underlying function
+    if hasattr(fn, "func") and callable(fn.func):
+        return fn.func
+    return fn
+
+
 def entity_method(
     name: Optional[str] = None,
     description: Optional[str] = None,
     version: Optional[int] = None,
+    protocol: Optional[str] = None,
     tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
 ) -> Callable[[F], F]:
     def decorate(fn: F) -> F:
+        # Unwrap StructuredTool if present
+        fn = _unwrap_structured_tool(fn)
         is_async = _is_async_method(fn)
         entity_name = name or _get_original_function_name(fn)
         if is_async:
@@ -367,7 +377,7 @@ def entity_method(
                                     agent_recovery_tracker.record_agent_recovery(
                                         entity_name
                                     )
-                        _handle_graph_response(span, res, tlp_span_kind)
+                        _handle_graph_response(span, res, protocol, tlp_span_kind)
                         # span will be ended in the generator
                         if isinstance(res, types.GeneratorType):
                             return _handle_generator(span, res)
@@ -413,7 +423,7 @@ def entity_method(
                         _cleanup_span(span, ctx_token)
                     return res
 
-                return cast(F, async_wrap)
+            decorated = async_wrap
         else:
 
             @wraps(fn)
@@ -477,7 +487,7 @@ def entity_method(
                                 agent_recovery_tracker.record_agent_recovery(
                                     entity_name
                                 )
-                    _handle_graph_response(span, res, tlp_span_kind)
+                    _handle_graph_response(span, res, protocol, tlp_span_kind)
 
                     # span will be ended in the generator
                     if isinstance(res, types.GeneratorType):
@@ -524,7 +534,12 @@ def entity_method(
                     _cleanup_span(span, ctx_token)
                 return res
 
-            return cast(F, sync_wrap)
+            decorated = sync_wrap
+        # # If the original fn was a StructuredTool, re-wrap
+        if hasattr(fn, "func") and callable(fn.func):
+            fn.func = decorated
+            return fn
+        return decorated
 
     return decorate
 
@@ -533,6 +548,7 @@ def entity_class(
     name: Optional[str],
     description: Optional[str],
     version: Optional[int],
+    protocol: Optional[str],
     method_name: Optional[str],
     tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
 ):
@@ -577,16 +593,18 @@ def entity_class(
             if hasattr(cls, method_to_wrap):
                 original_method = getattr(cls, method_to_wrap)
                 # Only wrap actual functions defined in this class
-                if inspect.isfunction(original_method):
+                unwrapped_method = _unwrap_structured_tool(original_method)
+                if inspect.isfunction(unwrapped_method):
                     try:
                         # Verify the method has a proper signature
-                        sig = inspect.signature(original_method)
+                        sig = inspect.signature(unwrapped_method)
                         wrapped_method = entity_method(
                             name=f"{task_name}.{method_to_wrap}",
                             description=description,
                             version=version,
+                            protocol=protocol,
                             tlp_span_kind=tlp_span_kind,
-                        )(original_method)
+                        )(unwrapped_method)
                         # Set the wrapped method on the class
                         setattr(cls, method_to_wrap, wrapped_method)
                     except Exception:
@@ -646,15 +664,17 @@ def _handle_execution_result(span, success):
     return
 
 
-def _handle_graph_response(span, res, tlp_span_kind):
+def _handle_graph_response(span, res, protocol, tlp_span_kind):
     if tlp_span_kind == "graph":
+        if protocol:
+            protocol = protocol.upper()
+            span.set_attribute("gen_ai.ioa.graph.protocol", protocol)
         # Check if the response is a Llama Index Workflow object
         graph = determine_workflow_type(res)
         if graph is not None:
             # Convert the graph to JSON string
             graph_json = json.dumps(graph, indent=2)
             span.set_attribute("gen_ai.ioa.graph", graph_json)
-
             # get graph dynamism
             dynamism = topology_dynamism(graph)
             span.set_attribute("gen_ai.ioa.graph_dynamism", dynamism)

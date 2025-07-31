@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ioa-observe-sdk"
-version = "1.0.13"
+version = "1.0.14"
 description = "IOA Observability SDK"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,17 +21,17 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http==1.33.1",
     "opentelemetry-instrumentation",
     "opentelemetry-instrumentation-logging==0.54b1",
-    "opentelemetry-instrumentation-openai==0.40.8",
-    "opentelemetry-instrumentation-llamaindex==0.40.8",
-    "opentelemetry-instrumentation-ollama==0.40.8",
-    "opentelemetry-instrumentation-anthropic==0.40.8",
-    "opentelemetry-instrumentation-langchain==0.40.8",
+    "opentelemetry-instrumentation-openai==0.43.1",
+    "opentelemetry-instrumentation-llamaindex==0.43.1",
+    "opentelemetry-instrumentation-ollama==0.43.1",
+    "opentelemetry-instrumentation-anthropic==0.43.1",
+    "opentelemetry-instrumentation-langchain==0.43.1",
     "opentelemetry-instrumentation-threading==00.54b1",
     "opentelemetry-instrumentation-urllib3==0.54b1",
     "opentelemetry-proto==1.33.1",
     "opentelemetry-sdk==1.33.1",
     "opentelemetry-semantic-conventions==0.54b1",
-    "opentelemetry-semantic-conventions-ai==0.4.9",
+    "opentelemetry-semantic-conventions-ai>=0.4.11",
     "opentelemetry-util-http==0.54b1",
     "langgraph>=0.3.2",
     "langchain>=0.3.19",
