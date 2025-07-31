@@ -47,6 +47,7 @@ def task(
 def workflow(
     name: Optional[str] = None,
     description: Optional[str] = None,
+    role: Optional[str] = None,
     version: Optional[int] = None,
     protocol: Optional[str] = None,
     method_name: Optional[str] = None,
@@ -60,6 +61,7 @@ def workflow(
             return entity_class(
                 name=name,
                 description=description,
+                role=role,
                 version=version,
                 protocol=protocol,
                 method_name=method_name,
@@ -70,6 +72,7 @@ def workflow(
             return entity_method(
                 name=name,
                 description=description,
+                role=role,
                 version=version,
                 protocol=protocol,
                 tlp_span_kind=tlp_span_kind,
@@ -81,6 +84,7 @@ def workflow(
 def graph(
     name: Optional[str] = None,
     description: Optional[str] = None,
+    role: Optional[str] = None,
     version: Optional[int] = None,
     method_name: Optional[str] = None,
     protocol: Optional[str] = None,
@@ -102,6 +106,7 @@ def graph(
 def agent(
     name: Optional[str] = None,
     description: Optional[str] = None,
+    role: Optional[str] = None,
     version: Optional[int] = None,
     protocol: Optional[str] = None,
     method_name: Optional[str] = None,
@@ -109,6 +114,7 @@ def agent(
     return workflow(
         name=name,
         description=description,
+        role=role,
         version=version,
         protocol=protocol,
         method_name=method_name,

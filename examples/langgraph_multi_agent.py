@@ -1,10 +1,9 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
-
 import os
 
 from langchain_openai import ChatOpenAI
-from typing import Annotated, TypedDict, Literal
+from typing import Annotated, TypedDict, Literal, get_type_hints
 
 from langchain_core.messages import HumanMessage
 from langchain_experimental.utilities import PythonREPL
@@ -15,13 +14,13 @@ from langgraph.types import Command
 from langchain_community.tools.tavily_search import TavilySearchResults
 
 from ioa_observe.sdk import Observe
-from ioa_observe.sdk.decorators import agent, graph
+from ioa_observe.sdk.decorators import agent, graph as workflow
 from ioa_observe.sdk.decorators import tool as observe_tool
 from ioa_observe.sdk.tracing import session_start
 
 # This executes code locally, which can be unsafe
 repl = PythonREPL()
-serviceName = "multi-agent-service"
+serviceName = "langgraph-multi-agent-service"
 
 Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
 
@@ -99,6 +98,7 @@ research_agent = create_react_agent(
 @agent(
     name="research",
     description="A researcher agent that performs web searches and returns results.",
+    role="researcher",
 )
 def research_node(state: State) -> Command[Literal["supervisor"]]:
     result = research_agent.invoke(state)
@@ -119,6 +119,7 @@ code_agent = create_react_agent(llm, tools=[python_repl_tool])
 @agent(
     name="code",
     description="A coder agent that executes Python code and returns results.",
+    role="coder",
 )
 def code_node(state: State) -> Command[Literal["supervisor"]]:
     result = code_agent.invoke(state)
@@ -132,7 +133,7 @@ def code_node(state: State) -> Command[Literal["supervisor"]]:
     )
 
 
-@graph(name="multi_agent_graph")
+@workflow(name="multi_agent_graph")
 def build_graph():
     builder = StateGraph(State)
     builder.add_edge(START, "supervisor")

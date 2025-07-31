@@ -194,10 +194,12 @@ def _handle_span_input(span, args, kwargs, cls=None):
         Telemetry().log_exception(e)
 
 
-def _handle_span_output(span, tlp_span_kind, res, cls=None):
+def _handle_span_output(span, role, tlp_span_kind, res, cls=None):
     """Handles entity output logging in JSON for both sync and async functions"""
     try:
         if tlp_span_kind == ObserveSpanKindValues.AGENT:
+            if role is not None:
+                span.set_attribute("agent_role", role)
             if "agent_id" in span.attributes:
                 agent_id = span.attributes["agent_id"]
                 if agent_id:
@@ -295,6 +297,7 @@ def _unwrap_structured_tool(fn):
 def entity_method(
     name: Optional[str] = None,
     description: Optional[str] = None,
+    role: Optional[str] = None,
     version: Optional[int] = None,
     protocol: Optional[str] = None,
     tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
@@ -383,7 +386,7 @@ def entity_method(
                             return _handle_generator(span, res)
                         _handle_execution_result(span, success)
 
-                        _handle_span_output(span, tlp_span_kind, res, cls=JSONEncoder)
+                        _handle_span_output(span, role, tlp_span_kind, res, cls=JSONEncoder)
                     except Exception as e:
                         span.record_exception(e)
                         span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
@@ -493,8 +496,7 @@ def entity_method(
                     if isinstance(res, types.GeneratorType):
                         return _handle_generator(span, res)
                     _handle_execution_result(span, success)
-                    _handle_span_output(span, tlp_span_kind, res, cls=JSONEncoder)
-
+                    _handle_span_output(span, role, tlp_span_kind, res, cls=JSONEncoder)
                 except Exception as e:
                     span.record_exception(e)
                     span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
@@ -547,6 +549,7 @@ def entity_method(
 def entity_class(
     name: Optional[str],
     description: Optional[str],
+    role: Optional[str],
     version: Optional[int],
     protocol: Optional[str],
     method_name: Optional[str],
