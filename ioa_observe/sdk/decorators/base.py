@@ -386,7 +386,9 @@ def entity_method(
                             return _handle_generator(span, res)
                         _handle_execution_result(span, success)
 
-                        _handle_span_output(span, role, tlp_span_kind, res, cls=JSONEncoder)
+                        _handle_span_output(
+                            span, role, tlp_span_kind, res, cls=JSONEncoder
+                        )
                     except Exception as e:
                         span.record_exception(e)
                         span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
