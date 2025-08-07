@@ -38,6 +38,10 @@ from opentelemetry.semconv_ai import SpanAttributes
 from ioa_observe.sdk import Telemetry
 from ioa_observe.sdk.instruments import Instruments
 from ioa_observe.sdk.tracing.content_allow_list import ContentAllowList
+from ioa_observe.sdk.tracing.transform_span import (
+    transform_json_object_configurable,
+    validate_transformer_rules,
+)
 from ioa_observe.sdk.utils import is_notebook
 from ioa_observe.sdk.client import kv_store
 
@@ -106,8 +110,8 @@ def determine_reliability_score(span):
 class TracerWrapper(object):
     resource_attributes: dict = {}
     enable_content_tracing: bool = True
-    endpoint: str = (None,)
-    app_name: str = (None,)
+    endpoint: str = None
+    app_name: str = None
     headers: Dict[str, str] = {}
     __tracer_provider: TracerProvider = None
     __disabled: bool = False
@@ -129,7 +133,10 @@ class TracerWrapper(object):
                 return obj
 
             obj.__image_uploader = image_uploader
-            obj._agent_execution_counts = {}  # {(agent_name): [success_count, total_count]}
+            # {(agent_name): [success_count, total_count]}
+            obj._agent_execution_counts = {}
+            # Track spans that have been processed to avoid duplicates
+            obj._processed_spans = set()
             TracerWrapper.app_name = TracerWrapper.resource_attributes.get(
                 "service.name", "observe"
             )
@@ -139,6 +146,7 @@ class TracerWrapper(object):
                 Telemetry().capture("tracer:init", {"processor": "custom"})
                 obj.__spans_processor: SpanProcessor = processor
                 obj.__spans_processor_original_on_start = processor.on_start
+                obj.__spans_processor_original_on_end = processor.on_end
             else:
                 if exporter:
                     Telemetry().capture(
@@ -175,9 +183,10 @@ class TracerWrapper(object):
                         schedule_delay_millis=5000,
                     )
                 obj.__spans_processor_original_on_start = None
+                obj.__spans_processor_original_on_end = obj.__spans_processor.on_end
 
             obj.__spans_processor.on_start = obj._span_processor_on_start
-            # obj.__spans_processor.on_end = obj.span_processor_on_ending
+            obj.__spans_processor.on_end = obj.span_processor_on_ending
             obj.__tracer_provider.add_span_processor(obj.__spans_processor)
             # Custom metric, for example
             meter = get_meter("observe")
@@ -338,13 +347,113 @@ class TracerWrapper(object):
         self.number_active_agents.add(count, attributes=span.attributes)
 
     def span_processor_on_ending(self, span):
+        # Check if this span has already been processed to avoid duplicate processing
+        # Added for avoid duplicate on_ending with manual triggers
+        # from decorators (@tool, @workflow) in base.py
+        span_id = span.context.span_id
+        if span_id in self._processed_spans:
+            # This span was already processed, skip to avoid duplicates
+            return
+
+        # Mark this span as processed
+        self._processed_spans.add(span_id)
+
         determine_reliability_score(span)
         start_time = span.attributes.get("ioa_start_time")
-        # publish span to the exporter
+
+        # Apply transformations if enabled
+        apply_transform = get_value("apply_transform")
+        if apply_transform:
+            transformer_rules = get_value("transformer_rules")
+            if transformer_rules:
+                try:
+                    # Convert span to dict for transformation
+                    span_dict = self._span_to_dict(span)
+                    # Apply transformation
+                    transformed_span_dict = transform_json_object_configurable(
+                        span_dict, transformer_rules
+                    )
+                    # Update span with transformed data
+                    self._update_span_from_dict(span, transformed_span_dict)
+                except Exception as e:
+                    logging.error(f"Error applying span transformation: {e}")
 
         if start_time is not None:
             latency = (time.time() - start_time) * 1000
             self.response_latency_histogram.record(latency, attributes=span.attributes)
+
+        # Call original on_end method if it exists
+        if (
+            hasattr(self, "_TracerWrapper__spans_processor_original_on_end")
+            and self.__spans_processor_original_on_end
+        ):
+            self.__spans_processor_original_on_end(span)
+
+    def _span_to_dict(self, span):
+        """Convert span to dictionary for transformation."""
+        span_dict = {
+            "name": span.name,
+            "attributes": dict(span.attributes) if span.attributes else {},
+            "status": {
+                "status_code": span.status.status_code.name
+                if span.status and span.status.status_code
+                else None,
+                "description": span.status.description if span.status else None,
+            },
+        }
+        return span_dict
+
+    def _update_span_from_dict(self, span, span_dict):
+        """Update span with transformed data."""
+        # Update span name if it was transformed
+        if "name" in span_dict and span_dict["name"] != span.name:
+            # Directly modify the internal name attribute
+            if hasattr(span, "_name"):
+                span._name = span_dict["name"]
+
+        # Update attributes if they were transformed
+        if "attributes" in span_dict:
+            # Try multiple approaches to update span attributes
+            updated = False
+
+            # Method 1: Try using set_attribute if available and mutable
+            if (
+                hasattr(span, "set_attribute")
+                and hasattr(span, "_ended")
+                and not span._ended
+            ):
+                try:
+                    # Clear existing attributes by setting them to None
+                    if hasattr(span, "_attributes"):
+                        keys_to_remove = list(span._attributes.keys())
+                        for key in keys_to_remove:
+                            span.set_attribute(key, None)
+
+                    # Set new attributes
+                    for key, value in span_dict["attributes"].items():
+                        span.set_attribute(key, value)
+                    updated = True
+                except (AttributeError, TypeError):
+                    pass
+
+            # Method 2: Direct attribute manipulation
+            if not updated:
+                try:
+                    if hasattr(span, "_attributes"):
+                        span._attributes.clear()
+                        span._attributes.update(span_dict["attributes"])
+                        updated = True
+                    elif hasattr(span, "attributes") and hasattr(
+                        span.attributes, "clear"
+                    ):
+                        span.attributes.clear()
+                        span.attributes.update(span_dict["attributes"])
+                        updated = True
+                except (AttributeError, TypeError):
+                    pass
+
+            if not updated:
+                logging.warning("Cannot modify span attributes - span may be finalized")
 
     @staticmethod
     def set_static_params(
@@ -423,14 +532,101 @@ def set_workflow_name(workflow_name: str) -> None:
     attach(set_value("workflow_name", workflow_name))
 
 
-def session_start():
+def _parse_boolean_env(env_value: str) -> bool:
+    """
+    Parse boolean value from environment variable string.
+
+    Args:
+        env_value (str): Environment variable value to parse
+
+    Returns:
+        bool: Parsed boolean value
+
+    Accepts: "0", "1", "true", "false", "True", "False"
+    """
+    if env_value.lower() in ("true", "1"):
+        return True
+    elif env_value.lower() in ("false", "0"):
+        return False
+    else:
+        raise ValueError(f"Invalid boolean value: {env_value}")
+
+
+def session_start(apply_transform: bool = False):
     """
     Can be used as a context manager or a normal function.
     As a context manager, yields session metadata.
     As a normal function, just sets up the session.
+
+    Args:
+        apply_transform (bool): If True, enables span transformation based on
+                               rules loaded from SPAN_TRANSFORMER_RULES_FILE env.
+                               Can be overridden by
+                               SPAN_TRANSFORMER_RULES_ENABLED env var.
     """
-    session_id = TracerWrapper.app_name + "_" + str(uuid.uuid4())
+    session_id = (TracerWrapper.app_name or "observe") + "_" + str(uuid.uuid4())
     set_session_id(session_id)
+
+    # Check if environment variable overrides the apply_transform parameter
+    transformer_enabled_env = os.getenv("SPAN_TRANSFORMER_RULES_ENABLED")
+    if transformer_enabled_env:
+        try:
+            apply_transform = _parse_boolean_env(transformer_enabled_env)
+        except ValueError as e:
+            logging.error(
+                "Invalid SPAN_TRANSFORMER_RULES_ENABLED value: "
+                f"{e}. Using parameter value: {apply_transform}"
+            )
+
+    # Handle transformation flag
+    if apply_transform:
+        transformer_rules_file = os.getenv("SPAN_TRANSFORMER_RULES_FILE")
+        if not transformer_rules_file:
+            logging.error(
+                "SPAN_TRANSFORMER_RULES_FILE environment variable "
+                "not set. Disabling transformation."
+            )
+            apply_transform = False
+        elif not os.path.exists(transformer_rules_file):
+            logging.error(
+                "Transformer rules file not found: "
+                f"{transformer_rules_file}. Disabling "
+                "transformation."
+            )
+            apply_transform = False
+        else:
+            try:
+                with open(transformer_rules_file, "r") as f:
+                    transformer_rules = json.load(f)
+                # Validate structure and rules
+                validate_transformer_rules(transformer_rules)
+                attach(set_value("apply_transform", True))
+                attach(set_value("transformer_rules", transformer_rules))
+            except json.JSONDecodeError as e:
+                logging.error(
+                    "Failed to load transformer rules from "
+                    f"{transformer_rules_file}: {e}. Disabling "
+                    "transformation."
+                )
+                apply_transform = False
+            except ValueError:
+                logging.error(
+                    "Invalid transformer rules structure. "
+                    "Expected 'RULES' section. "
+                    "Disabling transformation."
+                )
+                apply_transform = False
+            except (json.JSONDecodeError, Exception) as e:
+                logging.error(
+                    "Failed to load transformer rules from "
+                    f"{transformer_rules_file}: {e}. "
+                    "Disabling transformation."
+                )
+                apply_transform = False
+
+    if not apply_transform:
+        attach(set_value("apply_transform", False))
+
     metadata = {
         "executionID": get_value("session.id") or session_id,
         "traceparentID": get_current_traceparent(),
@@ -581,14 +777,23 @@ def is_llm_span(span) -> bool:
 
 
 def init_spans_exporter(api_endpoint: str, headers: Dict[str, str]) -> SpanExporter:
-    if "http" in api_endpoint.lower() or "https" in api_endpoint.lower():
+    if api_endpoint and (
+        "http" in api_endpoint.lower() or "https" in api_endpoint.lower()
+    ):
         return HTTPExporter(
             endpoint=f"{api_endpoint}/v1/traces",
             headers=headers,
             compression=Compression.Gzip,
         )
-    else:
+    elif api_endpoint:
         return GRPCExporter(endpoint=f"{api_endpoint}", headers=headers)
+    else:
+        # Default to HTTP exporter with localhost when endpoint is None
+        return HTTPExporter(
+            endpoint="http://localhost:4318/v1/traces",
+            headers=headers,
+            compression=Compression.Gzip,
+        )
 
 
 def init_tracer_provider(resource: Resource) -> TracerProvider:
