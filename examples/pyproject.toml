@@ -1,0 +1,24 @@
+[project]
+name = "examples"
+version = "0.1.0"
+description = "A LangGraph-based project"
+requires-python = ">=3.8"
+dependencies = [
+  "langgraph>=0.3.2",
+  "langchain>=0.3.19",
+  "langchain-openai>=0.3.8",
+  "autogen-agentchat",
+  "autogen-ext[openai,azure]",
+  "opentelemetry-api==1.33.1",
+  "langchain-community>=0.3.25",
+  "llama-index>=0.12.34",
+  "openai>=1.75.0",
+  "langchain_experimental>=0.3.2",
+  "python-a2a>=0.2.5",
+  "a2a-sdk>=0.2.5",
+  "uvicorn",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"

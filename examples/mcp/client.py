@@ -6,7 +6,7 @@ import asyncio
 from dotenv import load_dotenv
 
 from ioa_observe.sdk import Observe
-from ioa_observe.sdk.decorators import agent, graph
+from ioa_observe.sdk.decorators import agent
 from ioa_observe.sdk.instrumentations.mcp import McpInstrumentor
 from ioa_observe.sdk.tracing import session_start
 

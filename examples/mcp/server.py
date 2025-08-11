@@ -9,9 +9,7 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 from ioa_observe.sdk import Observe
-from ioa_observe.sdk.decorators import agent, graph
 from ioa_observe.sdk.instrumentations.mcp import McpInstrumentor
-from ioa_observe.sdk.tracing import session_start
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
