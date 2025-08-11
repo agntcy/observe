@@ -34,6 +34,8 @@ This schema is designed to provide comprehensive observability for Multi-Agent S
 
 Link: [AGNTCY Observability Schema](https://github.com/agntcy/observe/blob/main/schema/)
 
+An option is made available for transforming spans attributes exported by using options via env variables (SPAN_TRANSFORMER_RULES_ENABKED, SPAN_TRANSFORMER_RULES_FILE). Please read [transform](./sdk/tracing/transform_span.py).
+
 ## Dev
 
 Any Opentelemetry compatible backend can be used, but for this guide, we will use ClickhouseDB as the backend database.
