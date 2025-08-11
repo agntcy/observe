@@ -4,6 +4,7 @@ FastMCP quickstart example.
 cd to the `examples/snippets/clients` directory and run:
     uv run server fastmcp_quickstart stdio
 """
+
 import os
 
 from mcp.server.fastmcp import FastMCP
@@ -26,16 +27,19 @@ Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
 
 McpInstrumentor().instrument()
 
+
 # Add an addition tool
 @mcp.tool()
 def add(a: int, b: int) -> int:
     """Add two numbers"""
     return a + b
 
+
 @mcp.tool()
 def multiply(a: int, b: int) -> int:
     """Multiply two numbers"""
     return a * b
+
 
 # Add a dynamic greeting resource
 @mcp.resource("greeting://{name}")
@@ -56,6 +60,7 @@ def greet_user(name: str, style: str = "friendly") -> str:
 
     return f"{styles.get(style, styles['friendly'])} for someone named {name}."
 
+
 if __name__ == "__main__":
     # Initialize and run the server
-    mcp.run(transport='streamable-http')
+    mcp.run(transport="streamable-http")

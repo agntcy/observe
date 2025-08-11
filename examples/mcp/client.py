@@ -18,9 +18,11 @@ Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
 
 McpInstrumentor().instrument()
 
+
 @agent(
     name="math_agent",
-    description="An agent that can perform mathematical operations using MCP tools.",)
+    description="An agent that can perform mathematical operations using MCP tools.",
+)
 async def agent(tools, messages):
     agent = create_react_agent("gpt-4o", tools)
     return await agent.ainvoke(messages)
@@ -38,7 +40,10 @@ async def main():
     )
     tools = await client.get_tools()
     session_start()
-    math_response = await agent(tools, {"messages": [{"role": "user", "content": "what's (3 + 5) x 12?"}]})
+    math_response = await agent(
+        tools, {"messages": [{"role": "user", "content": "what's (3 + 5) x 12?"}]}
+    )
     print(math_response)
+
 
 asyncio.run(main())
