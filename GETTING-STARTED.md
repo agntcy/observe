@@ -474,7 +474,7 @@ A2AInstrumentor().instrument()
 
 ## MCP Protocol support
 
-ModelContextProtocol (MCP) is an open protocol designed to standardize how large language models (LLMs) and other AI agents interact with external tools, memory, and context. 
+ModelContextProtocol (MCP) is an open protocol designed to standardize how large language models (LLMs) and other AI agents interact with external tools, memory, and context.
 
 Observe SDK provides built-in support for MCP, allowing you to instrument your servers/clients for MCP.
 
