@@ -470,6 +470,20 @@ from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
 # Initialize the A2A instrumentor
 A2AInstrumentor().instrument()
 ```
+
+
+## MCP Protocol support
+
+ModelContextProtocol (MCP) is an open protocol designed to standardize how large language models (LLMs) and other AI agents interact with external tools, memory, and context.
+
+Observe SDK provides built-in support for MCP, allowing you to instrument your servers/clients for MCP.
+
+### Initializing the MCP Instrumentor
+```python
+from ioa_observe.sdk.instrumentations.mcp import McpInstrumentor
+# Initialize the MCP instrumentor
+McpInstrumentor().instrument()
+```
 ## What's the difference between `@graph` and `@agent` decorators?
 
 ### Different Observability Purposes
