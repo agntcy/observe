@@ -21,6 +21,13 @@ OBSERVE_PROMPT_VERSION_HASH = "ioa_observe.prompt.version_hash"
 OBSERVE_PROMPT_TEMPLATE = "ioa_observe.prompt.template"
 OBSERVE_PROMPT_TEMPLATE_VARIABLES = "ioa_observe.prompt.template_variables"
 
+# MCP
+MCP_METHOD_NAME = "mcp.method.name"
+MCP_REQUEST_ARGUMENT = "mcp.request.argument"
+MCP_REQUEST_ID = "mcp.request.id"
+MCP_SESSION_INIT_OPTIONS = "mcp.session.init_options"
+MCP_RESPONSE_VALUE = "mcp.response.value"
+
 
 class ObserveSpanKindValues(Enum):
     WORKFLOW = "workflow"
