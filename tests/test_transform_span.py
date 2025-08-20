@@ -16,7 +16,6 @@ from ioa_observe.sdk.tracing.transform_span import (
 
 
 class TestTransformSpan(unittest.TestCase):
-
     def setUp(self):
         """Set up test fixtures."""
         self.test_rules = {
@@ -92,7 +91,9 @@ class TestTransformSpan(unittest.TestCase):
         # Path-specific rename: details.nested_data.customsdk.nested.id
         nested_data = result["details"]["nested_data"]
         self.assertIn("ioa_observe.nested_id_renamed_by_path", nested_data)
-        self.assertEqual(nested_data["ioa_observe.nested_id_renamed_by_path"], "nested_value")
+        self.assertEqual(
+            nested_data["ioa_observe.nested_id_renamed_by_path"], "nested_value"
+        )
         self.assertNotIn("customsdk.nested.id", result["details"]["nested_data"])
 
     def test_transform_json_object_conflict_skip(self):

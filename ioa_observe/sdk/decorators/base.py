@@ -7,7 +7,7 @@ import traceback
 from functools import wraps
 import os
 import types
-from typing import Optional, TypeVar, Callable, Awaitable, Any, Union
+from typing import Optional, TypeVar, Callable, Any
 import inspect
 
 from ioa_observe.sdk.decorators.helpers import (
@@ -53,7 +53,7 @@ from ioa_observe.sdk.metrics.agent import topology_dynamism, determinism_score
 P = ParamSpec("P")
 
 R = TypeVar("R")
-F = TypeVar("F", bound=Callable[P, Union[R, Awaitable[R]]])
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 def _is_json_size_valid(json_str: str) -> bool:
