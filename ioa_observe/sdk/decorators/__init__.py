@@ -1,7 +1,7 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 import inspect
-from typing import Optional, Union, TypeVar, Callable, Awaitable
+from typing import Optional, Union, TypeVar, Callable, Any
 
 from typing_extensions import ParamSpec
 

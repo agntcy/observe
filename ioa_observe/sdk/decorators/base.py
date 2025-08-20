@@ -7,7 +7,7 @@ import traceback
 from functools import wraps
 import os
 import types
-from typing import Optional, TypeVar, Callable, Awaitable, Any, Union
+from typing import Optional, TypeVar, Callable, Any
 import inspect
 
 from ioa_observe.sdk.decorators.helpers import (
