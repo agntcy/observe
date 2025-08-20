@@ -55,6 +55,7 @@ P = ParamSpec("P")
 R = TypeVar("R")
 F = TypeVar("F", bound=Callable[..., Any])
 
+
 def _is_json_size_valid(json_str: str) -> bool:
     """Check if JSON string size is less than 1MB"""
     return len(json_str) < 1_000_000
