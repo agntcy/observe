@@ -14,8 +14,7 @@ from ioa_observe.sdk.utils.const import ObserveSpanKindValues
 
 P = ParamSpec("P")
 R = TypeVar("R")
-F = TypeVar("F", bound=Callable[P, Union[R, Awaitable[R]]])
-
+F = TypeVar("F", bound=Callable[..., Any])
 
 def task(
     name: Optional[str] = None,
