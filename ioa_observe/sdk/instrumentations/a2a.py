@@ -77,7 +77,11 @@ class A2AInstrumentor(BaseInstrumentor):
                 except Exception:
                     # Fallback
                     request = request.model_copy(
-                        update={"params": request.params.model_copy(update={"metadata": metadata})}
+                        update={
+                            "params": request.params.model_copy(
+                                update={"metadata": metadata}
+                            )
+                        }
                     )
 
             # Call through without transport-specific kwargs
@@ -112,6 +116,7 @@ class A2AInstrumentor(BaseInstrumentor):
                 ctx = W3CBaggagePropagator().extract(carrier=carrier, context=ctx)
                 try:
                     from opentelemetry import context as otel_ctx
+
                     token = otel_ctx.attach(ctx)
                 except Exception:
                     token = None

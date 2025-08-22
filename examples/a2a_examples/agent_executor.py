@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from ioa_observe.sdk.decorators import agent
 
+
 @agent(name="random_number_generator")
 class RandomNumberAgent(BaseModel):
     """Generates a random number between 1 and 100"""

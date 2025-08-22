@@ -15,13 +15,14 @@ from ioa_observe.sdk import Observe
 from ioa_observe.sdk.decorators import agent
 from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
 
+
 # --8<-- [start:HelloWorldAgent]
 @agent(name="hello_world_generator")
 class HelloWorldAgent:
     """Hello World Agent."""
 
     async def invoke(self) -> str:
-        return 'Hello World'
+        return "Hello World"
 
 
 # --8<-- [start:HelloWorldAgentExecutor_init]
@@ -44,46 +45,42 @@ class HelloWorldAgentExecutor(AgentExecutor):
     # --8<-- [end:HelloWorldAgentExecutor_execute]
 
     # --8<-- [start:HelloWorldAgentExecutor_cancel]
-    async def cancel(
-        self, context: RequestContext, event_queue: EventQueue
-    ) -> None:
-        raise Exception('cancel not supported')
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        raise Exception("cancel not supported")
 
 
-
-if __name__ == '__main__':
-
+if __name__ == "__main__":
     Observe.init("helloworld_a2a_server", api_endpoint="http://localhost:4318")
 
     A2AInstrumentor().instrument()
 
     # --8<-- [start:AgentSkill]
     skill = AgentSkill(
-        id='hello_world',
-        name='Returns hello world',
-        description='just returns hello world',
-        tags=['hello world'],
-        examples=['hi', 'hello world'],
+        id="hello_world",
+        name="Returns hello world",
+        description="just returns hello world",
+        tags=["hello world"],
+        examples=["hi", "hello world"],
     )
     # --8<-- [end:AgentSkill]
 
     extended_skill = AgentSkill(
-        id='super_hello_world',
-        name='Returns a SUPER Hello World',
-        description='A more enthusiastic greeting, only for authenticated users.',
-        tags=['hello world', 'super', 'extended'],
-        examples=['super hi', 'give me a super hello'],
+        id="super_hello_world",
+        name="Returns a SUPER Hello World",
+        description="A more enthusiastic greeting, only for authenticated users.",
+        tags=["hello world", "super", "extended"],
+        examples=["super hi", "give me a super hello"],
     )
 
     # --8<-- [start:AgentCard]
     # This will be the public-facing agent card
     public_agent_card = AgentCard(
-        name='Hello World Agent',
-        description='Just a hello world agent',
-        url='http://localhost:9999/',
-        version='1.0.0',
-        default_input_modes=['text'],
-        default_output_modes=['text'],
+        name="Hello World Agent",
+        description="Just a hello world agent",
+        url="http://localhost:9999/",
+        version="1.0.0",
+        default_input_modes=["text"],
+        default_output_modes=["text"],
         capabilities=AgentCapabilities(streaming=True),
         skills=[skill],  # Only the basic skill for the public card
         supports_authenticated_extended_card=True,
@@ -94,12 +91,12 @@ if __name__ == '__main__':
     # It includes the additional 'extended_skill'
     specific_extended_agent_card = public_agent_card.model_copy(
         update={
-            'name': 'Hello World Agent - Extended Edition',  # Different name for clarity
-            'description': 'The full-featured hello world agent for authenticated users.',
-            'version': '1.0.1',  # Could even be a different version
+            "name": "Hello World Agent - Extended Edition",  # Different name for clarity
+            "description": "The full-featured hello world agent for authenticated users.",
+            "version": "1.0.1",  # Could even be a different version
             # Capabilities and other fields like url, default_input_modes, default_output_modes,
             # supports_authenticated_extended_card are inherited from public_agent_card unless specified here.
-            'skills': [
+            "skills": [
                 skill,
                 extended_skill,
             ],  # Both skills for the extended card
@@ -117,4 +114,4 @@ if __name__ == '__main__':
         extended_agent_card=specific_extended_agent_card,
     )
 
-    uvicorn.run(server.build(), host='0.0.0.0', port=9999)
+    uvicorn.run(server.build(), host="0.0.0.0", port=9999)
