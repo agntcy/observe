@@ -63,6 +63,31 @@ def create_error(error, code) -> str:
     return msg
 
 
+# Helper function to create shared secret identity
+def shared_secret_identity(identity, secret):
+    """
+    Create a provider and verifier using a shared secret.
+    """
+    provider = slim_bindings.PyIdentityProvider.SharedSecret(
+        identity=identity, shared_secret=secret
+    )
+    verifier = slim_bindings.PyIdentityVerifier.SharedSecret(
+        identity=identity, shared_secret=secret
+    )
+    return provider, verifier
+
+
+# Helper function to split ID into components
+def split_id(id_str):
+    """Split an ID into its components"""
+    try:
+        organization, namespace, app = id_str.split("/")
+    except ValueError as e:
+        print("Error: IDs must be in the format organization/namespace/app.")
+        raise e
+    return slim_bindings.PyName(organization, namespace, app)
+
+
 # @monitor_error_rates
 @process_slim_msg("remote_server_agent")
 def process_message(payload) -> str:
@@ -158,79 +183,101 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
     # (e.g., horizontal scaling of the same app in Kubernetes). The agent_id
     # identifies a specific instance of the agent and it is returned by the
     # create_agent function is not provided
-    organization = "cisco"
-    namespace = "default"
-    local_agent = "server"
+    local_id = "cisco/default/server"
+    
+    # Use shared secret for authentication (for demo purposes)
+    shared_secret = os.getenv("SLIM_SHARED_SECRET", "demo-secret")
 
     # init tracing
     slim_bindings.init_tracing(
         {"log_level": "info", "opentelemetry": {"enabled": enable_opentelemetry}}
     )
 
-    # Create participant
-    participant = await slim_bindings.Slim.new(organization, namespace, local_agent)
+    # Create identity provider and verifier
+    provider, verifier = shared_secret_identity(local_id, shared_secret)
 
-    # Connect to gateway server:
-    _ = await participant.connect({"endpoint": address, "tls": {"insecure": True}})
+    # Split the local ID into components
+    local_name = split_id(local_id)
 
-    # Set route
-    await participant.set_route(organization, namespace, local_agent)
+    # Create participant with new API
+    participant = await slim_bindings.Slim.new(local_name, provider, verifier)
 
-    # Subscribe to topic
-    await participant.subscribe(organization, namespace, local_agent)
+    # Connect to gateway server
+    connection_config = {"endpoint": address, "tls": {"insecure": True}}
+    _ = await participant.connect(connection_config)
 
-    # Initialize SLIM connector
-    slim_connector = SLIMConnector(
-        remote_org="cisco",
-        remote_namespace="default",
-        shared_space="chat",
-    )
+    logger.info(f"Connected to SLIM gateway at {address}")
 
-    # Register agents with the connector
-    slim_connector.register("remote_server_agent")
+    # # Initialize SLIM connector
+    # slim_connector = SLIMConnector(
+    #     remote_org="cisco",
+    #     remote_namespace="default",
+    #     shared_space="chat",
+    # )
+    #
+    # # Register agents with the connector
+    # slim_connector.register("remote_server_agent")
 
     # Instrument SLIM communications
-    SLIMInstrumentor().instrument()
+    # SLIMInstrumentor().instrument()
 
     last_src = ""
     last_msg = ""
 
-    session_info = await participant.create_session(
-        slim_bindings.PySessionConfiguration.Streaming(
-            slim_bindings.PySessionDirection.BIDIRECTIONAL,
-            topic=slim_bindings.PyAgentType(organization, namespace, local_agent),
-            max_retries=5,
-            timeout=datetime.timedelta(seconds=5),
-        )
-    )
     try:
         logger.info(
-            "SLIM client started for agent: %s/%s/%s",
-            organization,
-            namespace,
-            local_agent,
+            "SLIM server started for agent: %s",
+            local_id,
         )
         async with participant:
+            # Keep track of active sessions
+            active_sessions = set()
+            
             while True:
-                src, recv = await participant.receive(session=session_info.id)
-                payload = json.loads(recv.decode("utf8"))
-                msg = process_message(payload)
+                try:
+                    # Wait for any incoming message (new session or existing session)
+                    logger.info("Waiting for messages...")
+                    session_info, message = await participant.receive()
+                    
+                    if message is None:
+                        # This is a new session establishment
+                        logger.info(f"New session established: {session_info.id}")
+                        active_sessions.add(session_info.id)
+                        continue
+                    
+                    # This is a message from an existing session
+                    logger.info(f"Received message from session {session_info.id}")
+                    
+                    # Process the message
+                    try:
+                        payload = json.loads(message.decode("utf8"))
+                        logger.info(f"Message payload: {payload}")
+                        
+                        reply_msg = process_message(payload)
+                        logger.info(f"Sending reply: {reply_msg}")
 
-                logger.info("Received message %s, from agent %s", msg, src)
+                        # Send reply back to the session
+                        await participant.publish_to(session_info, reply_msg.encode())
+                        
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to decode JSON message: {e}")
+                        error_reply = create_error("Invalid JSON format", 400)
+                        await participant.publish_to(session_info, error_reply.encode())
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing message: {e}")
+                        error_reply = create_error("Internal server error", 500)
+                        await participant.publish_to(session_info, error_reply.encode())
+                        
+                except Exception as e:
+                    logger.error(f"Error in main receive loop: {e}")
+                    await asyncio.sleep(1)  # Brief pause before retrying
 
-                # Publish reply message to src agent
-                await participant.publish(
-                    src, msg.encode(), organization, namespace, local_agent
-                )
-
-                # Store the last received source and message
-                last_src = src
-                last_msg = msg
     except asyncio.CancelledError:
         print("Shutdown server")
         raise
     finally:
-        print(f"Shutting down agent {organization}/{namespace}/{local_agent}")
+        print(f"Shutting down agent {local_id}")
         return last_src, last_msg  # Return last received source and message
 
 
