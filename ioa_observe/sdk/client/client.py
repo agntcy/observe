@@ -27,7 +27,7 @@ class Client:
         self,
         api_key: str,
         app_name: str = sys.argv[0],
-        api_endpoint: str = "https://api.observe.com",
+        api_endpoint: str = "https://api.agntcy-observe.com",
     ):
         """
         Initialize a new observe client.
@@ -35,13 +35,13 @@ class Client:
         Args:
             api_key (str): Your observe API key
             app_name (Optional[str], optional): The name of your application. Defaults to sys.argv[0].
-            api_endpoint (Optional[str], optional): Custom API endpoint. Defaults to https://api.observe.com.
+            api_endpoint (Optional[str], optional): Custom API endpoint. Defaults to https://api.agntcy-observe.com.
         """
         if not api_key or not api_key.strip():
             raise ValueError("API key is required")
 
         self.app_name = app_name
-        self.api_endpoint = api_endpoint or "https://api.observe.com"
+        self.api_endpoint = api_endpoint or "https://api.agntcy-observe.com"
         self.api_key = api_key
         self._http = HTTPClient(
             base_url=self.api_endpoint, api_key=self.api_key, version=__version__
