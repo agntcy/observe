@@ -31,8 +31,8 @@ from logging_config import configure_logging
 
 logger = configure_logging()
 
-serviceName = "remote-client-agent"
-Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
+# serviceName = "remote-client-agent"
+# Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
 
 ORGANIZATION = "cisco"
 NAMESPACE = "default"
@@ -139,13 +139,12 @@ def split_id(id_str):
 async def send_and_recv(msg) -> Dict[str, Any]:
     """
     Send a message to the remote endpoint and
-    waits for the reply
+    waits for the reply using pubsub pattern
     """
 
     gateway = GatewayHolder.gateway
     session_info = GatewayHolder.session_info
     if gateway is not None and session_info is not None:
-        # Use the new data-plane API to send message and get reply
         remote_name = split_id(f"{ORGANIZATION}/{NAMESPACE}/{REMOTE_AGENT}")
 
         print("remote_name:", remote_name)
@@ -153,15 +152,14 @@ async def send_and_recv(msg) -> Dict[str, Any]:
         print("session_info:", session_info)
 
         try:
-            # Send request and wait for reply using request_reply method
-            _, recv = await gateway.request_reply(
-                session_info, 
-                msg.encode(), 
-                remote_name,
-                timeout=datetime.timedelta(seconds=30)
-            )
+            # Send message to the server's topic (server's name)
+            await gateway.publish(session_info, msg.encode(), remote_name)
+            
+            # Wait for reply on our own session
+            session_info, recv = await gateway.receive(session=session_info.id)
+            
         except Exception as e:
-            logger.error(f"Error in request_reply: {e}")
+            logger.error(f"Error in pubsub communication: {e}")
             raise e
     else:
         raise RuntimeError("Gateway or session is not initialized yet!")
@@ -187,7 +185,7 @@ async def send_and_recv(msg) -> Dict[str, Any]:
         return {"messages": decoded_response.get("messages", [])}
 
 
-@agent(name="remote_client_agent")
+#@agent(name="remote_client_agent")
 def node_remote_slim(state: GraphState) -> Dict[str, Any]:
     if not state["messages"]:
         logger.error(json.dumps({"error": "GraphState contains no messages"}))
@@ -226,9 +224,9 @@ async def connect_to_gateway(address):
     shared_secret = os.getenv("SLIM_SHARED_SECRET", "demo-secret")
 
     # Initialize tracing
-    # slim_bindings.init_tracing(
-    #     {"log_level": "info", "opentelemetry": {"enabled": True}}
-    # )
+    slim_bindings.init_tracing(
+        {"log_level": "info", "opentelemetry": {"enabled": True}}
+    )
 
     # Create identity provider and verifier
     provider, verifier = shared_secret_identity(local_id, shared_secret)
@@ -250,14 +248,14 @@ async def connect_to_gateway(address):
     logger.info(f"Connected to SLIM gateway at {address}")
 
     # Initialize SLIM connector
-    slim_connector = SLIMConnector(
-        remote_org="cisco",
-        remote_namespace="default",
-        shared_space="chat",
-    )
+    # slim_connector = SLIMConnector(
+    #     remote_org="cisco",
+    #     remote_namespace="default",
+    #     shared_space="chat",
+    # )
 
-    # Register agents with the connector
-    slim_connector.register("remote_client_agent")
+    # # Register agents with the connector
+    # slim_connector.register("remote_client_agent")
 
     # Instrument SLIM communications
     # SLIMInstrumentor().instrument()
@@ -269,22 +267,28 @@ async def create_session(gateway):
     """
     Create a session for communication with the remote agent
     """
-    # Create a fire-and-forget session for request/reply communication
-    session_config = slim_bindings.PySessionConfiguration.FireAndForget(
-        max_retries=5,
-        timeout=datetime.timedelta(seconds=30),
-        sticky=True,  # Use sticky mode for consistent routing
-        mls_enabled=False,  # Disable MLS for simplicity
+    # Create a bidirectional streaming session for pubsub communication
+    # Use a unique topic for client-server communication
+    client_topic = split_id(f"{ORGANIZATION}/{NAMESPACE}/{LOCAL_AGENT}")
+    
+    session_info = await gateway.create_session(
+        slim_bindings.PySessionConfiguration.Streaming(
+            slim_bindings.PySessionDirection.BIDIRECTIONAL,
+            topic=client_topic,  # Client creates session with its own topic
+            moderator=True,
+            max_retries=5,
+            timeout=datetime.timedelta(seconds=30),
+            mls_enabled=False,
+        )
     )
     
-    session_info = await gateway.create_session(session_config)
-    logger.info(f"Created session: {session_info.id}")
+    logger.info(f"Created client session: {session_info.id}")
     
     return session_info
 
 
 # Build the state graph
-@graph_decorator(name="remote_client_agent_graph")
+#@graph_decorator(name="remote_client_agent_graph")
 def build_graph() -> Any:
     """
     Constructs the state graph for handling requests.
@@ -320,7 +324,7 @@ def main():
     load_environment_variables()
     init_gateway_conn()
 
-    session_start()  # entry point in execution
+    # session_start()  # entry point in execution
 
     graph = build_graph()
 

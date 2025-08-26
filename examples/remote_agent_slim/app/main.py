@@ -13,6 +13,8 @@ import datetime
 import slim_bindings
 from dotenv import find_dotenv, load_dotenv
 
+from ioa_observe.sdk import Observe
+from ioa_observe.sdk.tracing import session_start
 from ioa_observe.sdk.connectors.slim import SLIMConnector, process_slim_msg
 from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
 
@@ -21,6 +23,9 @@ from core.logging_config import configure_logging
 
 # Define logger at the module level
 logger = logging.getLogger("app")
+
+# serviceName = "remote-server-agent"
+# Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
 
 
 def load_environment_variables(env_file: str | None = None) -> None:
@@ -208,17 +213,17 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
 
     logger.info(f"Connected to SLIM gateway at {address}")
 
-    # # Initialize SLIM connector
+    # Initialize SLIM connector
     # slim_connector = SLIMConnector(
     #     remote_org="cisco",
     #     remote_namespace="default",
     #     shared_space="chat",
     # )
-    #
+
     # # Register agents with the connector
     # slim_connector.register("remote_server_agent")
 
-    # Instrument SLIM communications
+    # # Instrument SLIM communications
     # SLIMInstrumentor().instrument()
 
     last_src = ""
@@ -230,25 +235,32 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
             local_id,
         )
         async with participant:
-            # Keep track of active sessions
-            active_sessions = set()
+            # Create our own session for listening to messages
+            server_session = await participant.create_session(
+                slim_bindings.PySessionConfiguration.Streaming(
+                    slim_bindings.PySessionDirection.BIDIRECTIONAL,
+                    topic=local_name,  # Server listens on its own name as topic
+                    moderator=True,
+                    max_retries=5,
+                    timeout=datetime.timedelta(seconds=30),
+                    mls_enabled=False,
+                )
+            )
+            logger.info(f"Server created session: {server_session.id}")
             
             while True:
                 try:
-                    # Wait for any incoming message (new session or existing session)
+                    # Wait for messages from any session
                     logger.info("Waiting for messages...")
                     session_info, message = await participant.receive()
                     
                     if message is None:
-                        # This is a new session establishment
-                        logger.info(f"New session established: {session_info.id}")
-                        active_sessions.add(session_info.id)
+                        logger.info("Received empty message (session establishment), continuing...")
                         continue
                     
-                    # This is a message from an existing session
+                    # Process the message
                     logger.info(f"Received message from session {session_info.id}")
                     
-                    # Process the message
                     try:
                         payload = json.loads(message.decode("utf8"))
                         logger.info(f"Message payload: {payload}")
@@ -256,18 +268,21 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
                         reply_msg = process_message(payload)
                         logger.info(f"Sending reply: {reply_msg}")
 
-                        # Send reply back to the session
-                        await participant.publish_to(session_info, reply_msg.encode())
+                        # Send reply back to the client's topic
+                        client_name = split_id("cisco/default/client")
+                        await participant.publish(session_info, reply_msg.encode(), client_name)
                         
                     except json.JSONDecodeError as e:
                         logger.error(f"Failed to decode JSON message: {e}")
                         error_reply = create_error("Invalid JSON format", 400)
-                        await participant.publish_to(session_info, error_reply.encode())
+                        client_name = split_id("cisco/default/client")
+                        await participant.publish(session_info, error_reply.encode(), client_name)
                         
                     except Exception as e:
                         logger.error(f"Error processing message: {e}")
                         error_reply = create_error("Internal server error", 500)
-                        await participant.publish_to(session_info, error_reply.encode())
+                        client_name = split_id("cisco/default/client")
+                        await participant.publish(session_info, error_reply.encode(), client_name)
                         
                 except Exception as e:
                     logger.error(f"Error in main receive loop: {e}")
@@ -341,6 +356,7 @@ def main() -> None:
     address = os.getenv("SLIM_ADDRESS", "http://127.0.0.1")
 
     try:
+        session_start()  # Initialize observability session
         src, msg = asyncio.run(try_connect_to_gateway(address, port))
         logger.info("Last message received from: %s", src)
         logger.info("Last message content: %s", msg)
