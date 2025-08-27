@@ -14,7 +14,7 @@ from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
 
-_instruments = ("a2a-sdk >= 0.2.5",)
+_instruments = ("a2a-sdk >= 0.3.0",)
 _global_tracer = None
 _kv_lock = threading.RLock()  # Add thread-safety for kv_store operations
 
@@ -105,7 +105,7 @@ class A2AInstrumentor(BaseInstrumentor):
             carrier = {}
             observe_meta = metadata.get("observe", {}) or {}
             # Accept keys we inject
-            for k in ("traceparent", "baggage", "traceparent", "session_id"):
+            for k in ("traceparent", "baggage", "session_id"):
                 if k in observe_meta:
                     carrier[k] = observe_meta[k]
 
@@ -156,7 +156,7 @@ class A2AInstrumentor(BaseInstrumentor):
 
         A2AClient.send_message = A2AClient.send_message.__wrapped__
 
-        # Uninstrument `execute`
+    # Uninstrument server handler
         from a2a.server.request_handlers import DefaultRequestHandler
 
         DefaultRequestHandler.on_message_send = (
