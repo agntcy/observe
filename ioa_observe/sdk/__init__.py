@@ -89,7 +89,7 @@ class Observe:
 
         if (
             observe_sync_enabled
-            and api_endpoint.find("observe.com") != -1
+            and api_endpoint.find("agntcy-observe.com") != -1
             and api_key
             and (exporter is None)
             and (processor is None)
@@ -112,13 +112,13 @@ class Observe:
         if (
             not exporter
             and not processor
-            and api_endpoint == "https://api.observe.com"
+            and api_endpoint == "https://api.agntcy-observe.com"
             and not api_key
         ):
             print(
                 Fore.RED
                 + "Error: Missing observe API key,"
-                + " go to https://app.observe.com/settings/api-keys to create one"
+                + " go to https://app.agntcy-observe.com/settings/api-keys to create one"
             )
             print("Set the OBSERVE_API_KEY environment variable to the key")
             print(Fore.RESET)
