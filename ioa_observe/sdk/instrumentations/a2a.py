@@ -156,7 +156,7 @@ class A2AInstrumentor(BaseInstrumentor):
 
         A2AClient.send_message = A2AClient.send_message.__wrapped__
 
-    # Uninstrument server handler
+        # Uninstrument server handler
         from a2a.server.request_handlers import DefaultRequestHandler
 
         DefaultRequestHandler.on_message_send = (
