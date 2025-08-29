@@ -194,7 +194,7 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
     shared_secret = os.getenv("SLIM_SHARED_SECRET", "demo-secret")
 
     # init tracing
-    slim_bindings.init_tracing(
+    await slim_bindings.init_tracing(
         {"log_level": "info", "opentelemetry": {"enabled": enable_opentelemetry}}
     )
 
@@ -236,54 +236,51 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
         )
         async with participant:
             # Create our own session for listening to messages
-            server_session = await participant.create_session(
-                slim_bindings.PySessionConfiguration.Streaming(
-                    slim_bindings.PySessionDirection.BIDIRECTIONAL,
-                    topic=local_name,  # Server listens on its own name as topic
-                    moderator=True,
-                    max_retries=5,
-                    timeout=datetime.timedelta(seconds=30),
-                    mls_enabled=False,
-                )
+            #server_session = await participant.create_session(
+            slim_bindings.PySessionConfiguration.FireAndForget(
+                max_retries=5,
+                timeout=datetime.timedelta(seconds=30),
+                mls_enabled=False,
             )
-            logger.info(f"Server created session: {server_session.id}")
-            
+            #)
+            # logger.info(f"Server created session: {server_session.id}")
+
             while True:
                 try:
                     # Wait for messages from any session
                     logger.info("Waiting for messages...")
                     session_info, message = await participant.receive()
-                    
+
                     if message is None:
                         logger.info("Received empty message (session establishment), continuing...")
                         continue
-                    
+
                     # Process the message
                     logger.info(f"Received message from session {session_info.id}")
-                    
+
                     try:
                         payload = json.loads(message.decode("utf8"))
                         logger.info(f"Message payload: {payload}")
-                        
+
                         reply_msg = process_message(payload)
                         logger.info(f"Sending reply: {reply_msg}")
 
                         # Send reply back to the client's topic
                         client_name = split_id("cisco/default/client")
-                        await participant.publish(session_info, reply_msg.encode(), client_name)
-                        
+                        await participant.publish_to(session_info, reply_msg.encode())
+
                     except json.JSONDecodeError as e:
                         logger.error(f"Failed to decode JSON message: {e}")
                         error_reply = create_error("Invalid JSON format", 400)
                         client_name = split_id("cisco/default/client")
                         await participant.publish(session_info, error_reply.encode(), client_name)
-                        
+
                     except Exception as e:
                         logger.error(f"Error processing message: {e}")
                         error_reply = create_error("Internal server error", 500)
                         client_name = split_id("cisco/default/client")
-                        await participant.publish(session_info, error_reply.encode(), client_name)
-                        
+                        await participant.publish_to(session_info, error_reply.encode())
+
                 except Exception as e:
                     logger.error(f"Error in main receive loop: {e}")
                     await asyncio.sleep(1)  # Brief pause before retrying
@@ -320,7 +317,7 @@ async def try_connect_to_gateway(address, port, max_duration=300, initial_delay=
 
     while time.time() - start_time < max_duration:
         try:
-            src, msg = await connect_to_gateway(f"{address}:{port}")
+            src, msg = await connect_to_gateway(f"http://{address}:{port}")
             return src, msg
         except Exception as e:
             logger.warning(
@@ -353,10 +350,10 @@ def main() -> None:
     load_environment_variables()
 
     port = os.getenv("PORT", "46357")
-    address = os.getenv("SLIM_ADDRESS", "http://127.0.0.1")
+    address = os.getenv("SLIM_ADDRESS", "127.0.0.1")
 
     try:
-        session_start()  # Initialize observability session
+        # session_start()  # Initialize observability session
         src, msg = asyncio.run(try_connect_to_gateway(address, port))
         logger.info("Last message received from: %s", src)
         logger.info("Last message content: %s", msg)

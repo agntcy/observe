@@ -31,8 +31,8 @@ from logging_config import configure_logging
 
 logger = configure_logging()
 
-# serviceName = "remote-client-agent"
-# Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
+serviceName = "remote-client-agent"
+Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
 
 ORGANIZATION = "cisco"
 NAMESPACE = "default"
@@ -135,7 +135,7 @@ def split_id(id_str):
     return slim_bindings.PyName(organization, namespace, app)
 
 # @measure_chain_completion_time
-@process_slim_msg("remote_client_agent")
+#@process_slim_msg("remote_client_agent")
 async def send_and_recv(msg) -> Dict[str, Any]:
     """
     Send a message to the remote endpoint and
@@ -146,25 +146,21 @@ async def send_and_recv(msg) -> Dict[str, Any]:
     session_info = GatewayHolder.session_info
     if gateway is not None and session_info is not None:
         remote_name = split_id(f"{ORGANIZATION}/{NAMESPACE}/{REMOTE_AGENT}")
-
-        print("remote_name:", remote_name)
-        print("message:", msg)
-        print("session_info:", session_info)
-
         try:
-            # Send message to the server's topic (server's name)
-            await gateway.publish(session_info, msg.encode(), remote_name)
-            
-            # Wait for reply on our own session
-            session_info, recv = await gateway.receive(session=session_info.id)
-            
+            remote_name = split_id(f"{ORGANIZATION}/{NAMESPACE}/{REMOTE_AGENT}")
+            await gateway.publish(
+            session_info,
+            msg.encode(),
+            remote_name)
+
         except Exception as e:
-            logger.error(f"Error in pubsub communication: {e}")
-            raise e
+            logger.error(f"Error in publish method communication: {e}")
     else:
         raise RuntimeError("Gateway or session is not initialized yet!")
 
-    response_data = json.loads(recv.decode("utf8"))
+    session_info, reply = await gateway.receive(session=session_info.id)
+    print(f"Got reply: {reply.decode()}")
+    response_data = json.loads(reply.decode("utf8"))
 
     # check for errors
     error_code = response_data.get("error")
@@ -219,7 +215,7 @@ async def connect_to_gateway(address):
     Connect to the SLIM gateway using the new data-plane API
     """
     local_id = f"{ORGANIZATION}/{NAMESPACE}/{LOCAL_AGENT}"
-    
+
     # Use shared secret for authentication (for demo purposes)
     shared_secret = os.getenv("SLIM_SHARED_SECRET", "demo-secret")
 
@@ -259,7 +255,7 @@ async def connect_to_gateway(address):
 
     # Instrument SLIM communications
     # SLIMInstrumentor().instrument()
-    
+
     return gateway
 
 
@@ -270,20 +266,17 @@ async def create_session(gateway):
     # Create a bidirectional streaming session for pubsub communication
     # Use a unique topic for client-server communication
     client_topic = split_id(f"{ORGANIZATION}/{NAMESPACE}/{LOCAL_AGENT}")
-    
+
     session_info = await gateway.create_session(
-        slim_bindings.PySessionConfiguration.Streaming(
-            slim_bindings.PySessionDirection.BIDIRECTIONAL,
-            topic=client_topic,  # Client creates session with its own topic
-            moderator=True,
+        slim_bindings.PySessionConfiguration.FireAndForget(
             max_retries=5,
             timeout=datetime.timedelta(seconds=30),
             mls_enabled=False,
         )
     )
-    
+
     logger.info(f"Created client session: {session_info.id}")
-    
+
     return session_info
 
 
@@ -308,8 +301,8 @@ def init_gateway_conn():
     Initialize the gateway connection and session
     """
     port = os.getenv("PORT", "46357")
-    address = os.getenv("SLIM_ADDRESS", "http://127.0.0.1")
-    full_address = f"{address}:{port}"
+    address = os.getenv("SLIM_ADDRESS", "127.0.0.1")
+    full_address = f"http://{address}:{port}"
     
     # Connect to gateway
     GatewayHolder.gateway = asyncio.run(connect_to_gateway(full_address))

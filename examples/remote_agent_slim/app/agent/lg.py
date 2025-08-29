@@ -3,7 +3,9 @@
 import logging
 import os
 import sys
-from typing import Annotated, Any, Dict, List, Optional, TypedDict
+from typing import Annotated, Any, Dict, List, Optional
+
+from typing_extensions import TypedDict
 
 from dotenv import load_dotenv
 from langchain_core.messages import BaseMessage, HumanMessage
