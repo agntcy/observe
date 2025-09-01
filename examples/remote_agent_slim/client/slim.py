@@ -135,8 +135,9 @@ def split_id(id_str):
         raise e
     return slim_bindings.PyName(organization, namespace, app)
 
+
 # @measure_chain_completion_time
-#@process_slim_msg("remote_client_agent")
+# @process_slim_msg("remote_client_agent")
 async def send_and_recv(msg) -> Dict[str, Any]:
     """
     Send a message to the remote endpoint and
@@ -150,15 +151,15 @@ async def send_and_recv(msg) -> Dict[str, Any]:
         try:
             remote_name = split_id(f"{ORGANIZATION}/{NAMESPACE}/{REMOTE_AGENT}")
             _, recv = await gateway.request_reply(
-                    session_info,
-                    msg.encode(),
-                    remote_name,
-                    timeout = datetime.timedelta(seconds=30),
+                session_info,
+                msg.encode(),
+                remote_name,
+                timeout=datetime.timedelta(seconds=30),
             )
 
         except Exception as e:
             logger.error(f"Error in request-reply communication: {e}")
-            #raise e
+            # raise e
     else:
         raise RuntimeError("Gateway or session is not initialized yet!")
     session_info, _ = await gateway.receive()
@@ -185,7 +186,7 @@ async def send_and_recv(msg) -> Dict[str, Any]:
         return {"messages": decoded_response.get("messages", [])}
 
 
-#@agent(name="remote_client_agent")
+# @agent(name="remote_client_agent")
 def node_remote_slim(state: GraphState) -> Dict[str, Any]:
     if not state["messages"]:
         logger.error(json.dumps({"error": "GraphState contains no messages"}))
@@ -287,7 +288,7 @@ async def create_session(gateway):
 
 
 # Build the state graph
-#@graph_decorator(name="remote_client_agent_graph")
+# @graph_decorator(name="remote_client_agent_graph")
 def build_graph() -> Any:
     """
     Constructs the state graph for handling requests.
@@ -309,13 +310,13 @@ def init_gateway_conn():
     port = os.getenv("PORT", "46357")
     address = os.getenv("SLIM_ADDRESS", "127.0.0.1")
     full_address = f"http://{address}:{port}"
-    
+
     # Connect to gateway
     GatewayHolder.gateway = asyncio.run(connect_to_gateway(full_address))
-    
+
     # Create session
     GatewayHolder.session_info = asyncio.run(create_session(GatewayHolder.gateway))
-    
+
     logger.info("Gateway connection and session initialized successfully")
 
 

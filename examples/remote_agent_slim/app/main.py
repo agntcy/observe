@@ -189,7 +189,7 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
     # identifies a specific instance of the agent and it is returned by the
     # create_agent function is not provided
     local_id = "cisco/default/server"
-    
+
     # Use shared secret for authentication (for demo purposes)
     shared_secret = os.getenv("SLIM_SHARED_SECRET", "demo-secret")
 
@@ -239,13 +239,13 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
         )
         async with participant:
             # Create our own session for listening to messages
-            #server_session = await participant.create_session(
+            # server_session = await participant.create_session(
             # slim_bindings.PySessionConfiguration.FireAndForget(
             #     max_retries=5,
             #     timeout=datetime.timedelta(seconds=30),
             #     mls_enabled=False,
             # )
-            #)
+            # )
             # logger.info(f"Server created session: {server_session.id}")
 
             while True:
@@ -255,7 +255,9 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
                     session_info, message = await participant.receive()
 
                     if message is None:
-                        logger.info("Received empty message (session establishment), continuing...")
+                        logger.info(
+                            "Received empty message (session establishment), continuing..."
+                        )
                         continue
 
                     # Process the message
@@ -269,7 +271,7 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
                         logger.info(f"Sending reply: {reply_msg}")
                         # receiver = slim_bindings.PyName("cisco", "default", "client")
 
-                        #await participant.set_route(receiver)
+                        # await participant.set_route(receiver)
 
                         await participant.publish_to(session_info, reply_msg.encode())
 

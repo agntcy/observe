@@ -39,7 +39,7 @@ class SLIMInstrumentor(BaseInstrumentor):
             )
 
         # Instrument `publish` method - handles multiple signatures
-        if hasattr(slim_bindings.Slim, 'publish'):
+        if hasattr(slim_bindings.Slim, "publish"):
             original_publish = slim_bindings.Slim.publish
 
             @functools.wraps(original_publish)
@@ -53,15 +53,21 @@ class SLIMInstrumentor(BaseInstrumentor):
                         # Definition 2: publish(session, message, organization, namespace, topic) - legacy
                         if len(args) >= 3:
                             session_arg = args[0] if args else None
-                            if hasattr(session_arg, 'id'):
-                                span.set_attribute("slim.session.id", str(session_arg.id))
+                            if hasattr(session_arg, "id"):
+                                span.set_attribute(
+                                    "slim.session.id", str(session_arg.id)
+                                )
 
                             # Check if third argument is PyName (new API) or string (legacy API)
-                            if len(args) >= 3 and hasattr(args[2], 'organization'):
+                            if len(args) >= 3 and hasattr(args[2], "organization"):
                                 # New API: args[2] is PyName
                                 topic_name = args[2]
-                                span.set_attribute("slim.topic.organization", topic_name.organization)
-                                span.set_attribute("slim.topic.namespace", topic_name.namespace)
+                                span.set_attribute(
+                                    "slim.topic.organization", topic_name.organization
+                                )
+                                span.set_attribute(
+                                    "slim.topic.namespace", topic_name.namespace
+                                )
                                 span.set_attribute("slim.topic.app", topic_name.app)
                 else:
                     traceparent = get_current_traceparent()
@@ -104,17 +110,21 @@ class SLIMInstrumentor(BaseInstrumentor):
             slim_bindings.Slim.publish = instrumented_publish
 
         # Instrument `publish_to` (new v0.4.0+ method)
-        if hasattr(slim_bindings.Slim, 'publish_to'):
+        if hasattr(slim_bindings.Slim, "publish_to"):
             original_publish_to = slim_bindings.Slim.publish_to
 
             @functools.wraps(original_publish_to)
-            async def instrumented_publish_to(self, session_info, message, *args, **kwargs):
+            async def instrumented_publish_to(
+                self, session_info, message, *args, **kwargs
+            ):
                 if _global_tracer:
-                    with _global_tracer.start_as_current_span("slim.publish_to") as span:
+                    with _global_tracer.start_as_current_span(
+                        "slim.publish_to"
+                    ) as span:
                         traceparent = get_current_traceparent()
 
                         # Add session context to span
-                        if hasattr(session_info, 'id'):
+                        if hasattr(session_info, "id"):
                             span.set_attribute("slim.session.id", str(session_info.id))
                 else:
                     traceparent = get_current_traceparent()
@@ -130,7 +140,9 @@ class SLIMInstrumentor(BaseInstrumentor):
                 headers = {
                     "session_id": session_id if session_id else None,
                     "traceparent": traceparent,
-                    "slim_session_id": str(session_info.id) if hasattr(session_info, 'id') else None,
+                    "slim_session_id": str(session_info.id)
+                    if hasattr(session_info, "id")
+                    else None,
                 }
 
                 # Set baggage context
@@ -138,28 +150,42 @@ class SLIMInstrumentor(BaseInstrumentor):
                     baggage.set_baggage(f"execution.{traceparent}", session_id)
 
                 wrapped_message = self._wrap_message_with_headers(message, headers)
-                message_to_send = json.dumps(wrapped_message).encode("utf-8") if isinstance(wrapped_message, dict) else wrapped_message
+                message_to_send = (
+                    json.dumps(wrapped_message).encode("utf-8")
+                    if isinstance(wrapped_message, dict)
+                    else wrapped_message
+                )
 
-                return await original_publish_to(self, session_info, message_to_send, *args, **kwargs)
+                return await original_publish_to(
+                    self, session_info, message_to_send, *args, **kwargs
+                )
 
             slim_bindings.Slim.publish_to = instrumented_publish_to
 
         # Instrument `request_reply` (new v0.4.0+ method)
-        if hasattr(slim_bindings.Slim, 'request_reply'):
+        if hasattr(slim_bindings.Slim, "request_reply"):
             original_request_reply = slim_bindings.Slim.request_reply
 
             @functools.wraps(original_request_reply)
-            async def instrumented_request_reply(self, session_info, message, remote_name, timeout=None, *args, **kwargs):
+            async def instrumented_request_reply(
+                self, session_info, message, remote_name, timeout=None, *args, **kwargs
+            ):
                 if _global_tracer:
-                    with _global_tracer.start_as_current_span("slim.request_reply") as span:
+                    with _global_tracer.start_as_current_span(
+                        "slim.request_reply"
+                    ) as span:
                         traceparent = get_current_traceparent()
 
                         # Add context to span
-                        if hasattr(session_info, 'id'):
+                        if hasattr(session_info, "id"):
                             span.set_attribute("slim.session.id", str(session_info.id))
-                        if hasattr(remote_name, 'organization'):
-                            span.set_attribute("slim.remote.organization", remote_name.organization)
-                            span.set_attribute("slim.remote.namespace", remote_name.namespace)
+                        if hasattr(remote_name, "organization"):
+                            span.set_attribute(
+                                "slim.remote.organization", remote_name.organization
+                            )
+                            span.set_attribute(
+                                "slim.remote.namespace", remote_name.namespace
+                            )
                             span.set_attribute("slim.remote.app", remote_name.app)
                 else:
                     traceparent = get_current_traceparent()
@@ -175,7 +201,9 @@ class SLIMInstrumentor(BaseInstrumentor):
                 headers = {
                     "session_id": session_id if session_id else None,
                     "traceparent": traceparent,
-                    "slim_session_id": str(session_info.id) if hasattr(session_info, 'id') else None,
+                    "slim_session_id": str(session_info.id)
+                    if hasattr(session_info, "id")
+                    else None,
                 }
 
                 # Set baggage context
@@ -183,38 +211,59 @@ class SLIMInstrumentor(BaseInstrumentor):
                     baggage.set_baggage(f"execution.{traceparent}", session_id)
 
                 wrapped_message = self._wrap_message_with_headers(message, headers)
-                message_to_send = json.dumps(wrapped_message).encode("utf-8") if isinstance(wrapped_message, dict) else wrapped_message
+                message_to_send = (
+                    json.dumps(wrapped_message).encode("utf-8")
+                    if isinstance(wrapped_message, dict)
+                    else wrapped_message
+                )
 
                 kwargs_with_timeout = kwargs.copy()
                 if timeout is not None:
-                    kwargs_with_timeout['timeout'] = timeout
+                    kwargs_with_timeout["timeout"] = timeout
 
-                return await original_request_reply(self, session_info, message_to_send, remote_name, **kwargs_with_timeout)
+                return await original_request_reply(
+                    self,
+                    session_info,
+                    message_to_send,
+                    remote_name,
+                    **kwargs_with_timeout,
+                )
 
             slim_bindings.Slim.request_reply = instrumented_request_reply
 
         # Instrument `invite` (new v0.4.0+ method for group chat)
-        if hasattr(slim_bindings.Slim, 'invite'):
+        if hasattr(slim_bindings.Slim, "invite"):
             original_invite = slim_bindings.Slim.invite
 
             @functools.wraps(original_invite)
-            async def instrumented_invite(self, session_info, participant_name, *args, **kwargs):
+            async def instrumented_invite(
+                self, session_info, participant_name, *args, **kwargs
+            ):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span("slim.invite") as span:
                         # Add context to span
-                        if hasattr(session_info, 'id'):
+                        if hasattr(session_info, "id"):
                             span.set_attribute("slim.session.id", str(session_info.id))
-                        if hasattr(participant_name, 'organization'):
-                            span.set_attribute("slim.participant.organization", participant_name.organization)
-                            span.set_attribute("slim.participant.namespace", participant_name.namespace)
-                            span.set_attribute("slim.participant.app", participant_name.app)
+                        if hasattr(participant_name, "organization"):
+                            span.set_attribute(
+                                "slim.participant.organization",
+                                participant_name.organization,
+                            )
+                            span.set_attribute(
+                                "slim.participant.namespace", participant_name.namespace
+                            )
+                            span.set_attribute(
+                                "slim.participant.app", participant_name.app
+                            )
 
-                return await original_invite(self, session_info, participant_name, *args, **kwargs)
+                return await original_invite(
+                    self, session_info, participant_name, *args, **kwargs
+                )
 
             slim_bindings.Slim.invite = instrumented_invite
 
         # Instrument `set_route` (new v0.4.0+ method)
-        if hasattr(slim_bindings.Slim, 'set_route'):
+        if hasattr(slim_bindings.Slim, "set_route"):
             original_set_route = slim_bindings.Slim.set_route
 
             @functools.wraps(original_set_route)
@@ -222,9 +271,13 @@ class SLIMInstrumentor(BaseInstrumentor):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span("slim.set_route") as span:
                         # Add context to span
-                        if hasattr(remote_name, 'organization'):
-                            span.set_attribute("slim.route.organization", remote_name.organization)
-                            span.set_attribute("slim.route.namespace", remote_name.namespace)
+                        if hasattr(remote_name, "organization"):
+                            span.set_attribute(
+                                "slim.route.organization", remote_name.organization
+                            )
+                            span.set_attribute(
+                                "slim.route.namespace", remote_name.namespace
+                            )
                             span.set_attribute("slim.route.app", remote_name.app)
 
                 return await original_set_route(self, remote_name, *args, **kwargs)
@@ -235,19 +288,25 @@ class SLIMInstrumentor(BaseInstrumentor):
         original_receive = slim_bindings.Slim.receive
 
         @functools.wraps(original_receive)
-        async def instrumented_receive(self, session=None, timeout=None, *args, **kwargs):
+        async def instrumented_receive(
+            self, session=None, timeout=None, *args, **kwargs
+        ):
             # Handle both old and new API patterns
             if session is not None or timeout is not None:
                 # New API pattern with session parameter
                 kwargs_with_params = kwargs.copy()
                 if session is not None:
-                    kwargs_with_params['session'] = session
+                    kwargs_with_params["session"] = session
                 if timeout is not None:
-                    kwargs_with_params['timeout'] = timeout
-                recv_session, raw_message = await original_receive(self, **kwargs_with_params)
+                    kwargs_with_params["timeout"] = timeout
+                recv_session, raw_message = await original_receive(
+                    self, **kwargs_with_params
+                )
             else:
                 # Legacy API pattern
-                recv_session, raw_message = await original_receive(self, *args, **kwargs)
+                recv_session, raw_message = await original_receive(
+                    self, *args, **kwargs
+                )
 
             if raw_message is None:
                 return recv_session, raw_message
@@ -315,10 +374,16 @@ class SLIMInstrumentor(BaseInstrumentor):
                     if isinstance(payload, str):
                         try:
                             payload_dict = json.loads(payload)
-                            return recv_session, json.dumps(payload_dict).encode("utf-8")
+                            return recv_session, json.dumps(payload_dict).encode(
+                                "utf-8"
+                            )
                         except json.JSONDecodeError:
-                            return recv_session, payload.encode("utf-8") if isinstance(payload, str) else payload
-                    return recv_session, json.dumps(payload).encode("utf-8") if isinstance(payload, (dict, list)) else payload
+                            return recv_session, payload.encode("utf-8") if isinstance(
+                                payload, str
+                            ) else payload
+                    return recv_session, json.dumps(payload).encode(
+                        "utf-8"
+                    ) if isinstance(payload, (dict, list)) else payload
                 else:
                     return recv_session, json.dumps(message_to_return).encode("utf-8")
 
@@ -342,17 +407,21 @@ class SLIMInstrumentor(BaseInstrumentor):
         slim_bindings.Slim.connect = instrumented_connect
 
         # Instrument `create_session` (new v0.4.0+ method)
-        if hasattr(slim_bindings.Slim, 'create_session'):
+        if hasattr(slim_bindings.Slim, "create_session"):
             original_create_session = slim_bindings.Slim.create_session
 
             @functools.wraps(original_create_session)
             async def instrumented_create_session(self, config, *args, **kwargs):
                 if _global_tracer:
-                    with _global_tracer.start_as_current_span("slim.create_session") as span:
-                        session_info = await original_create_session(self, config, *args, **kwargs)
+                    with _global_tracer.start_as_current_span(
+                        "slim.create_session"
+                    ) as span:
+                        session_info = await original_create_session(
+                            self, config, *args, **kwargs
+                        )
 
                         # Add session attributes to span
-                        if hasattr(session_info, 'id'):
+                        if hasattr(session_info, "id"):
                             span.set_attribute("slim.session.id", str(session_info.id))
 
                         return session_info
@@ -374,13 +443,21 @@ class SLIMInstrumentor(BaseInstrumentor):
                         existing_headers.update(headers)
                         wrapped_message["headers"] = existing_headers
                     else:
-                        wrapped_message = {"headers": headers, "payload": original_message}
+                        wrapped_message = {
+                            "headers": headers,
+                            "payload": original_message,
+                        }
                 except json.JSONDecodeError:
                     wrapped_message = {"headers": headers, "payload": decoded_message}
             except UnicodeDecodeError:
                 # Fix type annotation issue by ensuring message is bytes
-                encoded_message = message if isinstance(message, bytes) else message.encode('utf-8')
-                wrapped_message = {"headers": headers, "payload": base64.b64encode(encoded_message).decode("utf-8")}
+                encoded_message = (
+                    message if isinstance(message, bytes) else message.encode("utf-8")
+                )
+                wrapped_message = {
+                    "headers": headers,
+                    "payload": base64.b64encode(encoded_message).decode("utf-8"),
+                }
         elif isinstance(message, str):
             try:
                 original_message = json.loads(message)
@@ -412,10 +489,21 @@ class SLIMInstrumentor(BaseInstrumentor):
             )
 
         # Restore the original methods
-        methods_to_restore = ['publish', 'publish_to', 'request_reply', 'receive', 'connect', 'create_session', 'invite', 'set_route']
+        methods_to_restore = [
+            "publish",
+            "publish_to",
+            "request_reply",
+            "receive",
+            "connect",
+            "create_session",
+            "invite",
+            "set_route",
+        ]
 
         for method_name in methods_to_restore:
             if hasattr(slim_bindings.Slim, method_name):
                 original_method = getattr(slim_bindings.Slim, method_name)
-                if hasattr(original_method, '__wrapped__'):
-                    setattr(slim_bindings.Slim, method_name, original_method.__wrapped__)
+                if hasattr(original_method, "__wrapped__"):
+                    setattr(
+                        slim_bindings.Slim, method_name, original_method.__wrapped__
+                    )
