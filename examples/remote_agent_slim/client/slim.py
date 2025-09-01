@@ -9,6 +9,7 @@ import asyncio
 import datetime
 import json
 import os
+import traceback
 import uuid
 from typing import Annotated, Any, Dict, List
 
@@ -148,13 +149,16 @@ async def send_and_recv(msg) -> Dict[str, Any]:
         remote_name = split_id(f"{ORGANIZATION}/{NAMESPACE}/{REMOTE_AGENT}")
         try:
             remote_name = split_id(f"{ORGANIZATION}/{NAMESPACE}/{REMOTE_AGENT}")
-            await gateway.publish(
-            session_info,
-            msg.encode(),
-            remote_name)
+            _, recv = await gateway.request_reply(
+                    session_info,
+                    msg.encode(),
+                    remote_name,
+                    timeout = datetime.timedelta(seconds=30),
+            )
 
         except Exception as e:
-            logger.error(f"Error in publish method communication: {e}")
+            logger.error(f"Error in request-reply communication: {e}")
+            raise e
     else:
         raise RuntimeError("Gateway or session is not initialized yet!")
 
@@ -220,9 +224,9 @@ async def connect_to_gateway(address):
     shared_secret = os.getenv("SLIM_SHARED_SECRET", "demo-secret")
 
     # Initialize tracing
-    slim_bindings.init_tracing(
-        {"log_level": "info", "opentelemetry": {"enabled": True}}
-    )
+    # await slim_bindings.init_tracing(
+    #     {"log_level": "info", "opentelemetry": {"enabled": True}}
+    # )
 
     # Create identity provider and verifier
     provider, verifier = shared_secret_identity(local_id, shared_secret)
@@ -236,6 +240,9 @@ async def connect_to_gateway(address):
     # Connect to the gateway server
     connection_config = {"endpoint": address, "tls": {"insecure": True}}
     _ = await gateway.connect(connection_config)
+
+    # # Subscribe to receive replies
+    # await gateway.subscribe(local_name)
 
     # Set route to remote agent
     remote_name = split_id(f"{ORGANIZATION}/{NAMESPACE}/{REMOTE_AGENT}")
@@ -271,7 +278,6 @@ async def create_session(gateway):
         slim_bindings.PySessionConfiguration.FireAndForget(
             max_retries=5,
             timeout=datetime.timedelta(seconds=30),
-            mls_enabled=False,
         )
     )
 

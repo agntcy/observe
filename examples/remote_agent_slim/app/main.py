@@ -211,6 +211,9 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
     connection_config = {"endpoint": address, "tls": {"insecure": True}}
     _ = await participant.connect(connection_config)
 
+    # # Subscribe to receive messages
+    # await participant.subscribe(local_name)
+
     logger.info(f"Connected to SLIM gateway at {address}")
 
     # Initialize SLIM connector
@@ -237,11 +240,11 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
         async with participant:
             # Create our own session for listening to messages
             #server_session = await participant.create_session(
-            slim_bindings.PySessionConfiguration.FireAndForget(
-                max_retries=5,
-                timeout=datetime.timedelta(seconds=30),
-                mls_enabled=False,
-            )
+            # slim_bindings.PySessionConfiguration.FireAndForget(
+            #     max_retries=5,
+            #     timeout=datetime.timedelta(seconds=30),
+            #     mls_enabled=False,
+            # )
             #)
             # logger.info(f"Server created session: {server_session.id}")
 
@@ -273,7 +276,7 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
                         logger.error(f"Failed to decode JSON message: {e}")
                         error_reply = create_error("Invalid JSON format", 400)
                         client_name = split_id("cisco/default/client")
-                        await participant.publish(session_info, error_reply.encode(), client_name)
+                        await participant.publish_to(session_info, error_reply.encode())
 
                     except Exception as e:
                         logger.error(f"Error processing message: {e}")
