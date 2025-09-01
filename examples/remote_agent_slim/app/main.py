@@ -24,8 +24,8 @@ from core.logging_config import configure_logging
 # Define logger at the module level
 logger = logging.getLogger("app")
 
-# serviceName = "remote-server-agent"
-# Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
+serviceName = "remote-server-agent"
+Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
 
 
 def load_environment_variables(env_file: str | None = None) -> None:
@@ -227,7 +227,7 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
     # slim_connector.register("remote_server_agent")
 
     # # Instrument SLIM communications
-    # SLIMInstrumentor().instrument()
+    SLIMInstrumentor().instrument()
 
     last_src = ""
     last_msg = ""
@@ -267,9 +267,10 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
 
                         reply_msg = process_message(payload)
                         logger.info(f"Sending reply: {reply_msg}")
+                        # receiver = slim_bindings.PyName("cisco", "default", "client")
 
-                        # Send reply back to the client's topic
-                        client_name = split_id("cisco/default/client")
+                        #await participant.set_route(receiver)
+
                         await participant.publish_to(session_info, reply_msg.encode())
 
                     except json.JSONDecodeError as e:

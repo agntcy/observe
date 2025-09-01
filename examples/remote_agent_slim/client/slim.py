@@ -158,10 +158,10 @@ async def send_and_recv(msg) -> Dict[str, Any]:
 
         except Exception as e:
             logger.error(f"Error in request-reply communication: {e}")
-            raise e
+            #raise e
     else:
         raise RuntimeError("Gateway or session is not initialized yet!")
-
+    session_info, _ = await gateway.receive()
     session_info, reply = await gateway.receive(session=session_info.id)
     print(f"Got reply: {reply.decode()}")
     response_data = json.loads(reply.decode("utf8"))
@@ -242,7 +242,7 @@ async def connect_to_gateway(address):
     _ = await gateway.connect(connection_config)
 
     # # Subscribe to receive replies
-    # await gateway.subscribe(local_name)
+    await gateway.subscribe(local_name)
 
     # Set route to remote agent
     remote_name = split_id(f"{ORGANIZATION}/{NAMESPACE}/{REMOTE_AGENT}")
@@ -261,7 +261,7 @@ async def connect_to_gateway(address):
     # slim_connector.register("remote_client_agent")
 
     # Instrument SLIM communications
-    # SLIMInstrumentor().instrument()
+    SLIMInstrumentor().instrument()
 
     return gateway
 
@@ -323,7 +323,7 @@ def main():
     load_environment_variables()
     init_gateway_conn()
 
-    # session_start()  # entry point in execution
+    session_start()  # entry point in execution
 
     graph = build_graph()
 
