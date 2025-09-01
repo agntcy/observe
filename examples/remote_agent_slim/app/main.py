@@ -8,7 +8,6 @@ import json
 import logging
 import os
 import time
-import datetime
 
 import slim_bindings
 from dotenv import find_dotenv, load_dotenv
@@ -268,22 +267,17 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
 
                         reply_msg = process_message(payload)
                         logger.info(f"Sending reply: {reply_msg}")
-                        # receiver = slim_bindings.PyName("cisco", "default", "client")
-
-                        # await participant.set_route(receiver)
 
                         await participant.publish_to(session_info, reply_msg.encode())
 
                     except json.JSONDecodeError as e:
                         logger.error(f"Failed to decode JSON message: {e}")
                         error_reply = create_error("Invalid JSON format", 400)
-                        client_name = split_id("cisco/default/client")
                         await participant.publish_to(session_info, error_reply.encode())
 
                     except Exception as e:
                         logger.error(f"Error processing message: {e}")
                         error_reply = create_error("Internal server error", 500)
-                        client_name = split_id("cisco/default/client")
                         await participant.publish_to(session_info, error_reply.encode())
 
                 except Exception as e:

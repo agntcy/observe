@@ -268,10 +268,6 @@ async def create_session(gateway):
     """
     Create a session for communication with the remote agent
     """
-    # Create a bidirectional streaming session for pubsub communication
-    # Use a unique topic for client-server communication
-    client_topic = split_id(f"{ORGANIZATION}/{NAMESPACE}/{LOCAL_AGENT}")
-
     session_info = await gateway.create_session(
         slim_bindings.PySessionConfiguration.FireAndForget(
             max_retries=5,

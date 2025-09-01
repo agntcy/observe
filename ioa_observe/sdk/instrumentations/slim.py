@@ -318,7 +318,6 @@ class SLIMInstrumentor(BaseInstrumentor):
                 # Extract traceparent and session info from headers
                 traceparent = headers.get("traceparent")
                 session_id = headers.get("session_id")
-                slim_session_id = headers.get("slim_session_id")
 
                 # Create carrier for context propagation
                 carrier = {}
