@@ -9,7 +9,6 @@ import asyncio
 import datetime
 import json
 import os
-import traceback
 import uuid
 from typing import Annotated, Any, Dict, List
 
@@ -23,9 +22,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from ioa_observe.sdk import Observe
 from ioa_observe.sdk.tracing import session_start
-from ioa_observe.sdk.decorators import graph as graph_decorator, agent
 
-from ioa_observe.sdk.connectors.slim import SLIMConnector, process_slim_msg
 from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
 
 from logging_config import configure_logging

@@ -14,8 +14,7 @@ import slim_bindings
 from dotenv import find_dotenv, load_dotenv
 
 from ioa_observe.sdk import Observe
-from ioa_observe.sdk.tracing import session_start
-from ioa_observe.sdk.connectors.slim import SLIMConnector, process_slim_msg
+from ioa_observe.sdk.connectors.slim import process_slim_msg
 from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
 
 from agent.lg import invoke_graph
@@ -222,7 +221,7 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
     #     remote_namespace="default",
     #     shared_space="chat",
     # )
-
+    #
     # # Register agents with the connector
     # slim_connector.register("remote_server_agent")
 

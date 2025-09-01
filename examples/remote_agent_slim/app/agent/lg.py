@@ -14,7 +14,6 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
-from ioa_observe.sdk import Observe
 
 from ioa_observe.sdk.decorators import graph as graph_decorator, agent
 
