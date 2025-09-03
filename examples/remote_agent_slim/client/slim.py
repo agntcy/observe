@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 # Description: This file contains a sample graph client that makes a stateless request to the Remote Graph Server.
-# Usage: python3 client/rest.py
+# Usage: python3 client/slim.py
 
 import asyncio
 import datetime
 import json
 import os
 import uuid
-from typing import Annotated, Any, Dict, List, TypedDict
+from typing import Annotated, Any, Dict, List
+
+from typing_extensions import TypedDict
 
 import slim_bindings
 from dotenv import find_dotenv, load_dotenv
@@ -20,9 +22,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from ioa_observe.sdk import Observe
 from ioa_observe.sdk.tracing import session_start
-from ioa_observe.sdk.decorators import graph as graph_decorator, agent
 
-from ioa_observe.sdk.connectors.slim import SLIMConnector, process_slim_msg
 from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
 
 from logging_config import configure_logging
@@ -108,24 +108,61 @@ class GraphState(TypedDict):
     gateway: GatewayHolder
 
 
+# Helper function to create shared secret identity
+def shared_secret_identity(identity, secret):
+    """
+    Create a provider and verifier using a shared secret.
+    """
+    provider = slim_bindings.PyIdentityProvider.SharedSecret(
+        identity=identity, shared_secret=secret
+    )
+    verifier = slim_bindings.PyIdentityVerifier.SharedSecret(
+        identity=identity, shared_secret=secret
+    )
+    return provider, verifier
+
+
+# Helper function to split ID into components
+def split_id(id_str):
+    """Split an ID into its components"""
+    try:
+        organization, namespace, app = id_str.split("/")
+    except ValueError as e:
+        print("Error: IDs must be in the format organization/namespace/app.")
+        raise e
+    return slim_bindings.PyName(organization, namespace, app)
+
+
 # @measure_chain_completion_time
-@process_slim_msg("remote_client_agent")
+# @process_slim_msg("remote_client_agent")
 async def send_and_recv(msg) -> Dict[str, Any]:
     """
     Send a message to the remote endpoint and
-    waits for the reply
+    waits for the reply using pubsub pattern
     """
 
     gateway = GatewayHolder.gateway
     session_info = GatewayHolder.session_info
-    if gateway is not None:
-        await gateway.publish(session_info, msg.encode(), "cisco", "default", "server")
-        async with gateway:
-            _, recv = await gateway.receive(session=session_info.id)
-    else:
-        raise RuntimeError("Gateway is not initialized yet!")
+    if gateway is not None and session_info is not None:
+        remote_name = split_id(f"{ORGANIZATION}/{NAMESPACE}/{REMOTE_AGENT}")
+        try:
+            remote_name = split_id(f"{ORGANIZATION}/{NAMESPACE}/{REMOTE_AGENT}")
+            _, recv = await gateway.request_reply(
+                session_info,
+                msg.encode(),
+                remote_name,
+                timeout=datetime.timedelta(seconds=30),
+            )
 
-    response_data = json.loads(recv.decode("utf8"))
+        except Exception as e:
+            logger.error(f"Error in request-reply communication: {e}")
+            # raise e
+    else:
+        raise RuntimeError("Gateway or session is not initialized yet!")
+    session_info, _ = await gateway.receive()
+    session_info, reply = await gateway.receive(session=session_info.id)
+    print(f"Got reply: {reply.decode()}")
+    response_data = json.loads(reply.decode("utf8"))
 
     # check for errors
     error_code = response_data.get("error")
@@ -146,7 +183,7 @@ async def send_and_recv(msg) -> Dict[str, Any]:
         return {"messages": decoded_response.get("messages", [])}
 
 
-@agent(name="remote_client_agent")
+# @agent(name="remote_client_agent")
 def node_remote_slim(state: GraphState) -> Dict[str, Any]:
     if not state["messages"]:
         logger.error(json.dumps({"error": "GraphState contains no messages"}))
@@ -176,47 +213,75 @@ def node_remote_slim(state: GraphState) -> Dict[str, Any]:
 # @log_connection_events
 # @measure_connection_latency
 async def connect_to_gateway(address):
-    # An agent app is identified by a name in the format
-    # /organization/namespace/agent_class/agent_id. The agent_class indicates the
-    # type of agent, and there can be multiple instances of the same type running
-    # (e.g., horizontal scaling of the same app in Kubernetes). The agent_id
-    # identifies a specific instance of the agent and it is returned by the
-    # create_agent function is not provided
-    organization = ORGANIZATION
-    namespace = NAMESPACE
-    local_agent = LOCAL_AGENT
-    remote_agent = REMOTE_AGENT
+    """
+    Connect to the SLIM gateway using the new data-plane API
+    """
+    local_id = f"{ORGANIZATION}/{NAMESPACE}/{LOCAL_AGENT}"
 
-    # Define the service based on the local agent
-    gateway = await slim_bindings.Slim.new(organization, namespace, local_agent)
+    # Use shared secret for authentication (for demo purposes)
+    shared_secret = os.getenv("SLIM_SHARED_SECRET", "demo-secret")
+
+    # Initialize tracing
+    # await slim_bindings.init_tracing(
+    #     {"log_level": "info", "opentelemetry": {"enabled": True}}
+    # )
+
+    # Create identity provider and verifier
+    provider, verifier = shared_secret_identity(local_id, shared_secret)
+
+    # Split the local ID into components
+    local_name = split_id(local_id)
+
+    # Create SLIM client with new API
+    gateway = await slim_bindings.Slim.new(local_name, provider, verifier)
 
     # Connect to the gateway server
-    _ = await gateway.connect({"endpoint": address, "tls": {"insecure": True}})
+    connection_config = {"endpoint": address, "tls": {"insecure": True}}
+    _ = await gateway.connect(connection_config)
 
-    # Connect to the service and subscribe for the local name
-    # to receive content
-    await gateway.subscribe(organization, namespace, remote_agent)
+    # # Subscribe to receive replies
+    await gateway.subscribe(local_name)
 
-    # set the state to connect to the remote agent
-    await gateway.set_route(organization, namespace, remote_agent)
+    # Set route to remote agent
+    remote_name = split_id(f"{ORGANIZATION}/{NAMESPACE}/{REMOTE_AGENT}")
+    await gateway.set_route(remote_name)
+
+    logger.info(f"Connected to SLIM gateway at {address}")
 
     # Initialize SLIM connector
-    slim_connector = SLIMConnector(
-        remote_org="cisco",
-        remote_namespace="default",
-        shared_space="chat",
-    )
+    # slim_connector = SLIMConnector(
+    #     remote_org="cisco",
+    #     remote_namespace="default",
+    #     shared_space="chat",
+    # )
 
-    # Register agents with the connector
-    slim_connector.register("remote_client_agent")
+    # # Register agents with the connector
+    # slim_connector.register("remote_client_agent")
 
     # Instrument SLIM communications
     SLIMInstrumentor().instrument()
+
     return gateway
 
 
+async def create_session(gateway):
+    """
+    Create a session for communication with the remote agent
+    """
+    session_info = await gateway.create_session(
+        slim_bindings.PySessionConfiguration.FireAndForget(
+            max_retries=5,
+            timeout=datetime.timedelta(seconds=30),
+        )
+    )
+
+    logger.info(f"Created client session: {session_info.id}")
+
+    return session_info
+
+
 # Build the state graph
-@graph_decorator(name="remote_client_agent_graph")
+# @graph_decorator(name="remote_client_agent_graph")
 def build_graph() -> Any:
     """
     Constructs the state graph for handling requests.
@@ -232,26 +297,20 @@ def build_graph() -> Any:
 
 
 def init_gateway_conn():
+    """
+    Initialize the gateway connection and session
+    """
     port = os.getenv("PORT", "46357")
-    address = os.getenv("SLIM_ADDRESS", "http://127.0.0.1")
-    # TBD: Part of graph config
-    GatewayHolder.gateway = asyncio.run(connect_to_gateway(address + ":" + port))
-    GatewayHolder.session_info = asyncio.run(set_session_info(GatewayHolder.gateway))
+    address = os.getenv("SLIM_ADDRESS", "127.0.0.1")
+    full_address = f"http://{address}:{port}"
 
+    # Connect to gateway
+    GatewayHolder.gateway = asyncio.run(connect_to_gateway(full_address))
 
-async def set_session_info(gateway):
-    organization = ORGANIZATION
-    namespace = NAMESPACE
-    remote_agent = REMOTE_AGENT
+    # Create session
+    GatewayHolder.session_info = asyncio.run(create_session(GatewayHolder.gateway))
 
-    return await gateway.create_session(
-        slim_bindings.PySessionConfiguration.Streaming(
-            slim_bindings.PySessionDirection.BIDIRECTIONAL,
-            topic=slim_bindings.PyAgentType(organization, namespace, remote_agent),
-            max_retries=5,
-            timeout=datetime.timedelta(seconds=5),
-        )
-    )
+    logger.info("Gateway connection and session initialized successfully")
 
 
 def main():
@@ -261,7 +320,6 @@ def main():
     session_start()  # entry point in execution
 
     graph = build_graph()
-    # Determine gateway address from environment variables or use the default
 
     inputs = {"messages": [HumanMessage(content="Write a story about a cat")]}
     logger.info({"event": "invoking_graph", "inputs": inputs})

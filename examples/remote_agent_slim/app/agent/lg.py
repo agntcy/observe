@@ -3,7 +3,9 @@
 import logging
 import os
 import sys
-from typing import Annotated, Any, Dict, List, Optional, TypedDict
+from typing import Annotated, Any, Dict, List, Optional
+
+from typing_extensions import TypedDict
 
 from dotenv import load_dotenv
 from langchain_core.messages import BaseMessage, HumanMessage
@@ -12,7 +14,6 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
-from ioa_observe.sdk import Observe
 
 from ioa_observe.sdk.decorators import graph as graph_decorator, agent
 
@@ -25,9 +26,8 @@ parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 # Add the parent directory to sys.path
 sys.path.insert(0, parent_dir)
 
-serviceName = "remote-server-agent"
-
-Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
+# serviceName = "remote-server-agent"
+# Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
 
 
 logger = logging.getLogger(__file__)

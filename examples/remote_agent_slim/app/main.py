@@ -8,12 +8,12 @@ import json
 import logging
 import os
 import time
-import datetime
 
 import slim_bindings
 from dotenv import find_dotenv, load_dotenv
 
-from ioa_observe.sdk.connectors.slim import SLIMConnector, process_slim_msg
+from ioa_observe.sdk import Observe
+from ioa_observe.sdk.connectors.slim import process_slim_msg
 from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
 
 from agent.lg import invoke_graph
@@ -21,6 +21,9 @@ from core.logging_config import configure_logging
 
 # Define logger at the module level
 logger = logging.getLogger("app")
+
+serviceName = "remote-server-agent"
+Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
 
 
 def load_environment_variables(env_file: str | None = None) -> None:
@@ -61,6 +64,31 @@ def create_error(error, code) -> str:
     }
     msg = json.dumps(payload)
     return msg
+
+
+# Helper function to create shared secret identity
+def shared_secret_identity(identity, secret):
+    """
+    Create a provider and verifier using a shared secret.
+    """
+    provider = slim_bindings.PyIdentityProvider.SharedSecret(
+        identity=identity, shared_secret=secret
+    )
+    verifier = slim_bindings.PyIdentityVerifier.SharedSecret(
+        identity=identity, shared_secret=secret
+    )
+    return provider, verifier
+
+
+# Helper function to split ID into components
+def split_id(id_str):
+    """Split an ID into its components"""
+    try:
+        organization, namespace, app = id_str.split("/")
+    except ValueError as e:
+        print("Error: IDs must be in the format organization/namespace/app.")
+        raise e
+    return slim_bindings.PyName(organization, namespace, app)
 
 
 # @monitor_error_rates
@@ -158,79 +186,109 @@ async def connect_to_gateway(address, enable_opentelemetry=False) -> tuple[str, 
     # (e.g., horizontal scaling of the same app in Kubernetes). The agent_id
     # identifies a specific instance of the agent and it is returned by the
     # create_agent function is not provided
-    organization = "cisco"
-    namespace = "default"
-    local_agent = "server"
+    local_id = "cisco/default/server"
+
+    # Use shared secret for authentication (for demo purposes)
+    shared_secret = os.getenv("SLIM_SHARED_SECRET", "demo-secret")
 
     # init tracing
-    slim_bindings.init_tracing(
+    await slim_bindings.init_tracing(
         {"log_level": "info", "opentelemetry": {"enabled": enable_opentelemetry}}
     )
 
-    # Create participant
-    participant = await slim_bindings.Slim.new(organization, namespace, local_agent)
+    # Create identity provider and verifier
+    provider, verifier = shared_secret_identity(local_id, shared_secret)
 
-    # Connect to gateway server:
-    _ = await participant.connect({"endpoint": address, "tls": {"insecure": True}})
+    # Split the local ID into components
+    local_name = split_id(local_id)
 
-    # Set route
-    await participant.set_route(organization, namespace, local_agent)
+    # Create participant with new API
+    participant = await slim_bindings.Slim.new(local_name, provider, verifier)
 
-    # Subscribe to topic
-    await participant.subscribe(organization, namespace, local_agent)
+    # Connect to gateway server
+    connection_config = {"endpoint": address, "tls": {"insecure": True}}
+    _ = await participant.connect(connection_config)
+
+    # # Subscribe to receive messages
+    # await participant.subscribe(local_name)
+
+    logger.info(f"Connected to SLIM gateway at {address}")
 
     # Initialize SLIM connector
-    slim_connector = SLIMConnector(
-        remote_org="cisco",
-        remote_namespace="default",
-        shared_space="chat",
-    )
+    # slim_connector = SLIMConnector(
+    #     remote_org="cisco",
+    #     remote_namespace="default",
+    #     shared_space="chat",
+    # )
+    #
+    # # Register agents with the connector
+    # slim_connector.register("remote_server_agent")
 
-    # Register agents with the connector
-    slim_connector.register("remote_server_agent")
-
-    # Instrument SLIM communications
+    # # Instrument SLIM communications
     SLIMInstrumentor().instrument()
 
     last_src = ""
     last_msg = ""
 
-    session_info = await participant.create_session(
-        slim_bindings.PySessionConfiguration.Streaming(
-            slim_bindings.PySessionDirection.BIDIRECTIONAL,
-            topic=slim_bindings.PyAgentType(organization, namespace, local_agent),
-            max_retries=5,
-            timeout=datetime.timedelta(seconds=5),
-        )
-    )
     try:
         logger.info(
-            "SLIM client started for agent: %s/%s/%s",
-            organization,
-            namespace,
-            local_agent,
+            "SLIM server started for agent: %s",
+            local_id,
         )
         async with participant:
+            # Create our own session for listening to messages
+            # server_session = await participant.create_session(
+            # slim_bindings.PySessionConfiguration.FireAndForget(
+            #     max_retries=5,
+            #     timeout=datetime.timedelta(seconds=30),
+            #     mls_enabled=False,
+            # )
+            # )
+            # logger.info(f"Server created session: {server_session.id}")
+
             while True:
-                src, recv = await participant.receive(session=session_info.id)
-                payload = json.loads(recv.decode("utf8"))
-                msg = process_message(payload)
+                try:
+                    # Wait for messages from any session
+                    logger.info("Waiting for messages...")
+                    session_info, message = await participant.receive()
 
-                logger.info("Received message %s, from agent %s", msg, src)
+                    if message is None:
+                        logger.info(
+                            "Received empty message (session establishment), continuing..."
+                        )
+                        continue
 
-                # Publish reply message to src agent
-                await participant.publish(
-                    src, msg.encode(), organization, namespace, local_agent
-                )
+                    # Process the message
+                    logger.info(f"Received message from session {session_info.id}")
 
-                # Store the last received source and message
-                last_src = src
-                last_msg = msg
+                    try:
+                        payload = json.loads(message.decode("utf8"))
+                        logger.info(f"Message payload: {payload}")
+
+                        reply_msg = process_message(payload)
+                        logger.info(f"Sending reply: {reply_msg}")
+
+                        await participant.publish_to(session_info, reply_msg.encode())
+
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to decode JSON message: {e}")
+                        error_reply = create_error("Invalid JSON format", 400)
+                        await participant.publish_to(session_info, error_reply.encode())
+
+                    except Exception as e:
+                        logger.error(f"Error processing message: {e}")
+                        error_reply = create_error("Internal server error", 500)
+                        await participant.publish_to(session_info, error_reply.encode())
+
+                except Exception as e:
+                    logger.error(f"Error in main receive loop: {e}")
+                    await asyncio.sleep(1)  # Brief pause before retrying
+
     except asyncio.CancelledError:
         print("Shutdown server")
         raise
     finally:
-        print(f"Shutting down agent {organization}/{namespace}/{local_agent}")
+        print(f"Shutting down agent {local_id}")
         return last_src, last_msg  # Return last received source and message
 
 
@@ -258,7 +316,7 @@ async def try_connect_to_gateway(address, port, max_duration=300, initial_delay=
 
     while time.time() - start_time < max_duration:
         try:
-            src, msg = await connect_to_gateway(f"{address}:{port}")
+            src, msg = await connect_to_gateway(f"http://{address}:{port}")
             return src, msg
         except Exception as e:
             logger.warning(
@@ -291,9 +349,10 @@ def main() -> None:
     load_environment_variables()
 
     port = os.getenv("PORT", "46357")
-    address = os.getenv("SLIM_ADDRESS", "http://127.0.0.1")
+    address = os.getenv("SLIM_ADDRESS", "127.0.0.1")
 
     try:
+        # session_start()  # Initialize observability session
         src, msg = asyncio.run(try_connect_to_gateway(address, port))
         logger.info("Last message received from: %s", src)
         logger.info("Last message content: %s", msg)
