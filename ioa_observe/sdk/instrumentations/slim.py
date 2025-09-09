@@ -94,7 +94,9 @@ class SLIMInstrumentor(BaseInstrumentor):
                 if len(args) > message_arg_index:
                     original_args = list(args)
                     message = original_args[message_arg_index]
-                    wrapped_message = SLIMInstrumentor._wrap_message_with_headers(self, message, headers)
+                    wrapped_message = SLIMInstrumentor._wrap_message_with_headers(
+                        self, message, headers
+                    )
 
                     # Convert wrapped message back to bytes if needed
                     if isinstance(wrapped_message, dict):
@@ -149,7 +151,9 @@ class SLIMInstrumentor(BaseInstrumentor):
                 if traceparent and session_id:
                     baggage.set_baggage(f"execution.{traceparent}", session_id)
 
-                wrapped_message = SLIMInstrumentor._wrap_message_with_headers(self, message, headers)
+                wrapped_message = SLIMInstrumentor._wrap_message_with_headers(
+                    self, message, headers
+                )
                 message_to_send = (
                     json.dumps(wrapped_message).encode("utf-8")
                     if isinstance(wrapped_message, dict)
@@ -210,7 +214,9 @@ class SLIMInstrumentor(BaseInstrumentor):
                 if traceparent and session_id:
                     baggage.set_baggage(f"execution.{traceparent}", session_id)
 
-                wrapped_message = SLIMInstrumentor._wrap_message_with_headers(self, message, headers)
+                wrapped_message = SLIMInstrumentor._wrap_message_with_headers(
+                    self, message, headers
+                )
                 message_to_send = (
                     json.dumps(wrapped_message).encode("utf-8")
                     if isinstance(wrapped_message, dict)
