@@ -291,9 +291,9 @@ class TracerWrapper(object):
         if agent_id is not None:
             span.set_attribute("agent_id", agent_id)
 
-        application_id = get_value("application.id")
+        application_id = get_value("application_id")
         if application_id is not None:
-            span.set_attribute("application.id", application_id)
+            span.set_attribute("application_id", application_id)
 
         if is_llm_span(span):
             self.llm_call_counter.add(1, attributes=span.attributes)
@@ -741,7 +741,7 @@ def set_agent_id_event(agent_id: str) -> None:
 
 
 def set_application_id(app_id: str) -> None:
-    attach(set_value("application.id", app_id))
+    attach(set_value("application_id", app_id))
 
 
 def set_entity_path(entity_path: str) -> None:

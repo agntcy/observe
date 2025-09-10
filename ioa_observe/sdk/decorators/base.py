@@ -151,7 +151,7 @@ def _setup_span(
         if application_id:
             set_application_id(application_id)
             span.set_attribute(
-                "application.id", application_id
+                "application_id", application_id
             )  # set application id attribute
     return span, ctx, ctx_token
 
