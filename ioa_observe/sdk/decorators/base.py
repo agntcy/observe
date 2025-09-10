@@ -36,6 +36,7 @@ from ioa_observe.sdk.tracing.tracing import (
     set_entity_path,
     get_chained_entity_path,
     set_agent_id_event,
+    set_application_id,
 )
 from ioa_observe.sdk.metrics.agents.agent_connections import connection_reliability
 from ioa_observe.sdk.utils import camel_to_snake
@@ -91,6 +92,7 @@ def _setup_span(
     tlp_span_kind: Optional[ObserveSpanKindValues] = None,
     version: Optional[int] = None,
     description: Optional[str] = None,
+    application_id: Optional[str] = None,
 ):
     """Sets up the OpenTelemetry span and context"""
     if tlp_span_kind in [
@@ -104,6 +106,7 @@ def _setup_span(
         #     set_session_id(session_id)
     if tlp_span_kind == "graph":
         span_name = f"{entity_name}.{tlp_span_kind}"
+
     else:
         span_name = f"{entity_name}.{tlp_span_kind.value}"
 
@@ -111,9 +114,6 @@ def _setup_span(
         span = tracer.start_span(span_name)
         ctx = trace.set_span_in_context(span)
         ctx_token = context_api.attach(ctx)
-        span.set_attribute(
-            "agent_id", entity_name
-        ) if tlp_span_kind == ObserveSpanKindValues.AGENT else None
         if tlp_span_kind == ObserveSpanKindValues.AGENT:
             with trace.get_tracer(__name__).start_span(
                 "agent_start_event", context=trace.set_span_in_context(span)
@@ -148,7 +148,11 @@ def _setup_span(
 
         if tlp_span_kind == ObserveSpanKindValues.AGENT:
             span.set_attribute("agent_chain_start_time", time.time())
-
+        if application_id:
+            set_application_id(application_id)
+            span.set_attribute(
+                "application.id", application_id
+            )  # set application id attribute
     return span, ctx, ctx_token
 
 
@@ -297,6 +301,7 @@ def entity_method(
     description: Optional[str] = None,
     version: Optional[int] = None,
     protocol: Optional[str] = None,
+    application_id: Optional[str] = None,
     tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
 ) -> Callable[[F], F]:
     def decorate(fn: F) -> F:
@@ -319,6 +324,7 @@ def entity_method(
                         tlp_span_kind,
                         version,
                         description,
+                        application_id,
                     )
                     _handle_span_input(span, args, kwargs, cls=JSONEncoder)
 
@@ -340,6 +346,7 @@ def entity_method(
                         tlp_span_kind,
                         version,
                         description,
+                        application_id,
                     )
 
                     # Handle case where span setup failed
@@ -436,6 +443,7 @@ def entity_method(
                     tlp_span_kind,
                     version,
                     description,
+                    application_id,
                 )
 
                 # Handle case where span setup failed
@@ -549,6 +557,7 @@ def entity_class(
     description: Optional[str],
     version: Optional[int],
     protocol: Optional[str],
+    application_id: Optional[str],
     method_name: Optional[str],
     tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
 ):
@@ -603,6 +612,7 @@ def entity_class(
                             description=description,
                             version=version,
                             protocol=protocol,
+                            application_id=application_id,
                             tlp_span_kind=tlp_span_kind,
                         )(unwrapped_method)
                         # Set the wrapped method on the class
@@ -619,6 +629,7 @@ def entity_class(
 def _handle_agent_span(span, entity_name, description, tlp_span_kind):
     if tlp_span_kind == ObserveSpanKindValues.AGENT:
         try:
+            span.set_attribute("agent_id", entity_name)  # set the agent id attribute
             set_agent_id_event(entity_name)
             span.add_event(
                 "agent_start_event",

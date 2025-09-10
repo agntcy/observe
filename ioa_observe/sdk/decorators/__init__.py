@@ -22,6 +22,7 @@ def task(
     description: Optional[str] = None,
     version: Optional[int] = None,
     protocol: Optional[str] = None,
+    application_id: Optional[str] = None,
     method_name: Optional[str] = None,
     tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
 ) -> Callable[[F], F]:
@@ -31,6 +32,7 @@ def task(
             description=description,
             version=version,
             protocol=protocol,
+            application_id=application_id,
             tlp_span_kind=tlp_span_kind,
         )
     else:
@@ -39,6 +41,7 @@ def task(
             description=description,
             version=version,
             protocol=protocol,
+            application_id=application_id,
             method_name=method_name,
             tlp_span_kind=tlp_span_kind,
         )
@@ -49,6 +52,7 @@ def workflow(
     description: Optional[str] = None,
     version: Optional[int] = None,
     protocol: Optional[str] = None,
+    application_id: Optional[str] = None,
     method_name: Optional[str] = None,
     tlp_span_kind: Optional[
         Union[ObserveSpanKindValues, str]
@@ -62,6 +66,7 @@ def workflow(
                 description=description,
                 version=version,
                 protocol=protocol,
+                application_id=application_id,
                 method_name=method_name,
                 tlp_span_kind=tlp_span_kind,
             )(target)
@@ -72,6 +77,7 @@ def workflow(
                 description=description,
                 version=version,
                 protocol=protocol,
+                application_id=application_id,
                 tlp_span_kind=tlp_span_kind,
             )(target)
 
@@ -82,19 +88,27 @@ def graph(
     name: Optional[str] = None,
     description: Optional[str] = None,
     version: Optional[int] = None,
+    application_id: Optional[str] = None,
     method_name: Optional[str] = None,
     protocol: Optional[str] = None,
 ) -> Callable[[F], F]:
     if method_name is None:
         return entity_method(
-            name=name, version=version, protocol=protocol, tlp_span_kind="graph"
+            name=name,
+            description=description,
+            version=version,
+            protocol=protocol,
+            application_id=application_id,
+            tlp_span_kind="graph",
         )
     else:
         return entity_class(
             name=name,
+            description=description,
             version=version,
             method_name=method_name,
             protocol=protocol,
+            application_id=application_id,
             tlp_span_kind="graph",
         )
 
@@ -104,6 +118,7 @@ def agent(
     description: Optional[str] = None,
     version: Optional[int] = None,
     protocol: Optional[str] = None,
+    application_id: Optional[str] = None,
     method_name: Optional[str] = None,
 ) -> Callable[[F], F]:
     return workflow(
@@ -111,6 +126,7 @@ def agent(
         description=description,
         version=version,
         protocol=protocol,
+        application_id=application_id,
         method_name=method_name,
         tlp_span_kind=ObserveSpanKindValues.AGENT,
     )
@@ -120,12 +136,14 @@ def tool(
     name: Optional[str] = None,
     description: Optional[str] = None,
     version: Optional[int] = None,
+    application_id: Optional[str] = None,
     method_name: Optional[str] = None,
 ) -> Callable[[F], F]:
     return task(
         name=name,
         description=description,
         version=version,
+        application_id=application_id,
         method_name=method_name,
         tlp_span_kind=ObserveSpanKindValues.TOOL,
     )
