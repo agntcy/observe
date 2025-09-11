@@ -28,7 +28,7 @@ Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
 tavily_tool = TavilySearchResults(max_results=5)
 
 
-@observe_tool(name="Python REPL tool")
+@observe_tool(name="Python REPL tool", application_id="abcd")
 def python_repl_tool(
     code: Annotated[str, "The python code to execute to generate your chart."],
 ):
@@ -78,6 +78,7 @@ def chatbot(state: State):
 @agent(
     name="supervisor",
     description="A supervisor agent that manages the conversation between researchers and coders.",
+    application_id="abcd",
 )
 def supervisor_node(state: State) -> Command[Literal["researcher", "coder", "__end__"]]:
     messages = [
@@ -99,6 +100,7 @@ research_agent = create_react_agent(
 @agent(
     name="research",
     description="A researcher agent that performs web searches and returns results.",
+    application_id="abcd",
 )
 def research_node(state: State) -> Command[Literal["supervisor"]]:
     result = research_agent.invoke(state)
@@ -119,6 +121,7 @@ code_agent = create_react_agent(llm, tools=[python_repl_tool])
 @agent(
     name="code",
     description="A coder agent that executes Python code and returns results.",
+    application_id="abcd",
 )
 def code_node(state: State) -> Command[Literal["supervisor"]]:
     result = code_agent.invoke(state)
@@ -132,7 +135,7 @@ def code_node(state: State) -> Command[Literal["supervisor"]]:
     )
 
 
-@graph(name="multi_agent_graph")
+@graph(name="multi_agent_graph", application_id="abcd")
 def build_graph():
     builder = StateGraph(State)
     builder.add_edge(START, "supervisor")
