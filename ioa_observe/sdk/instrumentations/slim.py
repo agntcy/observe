@@ -349,8 +349,17 @@ class SLIMInstrumentor(BaseInstrumentor):
                             # Store in kv_store with thread safety
                             with _kv_lock:
                                 kv_store.set(f"execution.{traceparent}", session_id)
-                    finally:
+
+                        # DON'T detach the context yet - we need it to persist for the callback
+                        # The context will be cleaned up later or by the garbage collector
+
+                    except Exception as e:
+                        # Only detach on error
                         context.detach(token)
+                        raise e
+                elif traceparent and session_id and session_id != "None":
+                    # Even without carrier context, set session ID if we have the data
+                    set_session_id(session_id, traceparent=traceparent)
 
                 # Fallback: check stored execution ID if not found in headers
                 if traceparent and (not session_id or session_id == "None"):

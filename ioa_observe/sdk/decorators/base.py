@@ -16,10 +16,10 @@ from ioa_observe.sdk.decorators.helpers import (
     _is_async_generator,
 )
 
-
 from langgraph.graph.state import CompiledStateGraph
 from opentelemetry import trace
 from opentelemetry import context as context_api
+from opentelemetry.context import get_value, attach, set_value
 from pydantic_core import PydanticSerializationError
 from typing_extensions import ParamSpec
 
@@ -113,7 +113,49 @@ def _setup_span(
     with get_tracer() as tracer:
         span = tracer.start_span(span_name)
         ctx = trace.set_span_in_context(span)
+
+        # Preserve existing context values before attaching new context
+        session_id = get_value("session.id")
+        current_traceparent = get_value("current_traceparent")
+        agent_id = get_value("agent_id")
+        application_id_ctx = get_value("application_id")
+        association_properties = get_value("association_properties")
+        managed_prompt = get_value("managed_prompt")
+        prompt_key = get_value("prompt_key")
+        prompt_version = get_value("prompt_version")
+        prompt_version_name = get_value("prompt_version_name")
+        prompt_version_hash = get_value("prompt_version_hash")
+        prompt_template = get_value("prompt_template")
+        prompt_template_variables = get_value("prompt_template_variables")
+
         ctx_token = context_api.attach(ctx)
+
+        # Re-attach preserved context values to the new context
+        if session_id is not None:
+            attach(set_value("session.id", session_id))
+        if current_traceparent is not None:
+            attach(set_value("current_traceparent", current_traceparent))
+        if agent_id is not None:
+            attach(set_value("agent_id", agent_id))
+        if application_id_ctx is not None:
+            attach(set_value("application_id", application_id_ctx))
+        if association_properties is not None:
+            attach(set_value("association_properties", association_properties))
+        if managed_prompt is not None:
+            attach(set_value("managed_prompt", managed_prompt))
+        if prompt_key is not None:
+            attach(set_value("prompt_key", prompt_key))
+        if prompt_version is not None:
+            attach(set_value("prompt_version", prompt_version))
+        if prompt_version_name is not None:
+            attach(set_value("prompt_version_name", prompt_version_name))
+        if prompt_version_hash is not None:
+            attach(set_value("prompt_version_hash", prompt_version_hash))
+        if prompt_template is not None:
+            attach(set_value("prompt_template", prompt_template))
+        if prompt_template_variables is not None:
+            attach(set_value("prompt_template_variables", prompt_template_variables))
+
         if tlp_span_kind == ObserveSpanKindValues.AGENT:
             with trace.get_tracer(__name__).start_span(
                 "agent_start_event", context=trace.set_span_in_context(span)
@@ -127,9 +169,6 @@ def _setup_span(
                     },
                 )
             # start_span.end()  # end the span immediately
-        # session_id = get_value("session.id")
-        # if session_id is not None:
-        #     span.set_attribute("session.id", session_id)
         if tlp_span_kind in [
             ObserveSpanKindValues.TASK,
             ObserveSpanKindValues.TOOL,
