@@ -92,9 +92,18 @@ def supervisor_node(state: State) -> Command[Literal["researcher", "coder", "__e
     return Command(goto=goto, update={"next": goto})
 
 
-research_agent = create_react_agent(
-    llm, tools=[tavily_tool], prompt="You are a researcher. DO NOT do any math."
+@agent(
+    name="research_agent",
+    description="A researcher agent that performs web searches without doing math calculations.",
+    application_id="abcd",
 )
+def create_research_agent():
+    return create_react_agent(
+        llm, tools=[tavily_tool], prompt="You are a researcher. DO NOT do any math."
+    )
+
+
+research_agent = create_research_agent()
 
 
 @agent(

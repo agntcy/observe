@@ -120,11 +120,11 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             @functools.wraps(original_publish_to)
             async def instrumented_publish_to(
-                    self, session_info, message, *args, **kwargs
+                self, session_info, message, *args, **kwargs
             ):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span(
-                            "slim.publish_to"
+                        "slim.publish_to"
                     ) as span:
                         traceparent = get_current_traceparent()
 
@@ -175,11 +175,11 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             @functools.wraps(original_request_reply)
             async def instrumented_request_reply(
-                    self, session_info, message, remote_name, timeout=None, *args, **kwargs
+                self, session_info, message, remote_name, timeout=None, *args, **kwargs
             ):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span(
-                            "slim.request_reply"
+                        "slim.request_reply"
                     ) as span:
                         traceparent = get_current_traceparent()
 
@@ -246,7 +246,7 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             @functools.wraps(original_invite)
             async def instrumented_invite(
-                    self, session_info, participant_name, *args, **kwargs
+                self, session_info, participant_name, *args, **kwargs
             ):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span("slim.invite") as span:
@@ -298,7 +298,7 @@ class SLIMInstrumentor(BaseInstrumentor):
 
         @functools.wraps(original_receive)
         async def instrumented_receive(
-                self, session=None, timeout=None, *args, **kwargs
+            self, session=None, timeout=None, *args, **kwargs
         ):
             # Handle both old and new API patterns
             if session is not None or timeout is not None:
@@ -433,7 +433,7 @@ class SLIMInstrumentor(BaseInstrumentor):
             async def instrumented_create_session(self, config, *args, **kwargs):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span(
-                            "slim.create_session"
+                        "slim.create_session"
                     ) as span:
                         session_info = await original_create_session(
                             self, config, *args, **kwargs
