@@ -20,6 +20,7 @@ _instruments = ("slim-bindings >= 0.4",)
 _global_tracer = None
 _kv_lock = threading.RLock()  # Add thread-safety for kv_store operations
 
+
 class SLIMInstrumentor(BaseInstrumentor):
     def __init__(self):
         super().__init__()
