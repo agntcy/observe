@@ -20,9 +20,6 @@ _instruments = ("slim-bindings >= 0.4",)
 _global_tracer = None
 _kv_lock = threading.RLock()  # Add thread-safety for kv_store operations
 
-print("Hi Hello, how are you?")
-
-
 class SLIMInstrumentor(BaseInstrumentor):
     def __init__(self):
         super().__init__()
@@ -81,7 +78,6 @@ class SLIMInstrumentor(BaseInstrumentor):
                         session_id = kv_store.get(f"execution.{traceparent}")
                         if session_id:
                             kv_store.set(f"execution.{traceparent}", session_id)
-                print("Session ID from KV store:", session_id)
 
                 headers = {
                     "session_id": session_id if session_id else None,
@@ -371,8 +367,6 @@ class SLIMInstrumentor(BaseInstrumentor):
                         if stored_session_id:
                             session_id = stored_session_id
                             set_session_id(session_id, traceparent=traceparent)
-
-                print("SessionID from receive:", session_id)
 
                 # Process and clean the message
                 message_to_return = message_dict.copy()
