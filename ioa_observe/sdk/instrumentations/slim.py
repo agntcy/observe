@@ -20,6 +20,8 @@ _instruments = ("slim-bindings >= 0.4",)
 _global_tracer = None
 _kv_lock = threading.RLock()  # Add thread-safety for kv_store operations
 
+print("Hi Hello, how are you?")
+
 
 class SLIMInstrumentor(BaseInstrumentor):
     def __init__(self):
@@ -79,6 +81,7 @@ class SLIMInstrumentor(BaseInstrumentor):
                         session_id = kv_store.get(f"execution.{traceparent}")
                         if session_id:
                             kv_store.set(f"execution.{traceparent}", session_id)
+                print("Session ID from KV store:", session_id)
 
                 headers = {
                     "session_id": session_id if session_id else None,
@@ -117,11 +120,11 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             @functools.wraps(original_publish_to)
             async def instrumented_publish_to(
-                self, session_info, message, *args, **kwargs
+                    self, session_info, message, *args, **kwargs
             ):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span(
-                        "slim.publish_to"
+                            "slim.publish_to"
                     ) as span:
                         traceparent = get_current_traceparent()
 
@@ -172,11 +175,11 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             @functools.wraps(original_request_reply)
             async def instrumented_request_reply(
-                self, session_info, message, remote_name, timeout=None, *args, **kwargs
+                    self, session_info, message, remote_name, timeout=None, *args, **kwargs
             ):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span(
-                        "slim.request_reply"
+                            "slim.request_reply"
                     ) as span:
                         traceparent = get_current_traceparent()
 
@@ -243,7 +246,7 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             @functools.wraps(original_invite)
             async def instrumented_invite(
-                self, session_info, participant_name, *args, **kwargs
+                    self, session_info, participant_name, *args, **kwargs
             ):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span("slim.invite") as span:
@@ -295,7 +298,7 @@ class SLIMInstrumentor(BaseInstrumentor):
 
         @functools.wraps(original_receive)
         async def instrumented_receive(
-            self, session=None, timeout=None, *args, **kwargs
+                self, session=None, timeout=None, *args, **kwargs
         ):
             # Handle both old and new API patterns
             if session is not None or timeout is not None:
@@ -349,8 +352,17 @@ class SLIMInstrumentor(BaseInstrumentor):
                             # Store in kv_store with thread safety
                             with _kv_lock:
                                 kv_store.set(f"execution.{traceparent}", session_id)
-                    finally:
+
+                        # DON'T detach the context yet - we need it to persist for the callback
+                        # The context will be cleaned up later or by the garbage collector
+
+                    except Exception as e:
+                        # Only detach on error
                         context.detach(token)
+                        raise e
+                elif traceparent and session_id and session_id != "None":
+                    # Even without carrier context, set session ID if we have the data
+                    set_session_id(session_id, traceparent=traceparent)
 
                 # Fallback: check stored execution ID if not found in headers
                 if traceparent and (not session_id or session_id == "None"):
@@ -359,6 +371,8 @@ class SLIMInstrumentor(BaseInstrumentor):
                         if stored_session_id:
                             session_id = stored_session_id
                             set_session_id(session_id, traceparent=traceparent)
+
+                print("SessionID from receive:", session_id)
 
                 # Process and clean the message
                 message_to_return = message_dict.copy()
@@ -419,7 +433,7 @@ class SLIMInstrumentor(BaseInstrumentor):
             async def instrumented_create_session(self, config, *args, **kwargs):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span(
-                        "slim.create_session"
+                            "slim.create_session"
                     ) as span:
                         session_info = await original_create_session(
                             self, config, *args, **kwargs
