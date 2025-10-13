@@ -39,7 +39,9 @@ class SLIMInstrumentor(BaseInstrumentor):
             )
 
         # Instrument `publish` method - handles multiple signatures
+        # In v0.6.0+, publish moved from Slim class to Session objects
         if hasattr(slim_bindings.Slim, "publish"):
+            # Legacy v0.5.x app-level publish method
             original_publish = slim_bindings.Slim.publish
 
             @functools.wraps(original_publish)
@@ -166,7 +168,7 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             slim_bindings.Slim.publish_to = instrumented_publish_to
 
-        # Instrument `request_reply` (new v0.4.0+ method)
+        # Instrument `request_reply` (v0.4.0+ to v0.5.x method, removed in v0.6.0)
         if hasattr(slim_bindings.Slim, "request_reply"):
             original_request_reply = slim_bindings.Slim.request_reply
 
@@ -444,8 +446,144 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             slim_bindings.Slim.create_session = instrumented_create_session
 
+        # Instrument new v0.6.0+ session-level methods
+        # These methods are available on Session objects, not the Slim app
+        self._instrument_session_methods(slim_bindings)
+
+        # Instrument new v0.6.0+ app-level methods
+        # listen_for_session replaces app.receive() for new sessions in v0.6.0+
+        if hasattr(slim_bindings.Slim, "listen_for_session"):
+            original_listen_for_session = slim_bindings.Slim.listen_for_session
+
+            @functools.wraps(original_listen_for_session)
+            async def instrumented_listen_for_session(self, *args, **kwargs):
+                if _global_tracer:
+                    with _global_tracer.start_as_current_span("slim.listen_for_session") as span:
+                        session = await original_listen_for_session(self, *args, **kwargs)
+
+                        return session
+                else:
+                    return await original_listen_for_session(self, *args, **kwargs)
+
+            slim_bindings.Slim.listen_for_session = instrumented_listen_for_session
+
+    def _instrument_session_methods(self, slim_bindings):        
+        # We need to dynamically instrument session objects when they're created        
+        # Try to find session classes in the slim_bindings module
+        session_classes = []
+        for attr_name in dir(slim_bindings):
+            attr = getattr(slim_bindings, attr_name)
+            if hasattr(attr, '__class__') and hasattr(attr, '__module__'):
+                # Look for session-related classes
+                if 'session' in attr_name.lower() or hasattr(attr, 'publish'):
+                    session_classes.append((attr_name, attr))
+        
+        # Instrument common session methods if they exist
+        for method_name in ['publish', 'publish_to', 'get_message', 'invite', 'remove']:
+            self._instrument_session_method_if_exists(slim_bindings, method_name)
+
+    def _instrument_session_method_if_exists(self, slim_bindings, method_name):
+        """Helper to instrument a session method if it exists"""
+        
+        # Look for session classes that might have this method
+        for attr_name in dir(slim_bindings):
+            attr = getattr(slim_bindings, attr_name)
+            if hasattr(attr, method_name):
+                original_method = getattr(attr, method_name)
+                
+                if callable(original_method):
+                    instrumented_method = self._create_session_method_wrapper(method_name, original_method)
+                    setattr(attr, method_name, instrumented_method)
+
+    def _create_session_method_wrapper(self, method_name, original_method):
+        """Create an instrumented wrapper for session methods"""
+        
+        @functools.wraps(original_method)
+        async def instrumented_session_method(self, *args, **kwargs):
+            if _global_tracer:
+                with _global_tracer.start_as_current_span(f"session.{method_name}") as span:
+                    traceparent = get_current_traceparent()
+
+                    # Handle message wrapping for publish methods
+                    if method_name in ['publish', 'publish_to'] and args:
+                        # Thread-safe access to kv_store
+                        session_id = None
+                        if traceparent:
+                            with _kv_lock:
+                                session_id = kv_store.get(f"execution.{traceparent}")
+                                if session_id:
+                                    kv_store.set(f"execution.{traceparent}", session_id)
+
+                        headers = {
+                            "session_id": session_id if session_id else None,
+                            "traceparent": traceparent,
+                            "slim_session_id": str(self.id) if hasattr(self, "id") else None,
+                        }
+
+                        # Set baggage context
+                        if traceparent and session_id:
+                            baggage.set_baggage(f"execution.{traceparent}", session_id)
+
+                        # Wrap the message (first argument for publish, second for publish_to)
+                        message_idx = 1 if method_name == 'publish_to' else 0
+                        if len(args) > message_idx:
+                            args_list = list(args)
+                            message = args_list[message_idx]
+                            wrapped_message = SLIMInstrumentor._wrap_message_with_headers(
+                                None, message, headers  # Pass None for self since it's a static method
+                            )
+                            
+                            # Convert wrapped message back to bytes if needed
+                            if isinstance(wrapped_message, dict):
+                                message_to_send = json.dumps(wrapped_message).encode("utf-8")
+                            else:
+                                message_to_send = wrapped_message
+                            
+                            args_list[message_idx] = message_to_send
+                            args = tuple(args_list)
+
+                    return await original_method(self, *args, **kwargs)
+            else:
+                # Handle message wrapping even without tracing
+                if method_name in ['publish', 'publish_to'] and args:
+                    traceparent = get_current_traceparent()
+                    session_id = None
+                    if traceparent:
+                        with _kv_lock:
+                            session_id = kv_store.get(f"execution.{traceparent}")
+
+                    if traceparent or session_id:
+                        headers = {
+                            "session_id": session_id if session_id else None,
+                            "traceparent": traceparent,
+                            "slim_session_id": str(self.id) if hasattr(self, "id") else None,
+                        }
+
+                        # Wrap the message
+                        message_idx = 1 if method_name == 'publish_to' else 0
+                        if len(args) > message_idx:
+                            args_list = list(args)
+                            message = args_list[message_idx]
+                            wrapped_message = SLIMInstrumentor._wrap_message_with_headers(
+                                None, message, headers
+                            )
+                            
+                            if isinstance(wrapped_message, dict):
+                                message_to_send = json.dumps(wrapped_message).encode("utf-8")
+                            else:
+                                message_to_send = wrapped_message
+                            
+                            args_list[message_idx] = message_to_send
+                            args = tuple(args_list)
+
+                return await original_method(self, *args, **kwargs)
+
+        return instrumented_session_method
+
+    @staticmethod
     def _wrap_message_with_headers(self, message, headers):
-        """Helper method to wrap messages with headers consistently"""
+        """Helper method to wrap messages with headers consistently
+        """
         if isinstance(message, bytes):
             try:
                 decoded_message = message.decode("utf-8")
@@ -506,12 +644,13 @@ class SLIMInstrumentor(BaseInstrumentor):
         methods_to_restore = [
             "publish",
             "publish_to",
-            "request_reply",
+            "request_reply",  # v0.4.0-v0.5.x only
             "receive",
             "connect",
             "create_session",
             "invite",
             "set_route",
+            "listen_for_session",  # v0.6.0+
         ]
 
         for method_name in methods_to_restore:
@@ -521,3 +660,15 @@ class SLIMInstrumentor(BaseInstrumentor):
                     setattr(
                         slim_bindings.Slim, method_name, original_method.__wrapped__
                     )
+
+        # Also try to restore session-level methods (v0.6.0+)
+        # This is best-effort since session classes may vary
+        session_methods_to_restore = ["publish", "publish_to", "get_message", "invite", "remove"]
+        
+        for attr_name in dir(slim_bindings):
+            attr = getattr(slim_bindings, attr_name)
+            for method_name in session_methods_to_restore:
+                if hasattr(attr, method_name):
+                    original_method = getattr(attr, method_name)
+                    if hasattr(original_method, "__wrapped__"):
+                        setattr(attr, method_name, original_method.__wrapped__)
