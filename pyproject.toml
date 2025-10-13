@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ioa-observe-sdk"
-version = "1.0.20"
+version = "1.0.21"
 license = "Apache-2.0"
 description = "IOA Observability SDK"
 readme = "README.md"
@@ -14,14 +14,14 @@ dependencies = [
     # Directly used in code or tests
     "colorama==0.4.6",
     "requests>=2.32.3",
-    "opentelemetry-api==1.33.1",
+    "opentelemetry-api==1.37.0",
     "opentelemetry-distro",
-    "opentelemetry-exporter-otlp==1.33.1",
-    "opentelemetry-exporter-otlp-proto-common==1.33.1",
-    "opentelemetry-exporter-otlp-proto-grpc==1.33.1",
-    "opentelemetry-exporter-otlp-proto-http==1.33.1",
+    "opentelemetry-exporter-otlp==1.37.0",
+    "opentelemetry-exporter-otlp-proto-common==1.37.0",
+    "opentelemetry-exporter-otlp-proto-grpc==1.37.0",
+    "opentelemetry-exporter-otlp-proto-http==1.37.0",
     "opentelemetry-instrumentation",
-    "opentelemetry-instrumentation-logging==0.54b1",
+    "opentelemetry-instrumentation-logging==0.58b0",
     "opentelemetry-instrumentation-openai==0.43.1",
     "opentelemetry-instrumentation-llamaindex==0.43.1",
     "opentelemetry-instrumentation-ollama==0.43.1",
@@ -33,18 +33,18 @@ dependencies = [
     "opentelemetry-instrumentation-google-generativeai==0.43.1",
     "opentelemetry-instrumentation-groq==0.43.1",
     "opentelemetry-instrumentation-mistralai==0.43.1",
-    "opentelemetry-instrumentation-requests==0.54b1",
+    "opentelemetry-instrumentation-requests==0.58b0",
     "opentelemetry-instrumentation-sagemaker==0.43.1",
-    "opentelemetry-instrumentation-threading==0.54b1",
+    "opentelemetry-instrumentation-threading==0.58b0",
     "opentelemetry-instrumentation-together==0.43.1",
     "opentelemetry-instrumentation-transformers==0.43.1",
-    "opentelemetry-instrumentation-urllib3==0.54b1",
+    "opentelemetry-instrumentation-urllib3==0.58b0",
     "opentelemetry-instrumentation-vertexai==0.43.1",
-    "opentelemetry-proto==1.33.1",
-    "opentelemetry-sdk==1.33.1",
-    "opentelemetry-semantic-conventions==0.54b1",
+    "opentelemetry-proto==1.37.0",
+    "opentelemetry-sdk==1.37.0",
+    "opentelemetry-semantic-conventions==0.58b0",
     "opentelemetry-semantic-conventions-ai>=0.4.11",
-    "opentelemetry-util-http==0.54b1",
+    "opentelemetry-util-http==0.58b0",
     "langgraph>=0.3.2",
     "langchain>=0.3.19",
     "langchain-openai>=0.3.8",
