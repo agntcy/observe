@@ -13,11 +13,9 @@ Based on SLIM v0.6.0 documentation and examples.
 
 import asyncio
 import argparse
-import json
 import logging
 import signal
 import sys
-from pathlib import Path
 from typing import Dict, Any, Optional
 import os
 import slim_bindings
@@ -231,7 +229,7 @@ class SlimServer:
             self.running = False
             logger.info("SLIM server stopped")
 
-    # @ai_agent_action(name="process_message")
+    @process_slim_msg(name="server_process_message")
     async def process_message(self, message: str, session_id: str) -> str:
         """
         Process incoming message with OpenAI agent and observe SDK monitoring.

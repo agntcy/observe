@@ -13,7 +13,6 @@ Based on SLIM v0.6.0 documentation and examples.
 
 import asyncio
 import argparse
-import json
 import logging
 import sys
 import datetime
@@ -128,7 +127,7 @@ class SlimClient:
             await self.slim_app.disconnect(self.server_endpoint)
             logger.info("Disconnected from SLIM server")
 
-    # @ai_agent_action(name="send_message")
+    @process_slim_msg(name="slim_client_send_message")
     async def send_message(self, message: str, session_id: str) -> str:
         """
         Send a message through SLIM with observe SDK monitoring.
