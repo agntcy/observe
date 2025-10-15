@@ -2,7 +2,7 @@
 name = "examples"
 version = "0.1.0"
 description = "A LangGraph-based project"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 dependencies = [
   "langgraph>=0.3.2",
   "langchain>=0.3.19",
@@ -22,3 +22,8 @@ dependencies = [
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
+
+[tool.uv.workspace]
+members = [
+    "remote_agent_nats",
+]
