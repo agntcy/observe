@@ -119,11 +119,11 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             @functools.wraps(original_publish_to)
             async def instrumented_publish_to(
-                    self, session_info, message, *args, **kwargs
+                self, session_info, message, *args, **kwargs
             ):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span(
-                            "slim.publish_to"
+                        "slim.publish_to"
                     ) as span:
                         traceparent = get_current_traceparent()
 
@@ -174,11 +174,11 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             @functools.wraps(original_request_reply)
             async def instrumented_request_reply(
-                    self, session_info, message, remote_name, timeout=None, *args, **kwargs
+                self, session_info, message, remote_name, timeout=None, *args, **kwargs
             ):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span(
-                            "slim.request_reply"
+                        "slim.request_reply"
                     ) as span:
                         traceparent = get_current_traceparent()
 
@@ -245,7 +245,7 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             @functools.wraps(original_invite)
             async def instrumented_invite(
-                    self, session_info, participant_name, *args, **kwargs
+                self, session_info, participant_name, *args, **kwargs
             ):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span("slim.invite") as span:
@@ -298,7 +298,7 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             @functools.wraps(original_receive)
             async def instrumented_receive(
-                    self, session=None, timeout=None, *args, **kwargs
+                self, session=None, timeout=None, *args, **kwargs
             ):
                 # Handle both old and new API patterns
                 if session is not None or timeout is not None:
@@ -339,7 +339,9 @@ class SLIMInstrumentor(BaseInstrumentor):
                     # Restore trace context
                     if carrier and traceparent:
                         ctx = TraceContextTextMapPropagator().extract(carrier=carrier)
-                        ctx = W3CBaggagePropagator().extract(carrier=carrier, context=ctx)
+                        ctx = W3CBaggagePropagator().extract(
+                            carrier=carrier, context=ctx
+                        )
 
                         # Activate the restored context
                         token = context.attach(ctx)
@@ -395,14 +397,16 @@ class SLIMInstrumentor(BaseInstrumentor):
                                     "utf-8"
                                 )
                             except json.JSONDecodeError:
-                                return recv_session, payload.encode("utf-8") if isinstance(
-                                    payload, str
-                                ) else payload
+                                return recv_session, payload.encode(
+                                    "utf-8"
+                                ) if isinstance(payload, str) else payload
                         return recv_session, json.dumps(payload).encode(
                             "utf-8"
                         ) if isinstance(payload, (dict, list)) else payload
                     else:
-                        return recv_session, json.dumps(message_to_return).encode("utf-8")
+                        return recv_session, json.dumps(message_to_return).encode(
+                            "utf-8"
+                        )
 
                 except Exception as e:
                     print(f"Error processing message: {e}")
@@ -432,7 +436,7 @@ class SLIMInstrumentor(BaseInstrumentor):
             async def instrumented_create_session(self, config, *args, **kwargs):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span(
-                            "slim.create_session"
+                        "slim.create_session"
                     ) as span:
                         session_info = await original_create_session(
                             self, config, *args, **kwargs
@@ -461,7 +465,7 @@ class SLIMInstrumentor(BaseInstrumentor):
             async def instrumented_listen_for_session(self, *args, **kwargs):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span(
-                            "slim.listen_for_session"
+                        "slim.listen_for_session"
                     ) as span:
                         session = await original_listen_for_session(
                             self, *args, **kwargs
@@ -487,8 +491,9 @@ class SLIMInstrumentor(BaseInstrumentor):
         # Also look for any class that has session-like methods
         for attr_name in dir(slim_bindings):
             attr = getattr(slim_bindings, attr_name)
-            if (isinstance(attr, type) and
-                    (hasattr(attr, "get_message") or hasattr(attr, "publish"))):
+            if isinstance(attr, type) and (
+                hasattr(attr, "get_message") or hasattr(attr, "publish")
+            ):
                 session_classes.append((attr_name, attr))
 
         # Instrument session methods for found classes
@@ -612,10 +617,17 @@ class SLIMInstrumentor(BaseInstrumentor):
                             payload_dict = json.loads(payload)
                             processed_message = json.dumps(payload_dict).encode("utf-8")
                         except json.JSONDecodeError:
-                            processed_message = payload.encode("utf-8") if isinstance(payload, str) else payload
+                            processed_message = (
+                                payload.encode("utf-8")
+                                if isinstance(payload, str)
+                                else payload
+                            )
                     else:
-                        processed_message = json.dumps(payload).encode("utf-8") if isinstance(payload,
-                                                                                              (dict, list)) else payload
+                        processed_message = (
+                            json.dumps(payload).encode("utf-8")
+                            if isinstance(payload, (dict, list))
+                            else payload
+                        )
                 else:
                     processed_message = json.dumps(message_to_return).encode("utf-8")
 
@@ -638,7 +650,9 @@ class SLIMInstrumentor(BaseInstrumentor):
         @functools.wraps(original_method)
         async def instrumented_session_publish(self, *args, **kwargs):
             if _global_tracer:
-                with _global_tracer.start_as_current_span(f"session.{method_name}") as span:
+                with _global_tracer.start_as_current_span(
+                    f"session.{method_name}"
+                ) as span:
                     traceparent = get_current_traceparent()
 
                     # Add session context to span
@@ -658,7 +672,9 @@ class SLIMInstrumentor(BaseInstrumentor):
                         headers = {
                             "session_id": session_id if session_id else None,
                             "traceparent": traceparent,
-                            "slim_session_id": str(self.id) if hasattr(self, "id") else None,
+                            "slim_session_id": str(self.id)
+                            if hasattr(self, "id")
+                            else None,
                         }
 
                         # Set baggage context
@@ -670,13 +686,17 @@ class SLIMInstrumentor(BaseInstrumentor):
                         if len(args) > message_idx:
                             args_list = list(args)
                             message = args_list[message_idx]
-                            wrapped_message = SLIMInstrumentor._wrap_message_with_headers(
-                                None, message, headers
+                            wrapped_message = (
+                                SLIMInstrumentor._wrap_message_with_headers(
+                                    None, message, headers
+                                )
                             )
 
                             # Convert wrapped message back to bytes if needed
                             if isinstance(wrapped_message, dict):
-                                message_to_send = json.dumps(wrapped_message).encode("utf-8")
+                                message_to_send = json.dumps(wrapped_message).encode(
+                                    "utf-8"
+                                )
                             else:
                                 message_to_send = wrapped_message
 
@@ -697,7 +717,9 @@ class SLIMInstrumentor(BaseInstrumentor):
                         headers = {
                             "session_id": session_id if session_id else None,
                             "traceparent": traceparent,
-                            "slim_session_id": str(self.id) if hasattr(self, "id") else None,
+                            "slim_session_id": str(self.id)
+                            if hasattr(self, "id")
+                            else None,
                         }
 
                         # Wrap the message (first argument for publish, second for publish_to)
@@ -705,12 +727,16 @@ class SLIMInstrumentor(BaseInstrumentor):
                         if len(args) > message_idx:
                             args_list = list(args)
                             message = args_list[message_idx]
-                            wrapped_message = SLIMInstrumentor._wrap_message_with_headers(
-                                None, message, headers
+                            wrapped_message = (
+                                SLIMInstrumentor._wrap_message_with_headers(
+                                    None, message, headers
+                                )
                             )
 
                             if isinstance(wrapped_message, dict):
-                                message_to_send = json.dumps(wrapped_message).encode("utf-8")
+                                message_to_send = json.dumps(wrapped_message).encode(
+                                    "utf-8"
+                                )
                             else:
                                 message_to_send = wrapped_message
 
@@ -743,7 +769,7 @@ class SLIMInstrumentor(BaseInstrumentor):
         async def instrumented_session_method(self, *args, **kwargs):
             if _global_tracer:
                 with _global_tracer.start_as_current_span(
-                        f"session.{method_name}"
+                    f"session.{method_name}"
                 ) as span:
                     traceparent = get_current_traceparent()
 
