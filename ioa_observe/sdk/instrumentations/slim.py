@@ -16,7 +16,7 @@ from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
 
-_instruments = ("slim-bindings >= 0.4",)
+_instruments = ("slim-bindings >= 0.6.0",)
 _global_tracer = None
 _kv_lock = threading.RLock()  # Add thread-safety for kv_store operations
 
@@ -119,11 +119,11 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             @functools.wraps(original_publish_to)
             async def instrumented_publish_to(
-                self, session_info, message, *args, **kwargs
+                    self, session_info, message, *args, **kwargs
             ):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span(
-                        "slim.publish_to"
+                            "slim.publish_to"
                     ) as span:
                         traceparent = get_current_traceparent()
 
@@ -174,11 +174,11 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             @functools.wraps(original_request_reply)
             async def instrumented_request_reply(
-                self, session_info, message, remote_name, timeout=None, *args, **kwargs
+                    self, session_info, message, remote_name, timeout=None, *args, **kwargs
             ):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span(
-                        "slim.request_reply"
+                            "slim.request_reply"
                     ) as span:
                         traceparent = get_current_traceparent()
 
@@ -245,7 +245,7 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             @functools.wraps(original_invite)
             async def instrumented_invite(
-                self, session_info, participant_name, *args, **kwargs
+                    self, session_info, participant_name, *args, **kwargs
             ):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span("slim.invite") as span:
@@ -292,35 +292,256 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             slim_bindings.Slim.set_route = instrumented_set_route
 
-        # Instrument `receive`
-        original_receive = slim_bindings.Slim.receive
+        # Instrument `receive` - only if it exists (removed in v0.6.0)
+        if hasattr(slim_bindings.Slim, "receive"):
+            original_receive = slim_bindings.Slim.receive
 
-        @functools.wraps(original_receive)
-        async def instrumented_receive(
-            self, session=None, timeout=None, *args, **kwargs
-        ):
-            # Handle both old and new API patterns
-            if session is not None or timeout is not None:
-                # New API pattern with session parameter
-                kwargs_with_params = kwargs.copy()
-                if session is not None:
-                    kwargs_with_params["session"] = session
-                if timeout is not None:
-                    kwargs_with_params["timeout"] = timeout
-                recv_session, raw_message = await original_receive(
-                    self, **kwargs_with_params
-                )
+            @functools.wraps(original_receive)
+            async def instrumented_receive(
+                    self, session=None, timeout=None, *args, **kwargs
+            ):
+                # Handle both old and new API patterns
+                if session is not None or timeout is not None:
+                    # New API pattern with session parameter
+                    kwargs_with_params = kwargs.copy()
+                    if session is not None:
+                        kwargs_with_params["session"] = session
+                    if timeout is not None:
+                        kwargs_with_params["timeout"] = timeout
+                    recv_session, raw_message = await original_receive(
+                        self, **kwargs_with_params
+                    )
+                else:
+                    # Legacy API pattern
+                    recv_session, raw_message = await original_receive(
+                        self, *args, **kwargs
+                    )
+
+                if raw_message is None:
+                    return recv_session, raw_message
+
+                try:
+                    message_dict = json.loads(raw_message.decode())
+                    headers = message_dict.get("headers", {})
+
+                    # Extract traceparent and session info from headers
+                    traceparent = headers.get("traceparent")
+                    session_id = headers.get("session_id")
+
+                    # Create carrier for context propagation
+                    carrier = {}
+                    for key in ["traceparent", "Traceparent", "baggage", "Baggage"]:
+                        if key.lower() in [k.lower() for k in headers.keys()]:
+                            for k in headers.keys():
+                                if k.lower() == key.lower():
+                                    carrier[key.lower()] = headers[k]
+
+                    # Restore trace context
+                    if carrier and traceparent:
+                        ctx = TraceContextTextMapPropagator().extract(carrier=carrier)
+                        ctx = W3CBaggagePropagator().extract(carrier=carrier, context=ctx)
+
+                        # Activate the restored context
+                        token = context.attach(ctx)
+
+                        try:
+                            # Set execution ID with the restored context
+                            if session_id and session_id != "None":
+                                set_session_id(session_id, traceparent=traceparent)
+
+                                # Store in kv_store with thread safety
+                                with _kv_lock:
+                                    kv_store.set(f"execution.{traceparent}", session_id)
+
+                            # DON'T detach the context yet - we need it to persist for the callback
+                            # The context will be cleaned up later or by the garbage collector
+
+                        except Exception as e:
+                            # Only detach on error
+                            context.detach(token)
+                            raise e
+                    elif traceparent and session_id and session_id != "None":
+                        # Even without carrier context, set session ID if we have the data
+                        set_session_id(session_id, traceparent=traceparent)
+
+                    # Fallback: check stored execution ID if not found in headers
+                    if traceparent and (not session_id or session_id == "None"):
+                        with _kv_lock:
+                            stored_session_id = kv_store.get(f"execution.{traceparent}")
+                            if stored_session_id:
+                                session_id = stored_session_id
+                                set_session_id(session_id, traceparent=traceparent)
+
+                    # Process and clean the message
+                    message_to_return = message_dict.copy()
+                    if "headers" in message_to_return:
+                        headers_copy = message_to_return["headers"].copy()
+                        # Remove tracing-specific headers but keep other headers
+                        headers_copy.pop("traceparent", None)
+                        headers_copy.pop("session_id", None)
+                        headers_copy.pop("slim_session_id", None)
+                        if headers_copy:
+                            message_to_return["headers"] = headers_copy
+                        else:
+                            message_to_return.pop("headers", None)
+
+                    # Return processed message
+                    if len(message_to_return) == 1 and "payload" in message_to_return:
+                        payload = message_to_return["payload"]
+                        if isinstance(payload, str):
+                            try:
+                                payload_dict = json.loads(payload)
+                                return recv_session, json.dumps(payload_dict).encode(
+                                    "utf-8"
+                                )
+                            except json.JSONDecodeError:
+                                return recv_session, payload.encode("utf-8") if isinstance(
+                                    payload, str
+                                ) else payload
+                        return recv_session, json.dumps(payload).encode(
+                            "utf-8"
+                        ) if isinstance(payload, (dict, list)) else payload
+                    else:
+                        return recv_session, json.dumps(message_to_return).encode("utf-8")
+
+                except Exception as e:
+                    print(f"Error processing message: {e}")
+                    return recv_session, raw_message
+
+            slim_bindings.Slim.receive = instrumented_receive
+
+        # Instrument `connect` - only if it exists
+        if hasattr(slim_bindings.Slim, "connect"):
+            original_connect = slim_bindings.Slim.connect
+
+            @functools.wraps(original_connect)
+            async def instrumented_connect(self, *args, **kwargs):
+                if _global_tracer:
+                    with _global_tracer.start_as_current_span("slim.connect"):
+                        return await original_connect(self, *args, **kwargs)
+                else:
+                    return await original_connect(self, *args, **kwargs)
+
+            slim_bindings.Slim.connect = instrumented_connect
+
+        # Instrument `create_session` (new v0.4.0+ method)
+        if hasattr(slim_bindings.Slim, "create_session"):
+            original_create_session = slim_bindings.Slim.create_session
+
+            @functools.wraps(original_create_session)
+            async def instrumented_create_session(self, config, *args, **kwargs):
+                if _global_tracer:
+                    with _global_tracer.start_as_current_span(
+                            "slim.create_session"
+                    ) as span:
+                        session_info = await original_create_session(
+                            self, config, *args, **kwargs
+                        )
+
+                        # Add session attributes to span
+                        if hasattr(session_info, "id"):
+                            span.set_attribute("slim.session.id", str(session_info.id))
+
+                        return session_info
+                else:
+                    return await original_create_session(self, config, *args, **kwargs)
+
+            slim_bindings.Slim.create_session = instrumented_create_session
+
+        # Instrument new v0.6.0+ session-level methods
+        # These methods are available on Session objects, not the Slim app
+        self._instrument_session_methods(slim_bindings)
+
+        # Instrument new v0.6.0+ app-level methods
+        # listen_for_session replaces app.receive() for new sessions in v0.6.0+
+        if hasattr(slim_bindings.Slim, "listen_for_session"):
+            original_listen_for_session = slim_bindings.Slim.listen_for_session
+
+            @functools.wraps(original_listen_for_session)
+            async def instrumented_listen_for_session(self, *args, **kwargs):
+                if _global_tracer:
+                    with _global_tracer.start_as_current_span(
+                            "slim.listen_for_session"
+                    ) as span:
+                        session = await original_listen_for_session(
+                            self, *args, **kwargs
+                        )
+
+                        return session
+                else:
+                    return await original_listen_for_session(self, *args, **kwargs)
+
+            slim_bindings.Slim.listen_for_session = instrumented_listen_for_session
+
+    def _instrument_session_methods(self, slim_bindings):
+        # In v0.6.0+, we need to instrument session classes dynamically
+        # Try to find session-related classes in the slim_bindings module
+        session_classes = []
+
+        # Look for common session class names
+        for attr_name in ["Session", "P2PSession", "GroupSession"]:
+            if hasattr(slim_bindings, attr_name):
+                session_class = getattr(slim_bindings, attr_name)
+                session_classes.append((attr_name, session_class))
+
+        # Also look for any class that has session-like methods
+        for attr_name in dir(slim_bindings):
+            attr = getattr(slim_bindings, attr_name)
+            if (isinstance(attr, type) and
+                    (hasattr(attr, "get_message") or hasattr(attr, "publish"))):
+                session_classes.append((attr_name, attr))
+
+        # Instrument session methods for found classes
+        for class_name, session_class in session_classes:
+            # Instrument get_message (v0.6.0+ replacement for receive)
+            if hasattr(session_class, "get_message"):
+                self._instrument_session_get_message(session_class)
+
+            # Instrument session publish methods
+            if hasattr(session_class, "publish"):
+                self._instrument_session_publish(session_class, "publish")
+
+            if hasattr(session_class, "publish_to"):
+                self._instrument_session_publish(session_class, "publish_to")
+
+    def _instrument_session_get_message(self, session_class):
+        """Instrument session.get_message method (v0.6.0+)"""
+        original_get_message = session_class.get_message
+
+        @functools.wraps(original_get_message)
+        async def instrumented_get_message(self, timeout=None, *args, **kwargs):
+            # Handle the message reception similar to the old receive method
+            if timeout is not None:
+                kwargs["timeout"] = timeout
+
+            result = await original_get_message(self, **kwargs)
+
+            # Handle different return types from get_message
+            if result is None:
+                return result
+
+            # Check if get_message returns a tuple (context, message) or just message
+            if isinstance(result, tuple) and len(result) == 2:
+                message_context, raw_message = result
             else:
-                # Legacy API pattern
-                recv_session, raw_message = await original_receive(
-                    self, *args, **kwargs
-                )
+                raw_message = result
+                message_context = None
 
             if raw_message is None:
-                return recv_session, raw_message
+                return result
 
             try:
-                message_dict = json.loads(raw_message.decode())
+                # Handle different message types
+                if isinstance(raw_message, bytes):
+                    message_dict = json.loads(raw_message.decode())
+                elif isinstance(raw_message, str):
+                    message_dict = json.loads(raw_message)
+                elif isinstance(raw_message, dict):
+                    message_dict = raw_message
+                else:
+                    # Unknown type, return as-is
+                    return result
+
                 headers = message_dict.get("headers", {})
 
                 # Extract traceparent and session info from headers
@@ -353,7 +574,6 @@ class SLIMInstrumentor(BaseInstrumentor):
                                 kv_store.set(f"execution.{traceparent}", session_id)
 
                         # DON'T detach the context yet - we need it to persist for the callback
-                        # The context will be cleaned up later or by the garbage collector
 
                     except Exception as e:
                         # Only detach on error
@@ -384,107 +604,122 @@ class SLIMInstrumentor(BaseInstrumentor):
                     else:
                         message_to_return.pop("headers", None)
 
-                # Return processed message
+                # Return processed message, maintaining original return format
                 if len(message_to_return) == 1 and "payload" in message_to_return:
                     payload = message_to_return["payload"]
                     if isinstance(payload, str):
                         try:
                             payload_dict = json.loads(payload)
-                            return recv_session, json.dumps(payload_dict).encode(
-                                "utf-8"
-                            )
+                            processed_message = json.dumps(payload_dict).encode("utf-8")
                         except json.JSONDecodeError:
-                            return recv_session, payload.encode("utf-8") if isinstance(
-                                payload, str
-                            ) else payload
-                    return recv_session, json.dumps(payload).encode(
-                        "utf-8"
-                    ) if isinstance(payload, (dict, list)) else payload
+                            processed_message = payload.encode("utf-8") if isinstance(payload, str) else payload
+                    else:
+                        processed_message = json.dumps(payload).encode("utf-8") if isinstance(payload,
+                                                                                              (dict, list)) else payload
                 else:
-                    return recv_session, json.dumps(message_to_return).encode("utf-8")
+                    processed_message = json.dumps(message_to_return).encode("utf-8")
+
+                # Return in the same format as received
+                if isinstance(result, tuple) and len(result) == 2:
+                    return (message_context, processed_message)
+                else:
+                    return processed_message
 
             except Exception as e:
                 print(f"Error processing message: {e}")
-                return recv_session, raw_message
+                return result
 
-        slim_bindings.Slim.receive = instrumented_receive
+        session_class.get_message = instrumented_get_message
 
-        # Instrument `connect`
-        original_connect = slim_bindings.Slim.connect
+    def _instrument_session_publish(self, session_class, method_name):
+        """Instrument session publish methods"""
+        original_method = getattr(session_class, method_name)
 
-        @functools.wraps(original_connect)
-        async def instrumented_connect(self, *args, **kwargs):
+        @functools.wraps(original_method)
+        async def instrumented_session_publish(self, *args, **kwargs):
             if _global_tracer:
-                with _global_tracer.start_as_current_span("slim.connect"):
-                    return await original_connect(self, *args, **kwargs)
+                with _global_tracer.start_as_current_span(f"session.{method_name}") as span:
+                    traceparent = get_current_traceparent()
+
+                    # Add session context to span
+                    if hasattr(self, "id"):
+                        span.set_attribute("slim.session.id", str(self.id))
+
+                    # Handle message wrapping
+                    if args:
+                        # Thread-safe access to kv_store
+                        session_id = None
+                        if traceparent:
+                            with _kv_lock:
+                                session_id = kv_store.get(f"execution.{traceparent}")
+                                if session_id:
+                                    kv_store.set(f"execution.{traceparent}", session_id)
+
+                        headers = {
+                            "session_id": session_id if session_id else None,
+                            "traceparent": traceparent,
+                            "slim_session_id": str(self.id) if hasattr(self, "id") else None,
+                        }
+
+                        # Set baggage context
+                        if traceparent and session_id:
+                            baggage.set_baggage(f"execution.{traceparent}", session_id)
+
+                        # Wrap the message (first argument for publish, second for publish_to)
+                        message_idx = 1 if method_name == "publish_to" else 0
+                        if len(args) > message_idx:
+                            args_list = list(args)
+                            message = args_list[message_idx]
+                            wrapped_message = SLIMInstrumentor._wrap_message_with_headers(
+                                None, message, headers
+                            )
+
+                            # Convert wrapped message back to bytes if needed
+                            if isinstance(wrapped_message, dict):
+                                message_to_send = json.dumps(wrapped_message).encode("utf-8")
+                            else:
+                                message_to_send = wrapped_message
+
+                            args_list[message_idx] = message_to_send
+                            args = tuple(args_list)
+
+                    return await original_method(self, *args, **kwargs)
             else:
-                return await original_connect(self, *args, **kwargs)
+                # Handle message wrapping even without tracing
+                if args:
+                    traceparent = get_current_traceparent()
+                    session_id = None
+                    if traceparent:
+                        with _kv_lock:
+                            session_id = kv_store.get(f"execution.{traceparent}")
 
-        slim_bindings.Slim.connect = instrumented_connect
+                    if traceparent or session_id:
+                        headers = {
+                            "session_id": session_id if session_id else None,
+                            "traceparent": traceparent,
+                            "slim_session_id": str(self.id) if hasattr(self, "id") else None,
+                        }
 
-        # Instrument `create_session` (new v0.4.0+ method)
-        if hasattr(slim_bindings.Slim, "create_session"):
-            original_create_session = slim_bindings.Slim.create_session
+                        # Wrap the message (first argument for publish, second for publish_to)
+                        message_idx = 1 if method_name == "publish_to" else 0
+                        if len(args) > message_idx:
+                            args_list = list(args)
+                            message = args_list[message_idx]
+                            wrapped_message = SLIMInstrumentor._wrap_message_with_headers(
+                                None, message, headers
+                            )
 
-            @functools.wraps(original_create_session)
-            async def instrumented_create_session(self, config, *args, **kwargs):
-                if _global_tracer:
-                    with _global_tracer.start_as_current_span(
-                        "slim.create_session"
-                    ) as span:
-                        session_info = await original_create_session(
-                            self, config, *args, **kwargs
-                        )
+                            if isinstance(wrapped_message, dict):
+                                message_to_send = json.dumps(wrapped_message).encode("utf-8")
+                            else:
+                                message_to_send = wrapped_message
 
-                        # Add session attributes to span
-                        if hasattr(session_info, "id"):
-                            span.set_attribute("slim.session.id", str(session_info.id))
+                            args_list[message_idx] = message_to_send
+                            args = tuple(args_list)
 
-                        return session_info
-                else:
-                    return await original_create_session(self, config, *args, **kwargs)
+                return await original_method(self, *args, **kwargs)
 
-            slim_bindings.Slim.create_session = instrumented_create_session
-
-        # Instrument new v0.6.0+ session-level methods
-        # These methods are available on Session objects, not the Slim app
-        self._instrument_session_methods(slim_bindings)
-
-        # Instrument new v0.6.0+ app-level methods
-        # listen_for_session replaces app.receive() for new sessions in v0.6.0+
-        if hasattr(slim_bindings.Slim, "listen_for_session"):
-            original_listen_for_session = slim_bindings.Slim.listen_for_session
-
-            @functools.wraps(original_listen_for_session)
-            async def instrumented_listen_for_session(self, *args, **kwargs):
-                if _global_tracer:
-                    with _global_tracer.start_as_current_span(
-                        "slim.listen_for_session"
-                    ) as span:
-                        session = await original_listen_for_session(
-                            self, *args, **kwargs
-                        )
-
-                        return session
-                else:
-                    return await original_listen_for_session(self, *args, **kwargs)
-
-            slim_bindings.Slim.listen_for_session = instrumented_listen_for_session
-
-    def _instrument_session_methods(self, slim_bindings):
-        # We need to dynamically instrument session objects when they're created
-        # Try to find session classes in the slim_bindings module
-        session_classes = []
-        for attr_name in dir(slim_bindings):
-            attr = getattr(slim_bindings, attr_name)
-            if hasattr(attr, "__class__") and hasattr(attr, "__module__"):
-                # Look for session-related classes
-                if "session" in attr_name.lower() or hasattr(attr, "publish"):
-                    session_classes.append((attr_name, attr))
-
-        # Instrument common session methods if they exist
-        for method_name in ["publish", "publish_to", "get_message", "invite", "remove"]:
-            self._instrument_session_method_if_exists(slim_bindings, method_name)
+        setattr(session_class, method_name, instrumented_session_publish)
 
     def _instrument_session_method_if_exists(self, slim_bindings, method_name):
         """Helper to instrument a session method if it exists"""
@@ -508,7 +743,7 @@ class SLIMInstrumentor(BaseInstrumentor):
         async def instrumented_session_method(self, *args, **kwargs):
             if _global_tracer:
                 with _global_tracer.start_as_current_span(
-                    f"session.{method_name}"
+                        f"session.{method_name}"
                 ) as span:
                     traceparent = get_current_traceparent()
 
