@@ -12,7 +12,7 @@ import nats
 from dotenv import find_dotenv, load_dotenv
 
 from ioa_observe.sdk import Observe
-from ioa_observe.sdk.instrumentations.nats import NATSInstrumentor 
+from ioa_observe.sdk.instrumentations.nats import NATSInstrumentor
 
 from agent.graph import invoke_graph
 from logging_config import configure_logging

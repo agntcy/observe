@@ -135,7 +135,7 @@ class NATSInstrumentor(BaseInstrumentor):
                 args = tuple(original_args)
 
             return await original_request(self, *args, **kwargs)
-        
+
         nats.NATS.request = instrumented_request
 
         # Instrument `subscribe` method
@@ -227,7 +227,7 @@ class NATSInstrumentor(BaseInstrumentor):
                                 span.set_attribute("nats.subject", subject)
                                 span.set_attribute("nats.session_id", session_id)
                                 await user_cb(msg)
-                        else:  
+                        else:
                             await user_cb(msg)
                     except Exception as e:
                         print(f"Error processing message in traced_callback: {e}")

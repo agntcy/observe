@@ -108,7 +108,7 @@ async def request(msg, nc: nats.NATS) -> Dict[str, Any]:
     """
     if nc is None or not nc.is_connected:
         raise RuntimeError("NATS connection is not initialized yet")
-    
+
     try:
         reply = await nc.request(REMOTE_AGENT, msg.encode(), timeout=30)
     except Exception as e:
