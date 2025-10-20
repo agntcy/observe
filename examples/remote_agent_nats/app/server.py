@@ -20,10 +20,13 @@ from logging_config import configure_logging
 # Define logger at the module level
 logger = logging.getLogger("app")
 
-serviceName = "remote-server-agent"
+serviceName = "server-agent"
 Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"))
 
 AGENT_TOPIC = "server"
+
+# Instrument NATS communication
+NATSInstrumentor().instrument()
 
 def load_environment_variables(env_file: str | None = None) -> None:
     """
@@ -142,8 +145,6 @@ def process_message(payload) -> str:
 # @log_connection_events
 # @measure_connection_latency
 async def serve_agent(uri: str) -> None:
-    NATSInstrumentor().instrument()
-
     nc = await nats.connect(uri)
 
     logger.info(f"Connected to NATS server at {uri}")

@@ -82,11 +82,11 @@ def llm_node(state: GraphState) -> Dict[str, Any]:
     generate = partial_prompt | llm
 
     try:
-        #llm_response = generate.invoke({"messages": state["messages"]})
-        mock_llm_response = HumanMessage(
-            content="This is a mock response from the LLM."
-        )
-        return {"messages": [mock_llm_response]}
+        llm_response = generate.invoke({"messages": state["messages"]})
+        #llm_response = HumanMessage(
+        #    content="This is a mock response from the LLM."
+        #)
+        return {"messages": [llm_response]}
     except RuntimeError as e:
         logger.error(f"Error in generation_node: {e}")
         return {"messages": []}

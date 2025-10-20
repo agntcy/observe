@@ -15,6 +15,7 @@ from typing import Annotated, Any, Dict, List
 from typing_extensions import TypedDict
 
 import nats
+from functools import partial
 from dotenv import find_dotenv, load_dotenv
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.messages.utils import convert_to_openai_messages
@@ -28,14 +29,14 @@ from ioa_observe.sdk.instrumentations.nats import NATSInstrumentor
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("client_agent")
 
-serviceName = "remote-client-agent"
+serviceName = "client-agent"
 Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"))
 
 LOCAL_AGENT = "client"
 REMOTE_AGENT = "server"
 
-class GatewayHolder:
-    nc = None
+# Instrument NATS communication
+NATSInstrumentor().instrument()
 
 def load_environment_variables(env_file: str | None = None) -> None:
     """
@@ -97,21 +98,17 @@ def decode_response(response_data: Dict[str, Any]) -> Dict[str, Any]:
 # Define the graph state
 class GraphState(TypedDict):
     """Represents the state of the graph, containing a list of messages."""
-
     messages: Annotated[List[BaseMessage], add_messages]
-    gateway: GatewayHolder
-
 
 # @measure_chain_completion_time
-async def send_and_recv(msg) -> Dict[str, Any]:
+async def request(msg, nc: nats.NATS) -> Dict[str, Any]:
     """
     Send a message to the remote endpoint and
     waits for the reply using pubsub pattern
     """
-    if GatewayHolder.nc is None:
+    if nc is None or not nc.is_connected:
         raise RuntimeError("NATS connection is not initialized yet")
     
-    nc = GatewayHolder.nc
     try:
         reply = await nc.request(REMOTE_AGENT, msg.encode(), timeout=30)
     except Exception as e:
@@ -139,8 +136,8 @@ async def send_and_recv(msg) -> Dict[str, Any]:
         return {"messages": decoded_response.get("messages", [])}
 
 
-# @agent(name="remote_client_agent")
-async def node_remote_nats(state: GraphState) -> Dict[str, Any]:
+# @agent(name="client_agent")
+async def node_remote_nats(state: GraphState, nc: nats.NATS) -> Dict[str, Any]:
     if not state["messages"]:
         logger.error(json.dumps({"error": "GraphState contains no messages"}))
         return {"messages": [HumanMessage(content="Error: No messages in state")]}
@@ -162,12 +159,12 @@ async def node_remote_nats(state: GraphState) -> Dict[str, Any]:
     }
 
     msg = json.dumps(payload)
-    res = await send_and_recv(msg)
+    res = await request(msg, nc)
     return res
 
 # Build the state graph
-# @graph_decorator(name="remote_client_agent_graph")
-async def build_graph() -> Any:
+# @graph_decorator(name="client_agent_graph")
+async def build_graph(nc: nats.NATS) -> Any:
     """
     Constructs the state graph for handling requests.
 
@@ -175,14 +172,14 @@ async def build_graph() -> Any:
         StateGraph: A compiled LangGraph state graph.
     """
     builder = StateGraph(GraphState)
-    builder.add_node("node_remote_request_stateless", node_remote_nats)
+    builder.add_node("node_remote_request_stateless", partial(node_remote_nats, nc=nc))
     builder.add_edge(START, "node_remote_request_stateless")
     builder.add_edge("node_remote_request_stateless", END)
     return builder.compile()
 
 # @log_connection_events
 # @measure_connection_latency
-async def init_nats_conn():
+async def init_nats_conn() -> nats.NATS:
     """
     Initialize the NATS connection
     """
@@ -192,21 +189,16 @@ async def init_nats_conn():
 
     # Connect to NATS server
     nc = await nats.connect(uri)
-
     logger.info(f"Connected to NATS server at {address}")
-
-    # Instrument NATS communication
-    NATSInstrumentor().instrument()
-
-    GatewayHolder.nc = nc
+    return nc
 
 async def main():
     load_environment_variables()
-    await init_nats_conn()
+    nc = await init_nats_conn()
 
     session_start()  # entry point in execution
 
-    graph = await build_graph()
+    graph = await build_graph(nc)
 
     inputs = {"messages": [HumanMessage(content="Write a very short story about a cat")]}
     logger.info({"event": "invoking_graph", "inputs": inputs})
