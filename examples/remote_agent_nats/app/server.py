@@ -21,12 +21,15 @@ from logging_config import configure_logging
 logger = logging.getLogger("app")
 
 serviceName = "server-agent"
-Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"))
+Observe.init(
+    serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318")
+)
 
 AGENT_TOPIC = "server"
 
 # Instrument NATS communication
 NATSInstrumentor().instrument()
+
 
 def load_environment_variables(env_file: str | None = None) -> None:
     """
@@ -66,6 +69,7 @@ def create_error(error, code) -> str:
     }
     msg = json.dumps(payload)
     return msg
+
 
 # @monitor_error_rates
 def process_message(payload) -> str:
@@ -141,6 +145,7 @@ def process_message(payload) -> str:
     msg = json.dumps(payload)
     return msg
 
+
 # @monitor_error_rates
 # @log_connection_events
 # @measure_connection_latency
@@ -187,6 +192,7 @@ async def serve_agent(uri: str) -> None:
         logger.error(f"Error during unsubscribe: {e}")
         return
 
+
 async def main() -> None:
     """
     Entry point for running the application.
@@ -215,6 +221,7 @@ async def main() -> None:
         logger.info("Application interrupted")
     except Exception as e:
         logger.info("Unhandled error: %s", e)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

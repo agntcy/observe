@@ -30,13 +30,16 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("client_agent")
 
 serviceName = "client-agent"
-Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"))
+Observe.init(
+    serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318")
+)
 
 LOCAL_AGENT = "client"
 REMOTE_AGENT = "server"
 
 # Instrument NATS communication
 NATSInstrumentor().instrument()
+
 
 def load_environment_variables(env_file: str | None = None) -> None:
     """
@@ -98,7 +101,9 @@ def decode_response(response_data: Dict[str, Any]) -> Dict[str, Any]:
 # Define the graph state
 class GraphState(TypedDict):
     """Represents the state of the graph, containing a list of messages."""
+
     messages: Annotated[List[BaseMessage], add_messages]
+
 
 # @measure_chain_completion_time
 async def request(msg, nc: nats.NATS) -> Dict[str, Any]:
@@ -162,6 +167,7 @@ async def node_remote_nats(state: GraphState, nc: nats.NATS) -> Dict[str, Any]:
     res = await request(msg, nc)
     return res
 
+
 # Build the state graph
 # @graph_decorator(name="client_agent_graph")
 async def build_graph(nc: nats.NATS) -> Any:
@@ -176,6 +182,7 @@ async def build_graph(nc: nats.NATS) -> Any:
     builder.add_edge(START, "node_remote_request_stateless")
     builder.add_edge("node_remote_request_stateless", END)
     return builder.compile()
+
 
 # @log_connection_events
 # @measure_connection_latency
@@ -192,6 +199,7 @@ async def init_nats_conn() -> nats.NATS:
     logger.info(f"Connected to NATS server at {address}")
     return nc
 
+
 async def main():
     load_environment_variables()
     nc = await init_nats_conn()
@@ -200,7 +208,9 @@ async def main():
 
     graph = await build_graph(nc)
 
-    inputs = {"messages": [HumanMessage(content="Write a very short story about a cat")]}
+    inputs = {
+        "messages": [HumanMessage(content="Write a very short story about a cat")]
+    }
     logger.info({"event": "invoking_graph", "inputs": inputs})
     result = await graph.ainvoke(inputs)
     logger.info({"event": "final_result", "result": result})

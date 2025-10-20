@@ -20,6 +20,7 @@ _instruments = ("nats-py >= 2.10.0",)
 _global_tracer = None
 _kv_lock = threading.RLock()  # Add thread-safety for kv_store operations
 
+
 class NATSInstrumentor(BaseInstrumentor):
     def __init__(self):
         super().__init__()
@@ -33,9 +34,7 @@ class NATSInstrumentor(BaseInstrumentor):
         try:
             import nats
         except ImportError:
-            raise ImportError(
-                "No module named 'nats'. Please install it first."
-            )
+            raise ImportError("No module named 'nats'. Please install it first.")
 
         # Instrument `publish` method
         original_publish = nats.NATS.publish
@@ -90,6 +89,7 @@ class NATSInstrumentor(BaseInstrumentor):
 
         # Instrument `request` method
         original_request = nats.NATS.request
+
         @functools.wraps(original_request)
         async def instrumented_request(self, *args, **kwargs):
             if _global_tracer:
@@ -140,11 +140,17 @@ class NATSInstrumentor(BaseInstrumentor):
 
         # Instrument `subscribe` method
         original_subscribe = nats.NATS.subscribe
+
         @functools.wraps(original_subscribe)
         async def instrumented_subscribe(self, subject, cb=None, *args, **kwargs):
             # Wrap the callback to add tracing spans for message handling
-            if cb is not None and _global_tracer and not getattr(cb, "_is_instrumented", False):
+            if (
+                cb is not None
+                and _global_tracer
+                and not getattr(cb, "_is_instrumented", False)
+            ):
                 user_cb = cb  # SAVE the original callback
+
                 @functools.wraps(user_cb)
                 async def traced_callback(msg):
                     try:
@@ -166,8 +172,12 @@ class NATSInstrumentor(BaseInstrumentor):
                         # Restore trace context
                         ctx = None
                         if carrier and traceparent:
-                            ctx = TraceContextTextMapPropagator().extract(carrier=carrier)
-                            ctx = W3CBaggagePropagator().extract(carrier=carrier, context=ctx)
+                            ctx = TraceContextTextMapPropagator().extract(
+                                carrier=carrier
+                            )
+                            ctx = W3CBaggagePropagator().extract(
+                                carrier=carrier, context=ctx
+                            )
 
                             # Activate the restored context
                             token = context.attach(ctx)
@@ -179,7 +189,9 @@ class NATSInstrumentor(BaseInstrumentor):
 
                                     # Store in kv_store with thread safety
                                     with _kv_lock:
-                                        kv_store.set(f"execution.{traceparent}", session_id)
+                                        kv_store.set(
+                                            f"execution.{traceparent}", session_id
+                                        )
 
                                 # DON'T detach the context yet - we need it to persist for the callback
                                 # The context will be cleaned up later or by the garbage collector
@@ -195,7 +207,9 @@ class NATSInstrumentor(BaseInstrumentor):
                         # Fallback: check stored execution ID if not found in headers
                         if traceparent and (not session_id or session_id == "None"):
                             with _kv_lock:
-                                stored_session_id = kv_store.get(f"execution.{traceparent}")
+                                stored_session_id = kv_store.get(
+                                    f"execution.{traceparent}"
+                                )
                                 if stored_session_id:
                                     session_id = stored_session_id
                                     set_session_id(session_id, traceparent=traceparent)
@@ -294,9 +308,7 @@ class NATSInstrumentor(BaseInstrumentor):
         try:
             import nats
         except ImportError:
-            raise ImportError(
-                "No module named 'nats'. Please install it first."
-            )
+            raise ImportError("No module named 'nats'. Please install it first.")
 
         # Restore the original methods
         methods_to_restore = [
@@ -309,6 +321,4 @@ class NATSInstrumentor(BaseInstrumentor):
             if hasattr(nats.NATS, method_name):
                 original_method = getattr(nats.NATS, method_name)
                 if hasattr(original_method, "__wrapped__"):
-                    setattr(
-                        nats.NATS, method_name, original_method.__wrapped__
-                    )
+                    setattr(nats.NATS, method_name, original_method.__wrapped__)
