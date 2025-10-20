@@ -20,13 +20,6 @@ _instruments = ("nats-py >= 2.10.0",)
 _global_tracer = None
 _kv_lock = threading.RLock()  # Add thread-safety for kv_store operations
 
-try:
-    import nats
-except ImportError:
-    raise ImportError(
-        "No module named 'nats'. Please install it first."
-    )
-
 class NATSInstrumentor(BaseInstrumentor):
     def __init__(self):
         super().__init__()
