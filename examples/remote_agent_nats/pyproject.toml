@@ -1,0 +1,14 @@
+[project]
+name = "remote-agent-nats"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "langchain>=0.3.25",
+    "langchain-experimental>=0.3.4",
+    "langchain-openai>=0.3.21",
+    "langgraph>=0.4.1",
+    "langgraph-sdk>=0.1.53",
+    "nats-py>=2.11.0",
+]
