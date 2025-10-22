@@ -478,6 +478,10 @@ class SLIMInstrumentor(BaseInstrumentor):
             slim_bindings.Slim.listen_for_session = instrumented_listen_for_session
 
     def _instrument_session_methods(self, slim_bindings):
+        # check if slim_bindings >= v0.6.0 is installed by looking for Session class
+        if not hasattr(slim_bindings, "Session"):
+            return
+
         # In v0.6.0+, we need to instrument session classes dynamically
         # Try to find session-related classes in the slim_bindings module
         session_classes = []
