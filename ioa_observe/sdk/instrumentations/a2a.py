@@ -89,6 +89,60 @@ class A2AInstrumentor(BaseInstrumentor):
 
         A2AClient.send_message = instrumented_send_message
 
+        # Instrument broadcast_message
+        if hasattr(A2AClient, "broadcast_message"):
+            original_broadcast_message = A2AClient.broadcast_message
+
+            @functools.wraps(original_broadcast_message)
+            async def instrumented_broadcast_message(self, request, *args, **kwargs):
+                # Put context into A2A message metadata instead of HTTP headers
+                with _global_tracer.start_as_current_span("a2a.broadcast_message"):
+                    traceparent = get_current_traceparent()
+                    session_id = None
+                    if traceparent:
+                        session_id = kv_store.get(f"execution.{traceparent}")
+                        if session_id:
+                            kv_store.set(f"execution.{traceparent}", session_id)
+
+                    # Ensure metadata dict exists
+                    try:
+                        md = getattr(request.params, "metadata", None)
+                    except AttributeError:
+                        md = None
+                    metadata = md if isinstance(md, dict) else {}
+
+                    observe_meta = dict(metadata.get("observe", {}))
+
+                    # Inject W3C trace context + baggage into observe_meta
+                    TraceContextTextMapPropagator().inject(carrier=observe_meta)
+                    W3CBaggagePropagator().inject(carrier=observe_meta)
+
+                    if traceparent:
+                        observe_meta["traceparent"] = traceparent
+                    if session_id:
+                        observe_meta["session_id"] = session_id
+                        baggage.set_baggage(f"execution.{traceparent}", session_id)
+
+                    metadata["observe"] = observe_meta
+
+                    # Write back metadata (pydantic models are mutable by default in v2)
+                    try:
+                        request.params.metadata = metadata
+                    except Exception:
+                        # Fallback
+                        request = request.model_copy(
+                            update={
+                                "params": request.params.model_copy(
+                                    update={"metadata": metadata}
+                                )
+                            }
+                        )
+
+                # Call through without transport-specific kwargs
+                return await original_broadcast_message(self, request, *args, **kwargs)
+
+            A2AClient.broadcast_message = instrumented_broadcast_message
+
         # Instrument server handler
         from a2a.server.request_handlers import DefaultRequestHandler
 
@@ -155,6 +209,12 @@ class A2AInstrumentor(BaseInstrumentor):
         from a2a.client import A2AClient
 
         A2AClient.send_message = A2AClient.send_message.__wrapped__
+
+        # Uninstrument `broadcast_message`
+        if hasattr(A2AClient, "broadcast_message") and hasattr(
+            A2AClient.broadcast_message, "__wrapped__"
+        ):
+            A2AClient.broadcast_message = A2AClient.broadcast_message.__wrapped__
 
         # Uninstrument server handler
         from a2a.server.request_handlers import DefaultRequestHandler

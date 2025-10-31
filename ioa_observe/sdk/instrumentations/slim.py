@@ -478,19 +478,19 @@ class SLIMInstrumentor(BaseInstrumentor):
             slim_bindings.Slim.listen_for_session = instrumented_listen_for_session
 
     def _instrument_session_methods(self, slim_bindings):
-        # check if slim_bindings >= v0.6.0 is installed by looking for Session class
-        if not hasattr(slim_bindings, "Session"):
-            return
-
-        # In v0.6.0+, we need to instrument session classes dynamically
         # Try to find session-related classes in the slim_bindings module
         session_classes = []
 
-        # Look for common session class names
-        for attr_name in ["Session", "P2PSession", "GroupSession"]:
-            if hasattr(slim_bindings, attr_name):
-                session_class = getattr(slim_bindings, attr_name)
-                session_classes.append((attr_name, session_class))
+        # Check for v0.6.0+ Session classes
+        if hasattr(slim_bindings, "Session"):
+            for attr_name in ["Session", "P2PSession", "GroupSession"]:
+                if hasattr(slim_bindings, attr_name):
+                    session_class = getattr(slim_bindings, attr_name)
+                    session_classes.append((attr_name, session_class))
+
+        # Check for older PySession class (pre-v0.6.0)
+        if hasattr(slim_bindings, "PySession"):
+            session_classes.append(("PySession", slim_bindings.PySession))
 
         # Also look for any class that has session-like methods
         for attr_name in dir(slim_bindings):
@@ -501,7 +501,7 @@ class SLIMInstrumentor(BaseInstrumentor):
                 session_classes.append((attr_name, attr))
 
         # Instrument session methods for found classes
-        for _, session_class in session_classes:
+        for class_name, session_class in session_classes:
             # Instrument get_message (v0.6.0+ replacement for receive)
             if hasattr(session_class, "get_message"):
                 self._instrument_session_get_message(session_class)
