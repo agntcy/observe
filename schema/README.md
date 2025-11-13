@@ -71,13 +71,6 @@ AGNTGY is contributing the following metrics (identified by `ioa` in their names
         *   `reporting_frequency`: The frequency at which the latency is reported (daily, per-task, real-time, on-demand).
         *   `collection_method`: The method used to collect the latency data (instrumentation, manual logs, OTel).
         *   `outcome_justification`: The justification for the outcome of the request.
- *   **`gen_ai.client.ioa.agent.task_delegation_accuracy`**: Measures how accurately the semantic router delegates tasks to the correct agent (ratio).
-  *   Attributes:
-        *   `metric_version`: The version of the metric being reported.
-        *   `processing_mode`: The mode of processing for the request (real-time, batch, on-demand).
-        *   `reporting_frequency`: The frequency at which the latency is reported (daily, per-task, real-time, on-demand).
-        *   `collection_method`: The method used to collect the latency data (instrumentation, manual logs, OTel).
-        *   `outcome_justification`: The justification for the outcome of the request.
  *   **`gen_ai.client.ioa.agent.connection_reliability`**: Represents the success rate of establishing authenticated connections between agents (ratio).
   *   Attributes:
         *   `metric_version`: The version of the metric being reported.
@@ -86,13 +79,6 @@ AGNTGY is contributing the following metrics (identified by `ioa` in their names
         *   `collection_method`: The method used to collect the latency data (instrumentation, manual logs, OTel).
         *   `outcome_justification`: The justification for the outcome of the request.
  *   **`gen_ai.client.ioa.agent.transfer_time_accuracy`**: Measures the accuracy and timeliness of data transfer between agents (ratio).
-  *   Attributes:
-        *   `metric_version`: The version of the metric being reported.
-        *   `processing_mode`: The mode of processing for the request (real-time, batch, on-demand).
-        *   `reporting_frequency`: The frequency at which the latency is reported (daily, per-task, real-time, on-demand).
-        *   `collection_method`: The method used to collect the latency data (instrumentation, manual logs, OTel).
-        *   `outcome_justification`: The justification for the outcome of the request.
- *   **`gen_ai.client.ioa.agent.collaboration.success_rate`**: Represents the fraction of multi-agent collaborations that complete successfully (ratio).
   *   Attributes:
         *   `metric_version`: The version of the metric being reported.
         *   `processing_mode`: The mode of processing for the request (real-time, batch, on-demand).
