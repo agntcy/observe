@@ -27,6 +27,37 @@ Alternatively, to download the SDK from git, you could also use the following co
 uv add "git+https://github.com/agntcy/observe"
 ```
 
+### Quick Start
+
+After installation, import and initialize the SDK:
+
+```python
+import os
+from ioa_observe.sdk import Observe
+from ioa_observe.sdk.decorators import agent, graph, tool
+from ioa_observe.sdk.tracing import session_start
+
+# Initialize Observe
+Observe.init(
+    service_name="your_service_name",
+    api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318")
+)
+
+# Use decorators to instrument your agents
+@agent(name="my_agent", description="Example agent")
+def my_agent_function(state):
+    # Your agent logic here
+    return {"result": "success"}
+
+# Start a session for tracking
+with session_start() as session_id:
+    result = my_agent_function({"input": "data"})
+```
+
+**Note:** The package name for installation is `ioa_observe_sdk`, but imports use `ioa_observe` (underscore, not hyphen).
+
+For comprehensive integration examples with LangGraph, LlamaIndex, and other frameworks, see the [Getting Started Guide](GETTING-STARTED.md).
+
 ## Schema
 
 The AGNTCY observability schema is an extension of the OTel LLM Semantic Conventions for Generative AI systems.

@@ -99,6 +99,13 @@ AGNTGY is contributing the following metrics (identified by `ioa` in their names
         *   `reporting_frequency`: The frequency at which the latency is reported (daily, per-task, real-time, on-demand).
         *   `collection_method`: The method used to collect the latency data (instrumentation, manual logs, OTel).
         *   `outcome_justification`: The justification for the outcome of the request.
+ *   **`gen_ai.client.ioa.agent.number_active_agents`**: Tracks the number of currently active agents in the system (gauge).
+  *   Attributes:
+        *   `metric_version`: The version of the metric being reported.
+        *   `processing_mode`: The mode of processing for the request (real-time, batch, on-demand).
+        *   `reporting_frequency`: The frequency at which the metric is reported (daily, per-task, real-time, on-demand).
+        *   `collection_method`: The method used to collect the metric data (instrumentation, manual logs, OTel).
+        *   `outcome_justification`: The justification for the outcome of the request.
  *   **`gen_ai.server.ioa.slim.chain_completion_time`**: Measures the time taken for a message to be routed from one agent to another and optionally back, via SLIM (in seconds).
   *   Attributes:
         *   `metric_version`: The version of the metric being reported.

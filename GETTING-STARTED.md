@@ -381,6 +381,37 @@ class SupervisorAgent:
 - **SLIM Setup**: Initialize SLIM components before starting inter-agent communication
 - **Environment Setup**: Ensure all required environment variables are properly configured
 
+### Agent State Management and Return Attributes
+
+When implementing agents with state management (e.g., in LangGraph), your agent functions should return dictionaries that update the state. While the SDK primarily focuses on observability instrumentation, you may need to include additional attributes in your return values for workflow orchestration:
+
+```python
+@agent(name="triage_agent", description="Triages incoming requests")
+def triage_agent(state: GraphState) -> Dict[str, Any]:
+    """Triage and route requests to appropriate service agents."""
+    # Process the request
+    result = process_triage(state)
+    
+    # Return state updates including workflow control attributes
+    return {
+        # Standard state updates
+        "messages": [HumanMessage(content=result["response"])],
+        
+        # Workflow control attributes (framework-specific)
+        "goto": "service_agent",           # Next node routing
+        "success": True,                    # Execution status
+        "task_id": result["id"],            # Task tracking
+        "context_id": result["contextId"],  # Context correlation
+        "action": "triage_completed"        # Workflow action
+    }
+```
+
+**Important Notes:**
+- Attributes like `goto`, `success`, `task_id`, `context_id`, and `action` are **workflow control attributes** for your application logic, not SDK-specific requirements
+- The SDK automatically captures observability data through decorators—you don't need to add special attributes for telemetry
+- Structure your return values based on your framework's requirements (LangGraph, LlamaIndex, etc.)
+- The SDK will instrument the function execution regardless of what you return
+
 
 ## SLIM Based Multi-Agentic Systems
 
