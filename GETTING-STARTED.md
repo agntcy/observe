@@ -391,12 +391,12 @@ def triage_agent(state: GraphState) -> Dict[str, Any]:
     """Triage and route requests to appropriate service agents."""
     # Process the request
     result = process_triage(state)
-    
+
     # Return state updates including workflow control attributes
     return {
         # Standard state updates
         "messages": [HumanMessage(content=result["response"])],
-        
+
         # Workflow control attributes (framework-specific)
         "goto": "service_agent",           # Next node routing
         "success": True,                    # Execution status
