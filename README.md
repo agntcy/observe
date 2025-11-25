@@ -34,12 +34,12 @@ After installation, import and initialize the SDK:
 ```python
 import os
 from ioa_observe.sdk import Observe
-from ioa_observe.sdk.decorators import agent, graph, tool
+from ioa_observe.sdk.decorators import agent
 from ioa_observe.sdk.tracing import session_start
 
 # Initialize Observe
 Observe.init(
-    service_name="your_service_name",
+    app_name="your_app_name",
     api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318")
 )
 
