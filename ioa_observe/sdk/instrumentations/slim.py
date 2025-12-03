@@ -686,7 +686,13 @@ class SLIMInstrumentor(BaseInstrumentor):
                             baggage.set_baggage(f"execution.{traceparent}", session_id)
 
                         # Wrap the message (first argument for publish, second for publish_to)
-                        message_idx = 1 if method_name == "publish_to" else 0
+                        # If the session_class is SessionContext, the message is always in second position
+                        message_idx = (
+                            1
+                            if method_name == "publish_to"
+                            or session_class.__name__ == "SessionContext"
+                            else 0
+                        )
                         if len(args) > message_idx:
                             args_list = list(args)
                             message = args_list[message_idx]
