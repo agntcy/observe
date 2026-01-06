@@ -684,28 +684,24 @@ def set_session_id(session_id: str, traceparent: str = None) -> None:
 
     # Check if we have an active span first
     current_span = trace.get_current_span()
+    extracted_traceparent = None
 
     if current_span.is_recording():
         # We have an active span, use its context
         carrier = {}
         TraceContextTextMapPropagator().inject(carrier)
         extracted_traceparent = carrier.get("traceparent")
-    else:
-        # Only create new span if absolutely necessary (no existing context)
-        tracer = trace.get_tracer(__name__)
-        with tracer.start_as_current_span("set_session_id"):
-            carrier = {}
-            TraceContextTextMapPropagator().inject(carrier)
-            extracted_traceparent = carrier.get("traceparent")
+        # Store execution ID with traceparent as key
+        if extracted_traceparent:
+            kv_key = f"execution.{extracted_traceparent}"
+            if kv_store.get(kv_key) is None:
+                kv_store.set(kv_key, session_id)
+    # If there is no active span, we do nothing now and when we need the traceparent
+    # e.g. when propagating context, we update the kv_store with the session_id then
 
-    # Store execution ID with traceparent as key
+    # Finally, attach to context session.id and current_traceparent if present
+    attach(set_value("session.id", session_id))
     if extracted_traceparent:
-        kv_key = f"execution.{extracted_traceparent}"
-        if kv_store.get(kv_key) is None:
-            kv_store.set(kv_key, session_id)
-
-        # Also store in OpenTelemetry context
-        attach(set_value("session.id", session_id))
         attach(set_value("current_traceparent", extracted_traceparent))
 
 
