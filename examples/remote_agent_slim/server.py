@@ -163,11 +163,11 @@ class SlimServer:
             server_identity=local_identity,
         )
 
-    def _split_identity(self, identity: str) -> slim_bindings.PyName:
-        """Split identity string into PyName components."""
+    def _split_identity(self, identity: str) -> slim_bindings.Name:
+        """Split identity string into Name components."""
         try:
             org, namespace, app = identity.split("/")
-            return slim_bindings.PyName(org, namespace, app)
+            return slim_bindings.Name(org, namespace, app)
         except ValueError as e:
             raise ValueError(
                 f"Identity must be in format 'org/namespace/app', got: {identity}"
@@ -175,10 +175,10 @@ class SlimServer:
 
     def _create_identity_providers(self, identity: str, secret: str):
         """Create identity provider and verifier for shared secret auth."""
-        provider = slim_bindings.PyIdentityProvider.SharedSecret(
+        provider = slim_bindings.IdentityProvider.SharedSecret(
             identity=identity, shared_secret=secret
         )
-        verifier = slim_bindings.PyIdentityVerifier.SharedSecret(
+        verifier = slim_bindings.IdentityVerifier.SharedSecret(
             identity=identity, shared_secret=secret
         )
         return provider, verifier
@@ -201,11 +201,11 @@ class SlimServer:
             self.local_identity, self.shared_secret
         )
 
-        # Convert identity to PyName
+        # Convert identity to Name
         local_name = self._split_identity(self.local_identity)
 
         # Create SLIM application
-        self.slim_app = await slim_bindings.Slim.new(local_name, provider, verifier)
+        self.slim_app = slim_bindings.Slim(local_name, provider, verifier)
 
         logger.info(f"Created SLIM app with ID: {self.slim_app.id_str}")
         logger.info(f"Agent configuration: {self.get_agent_info()}")
@@ -339,7 +339,7 @@ async def main():
     parser.add_argument(
         "--shared-secret",
         type=str,
-        default="secret",
+        default="theawesomesharedsecretthatmustbeatleast32characters",
         help="Shared secret for authentication (dev only)",
     )
     parser.add_argument(

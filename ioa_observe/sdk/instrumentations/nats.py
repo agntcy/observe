@@ -7,6 +7,7 @@ import json
 import base64
 import threading
 
+from opentelemetry.context import get_value
 from opentelemetry import baggage, context
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
@@ -53,8 +54,10 @@ class NATSInstrumentor(BaseInstrumentor):
             if traceparent:
                 with _kv_lock:
                     session_id = kv_store.get(f"execution.{traceparent}")
-                    if session_id:
-                        kv_store.set(f"execution.{traceparent}", session_id)
+                    if not session_id:
+                        session_id = get_value("session.id")
+                        if session_id:
+                            kv_store.set(f"execution.{traceparent}", session_id)
 
             headers = {
                 "session_id": session_id if session_id else None,
@@ -104,8 +107,10 @@ class NATSInstrumentor(BaseInstrumentor):
             if traceparent:
                 with _kv_lock:
                     session_id = kv_store.get(f"execution.{traceparent}")
-                    if session_id:
-                        kv_store.set(f"execution.{traceparent}", session_id)
+                    if not session_id:
+                        session_id = get_value("session.id")
+                        if session_id:
+                            kv_store.set(f"execution.{traceparent}", session_id)
 
             headers = {
                 "session_id": session_id if session_id else None,

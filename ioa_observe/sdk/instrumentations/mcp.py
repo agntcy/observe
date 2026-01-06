@@ -10,6 +10,7 @@ import traceback
 import re
 from http import HTTPStatus
 
+from opentelemetry.context import get_value
 from opentelemetry import context, propagate
 from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
 from opentelemetry.instrumentation.utils import unwrap
@@ -212,8 +213,10 @@ class McpInstrumentor(BaseInstrumentor):
                 session_id = None
                 if traceparent:
                     session_id = kv_store.get(f"execution.{traceparent}")
-                    if session_id:
-                        kv_store.set(f"execution.{traceparent}", session_id)
+                    if not session_id:
+                        session_id = get_value("session.id")
+                        if session_id:
+                            kv_store.set(f"execution.{traceparent}", session_id)
 
                         meta = meta or {}
                         if isinstance(meta, dict):
