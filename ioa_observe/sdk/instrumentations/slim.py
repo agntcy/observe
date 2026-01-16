@@ -7,6 +7,7 @@ import json
 import base64
 import threading
 
+from opentelemetry.context import get_value
 from opentelemetry import baggage, context
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
@@ -15,6 +16,7 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
+from ioa_observe.sdk.tracing.context_manager import get_tracer
 
 _instruments = ("slim-bindings >= 0.4.0",)
 _global_tracer = None
@@ -79,8 +81,10 @@ class SLIMInstrumentor(BaseInstrumentor):
                 if traceparent:
                     with _kv_lock:
                         session_id = kv_store.get(f"execution.{traceparent}")
-                        if session_id:
-                            kv_store.set(f"execution.{traceparent}", session_id)
+                        if not session_id:
+                            session_id = get_value("session.id")
+                            if session_id:
+                                kv_store.set(f"execution.{traceparent}", session_id)
 
                 headers = {
                     "session_id": session_id if session_id else None,
@@ -138,8 +142,10 @@ class SLIMInstrumentor(BaseInstrumentor):
                 if traceparent:
                     with _kv_lock:
                         session_id = kv_store.get(f"execution.{traceparent}")
-                        if session_id:
-                            kv_store.set(f"execution.{traceparent}", session_id)
+                        if not session_id:
+                            session_id = get_value("session.id")
+                            if session_id:
+                                kv_store.set(f"execution.{traceparent}", session_id)
 
                 headers = {
                     "session_id": session_id if session_id else None,
@@ -201,8 +207,10 @@ class SLIMInstrumentor(BaseInstrumentor):
                 if traceparent:
                     with _kv_lock:
                         session_id = kv_store.get(f"execution.{traceparent}")
-                        if session_id:
-                            kv_store.set(f"execution.{traceparent}", session_id)
+                        if not session_id:
+                            session_id = get_value("session.id")
+                            if session_id:
+                                kv_store.set(f"execution.{traceparent}", session_id)
 
                 headers = {
                     "session_id": session_id if session_id else None,
@@ -670,6 +678,8 @@ class SLIMInstrumentor(BaseInstrumentor):
                         if traceparent:
                             with _kv_lock:
                                 session_id = kv_store.get(f"execution.{traceparent}")
+                                if not session_id:
+                                    session_id = get_value("session.id")
                                 if session_id:
                                     kv_store.set(f"execution.{traceparent}", session_id)
 
@@ -722,6 +732,10 @@ class SLIMInstrumentor(BaseInstrumentor):
                     if traceparent:
                         with _kv_lock:
                             session_id = kv_store.get(f"execution.{traceparent}")
+                            if not session_id:
+                                session_id = get_value("session.id")
+                                if session_id:
+                                    kv_store.set(f"execution.{traceparent}", session_id)
 
                     if traceparent or session_id:
                         headers = {
@@ -778,7 +792,8 @@ class SLIMInstrumentor(BaseInstrumentor):
         @functools.wraps(original_method)
         async def instrumented_session_method(self, *args, **kwargs):
             if _global_tracer:
-                with _global_tracer.start_as_current_span(f"session.{method_name}"):
+                tracer = get_tracer()
+                with tracer.start_as_current_span(f"session.{method_name}"):
                     traceparent = get_current_traceparent()
 
                     # Handle message wrapping for publish methods
@@ -834,6 +849,10 @@ class SLIMInstrumentor(BaseInstrumentor):
                     if traceparent:
                         with _kv_lock:
                             session_id = kv_store.get(f"execution.{traceparent}")
+                            if not session_id:
+                                session_id = get_value("session.id")
+                                if session_id:
+                                    kv_store.set(f"execution.{traceparent}", session_id)
 
                     if traceparent or session_id:
                         headers = {
