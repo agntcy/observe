@@ -15,6 +15,14 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
+from ioa_observe.sdk.semantic_conventions import (
+    AgentCommunicationAttributes,
+    AgentCommunicationEvents,
+    StatusCode,
+    set_communication_attributes,
+    record_message_event,
+    set_error_attributes,
+)
 
 _instruments = ("slim-bindings >= 0.4.0",)
 _global_tracer = None
@@ -47,23 +55,31 @@ class SLIMInstrumentor(BaseInstrumentor):
             @functools.wraps(original_publish)
             async def instrumented_publish(self, *args, **kwargs):
                 if _global_tracer:
-                    with _global_tracer.start_as_current_span("slim.publish") as span:
+                    with _global_tracer.start_as_current_span("gen_ai.agent.communication") as span:
                         traceparent = get_current_traceparent()
+
+                        # Extract message and session info for semantic conventions
+                        message = args[1] if len(args) > 1 else None
+                        session_arg = args[0] if args else None
+                        channel = None
+                        receiver_id = None
 
                         # Handle different publish signatures
                         # Definition 1: publish(session, message, topic_name) - v0.4.0+ group chat
                         # Definition 2: publish(session, message, organization, namespace, topic) - legacy
                         if len(args) >= 3:
-                            session_arg = args[0] if args else None
                             if hasattr(session_arg, "id"):
-                                span.set_attribute(
-                                    "slim.session.id", str(session_arg.id)
-                                )
+                                conversation_id = str(session_arg.id)
+                            else:
+                                conversation_id = None
 
                             # Check if third argument is PyName (new API) or string (legacy API)
-                            if len(args) >= 3 and hasattr(args[2], "organization"):
+                            if hasattr(args[2], "organization"):
                                 # New API: args[2] is PyName
                                 topic_name = args[2]
+                                channel = f"{topic_name.organization}/{topic_name.namespace}/{topic_name.app}"
+                                receiver_id = channel
+                                # Keep legacy attributes for backwards compatibility
                                 span.set_attribute(
                                     "slim.topic.organization", topic_name.organization
                                 )
@@ -71,6 +87,24 @@ class SLIMInstrumentor(BaseInstrumentor):
                                     "slim.topic.namespace", topic_name.namespace
                                 )
                                 span.set_attribute("slim.topic.app", topic_name.app)
+
+                        # Set standardized semantic conventions
+                        set_communication_attributes(
+                            span=span,
+                            protocol="slim",
+                            receiver_id=receiver_id,
+                            channel=channel,
+                            message=message,
+                            conversation_id=conversation_id if 'conversation_id' in locals() else None,
+                            operation="publish",
+                        )
+
+                        # Record message sent event
+                        record_message_event(
+                            span,
+                            AgentCommunicationEvents.MESSAGE_SENT,
+                            message=message,
+                        )
                 else:
                     traceparent = get_current_traceparent()
 
@@ -109,7 +143,28 @@ class SLIMInstrumentor(BaseInstrumentor):
                     original_args[message_arg_index] = message_to_send
                     args = tuple(original_args)
 
-                return await original_publish(self, *args, **kwargs)
+                try:
+                    result = await original_publish(self, *args, **kwargs)
+                    # Set success status if we have a span
+                    if _global_tracer:
+                        with _kv_lock:
+                            # Get current span context
+                            from opentelemetry import trace
+                            current_span = trace.get_current_span()
+                            if current_span and current_span.is_recording():
+                                current_span.set_attribute(
+                                    AgentCommunicationAttributes.STATUS_CODE,
+                                    StatusCode.OK
+                                )
+                    return result
+                except Exception as e:
+                    # Record error in span
+                    if _global_tracer:
+                        from opentelemetry import trace
+                        current_span = trace.get_current_span()
+                        if current_span and current_span.is_recording():
+                            set_error_attributes(current_span, e)
+                    raise
 
             slim_bindings.Slim.publish = instrumented_publish
 
@@ -123,13 +178,32 @@ class SLIMInstrumentor(BaseInstrumentor):
             ):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span(
-                        "slim.publish_to"
+                        "gen_ai.agent.communication"
                     ) as span:
                         traceparent = get_current_traceparent()
 
-                        # Add session context to span
-                        if hasattr(session_info, "id"):
-                            span.set_attribute("slim.session.id", str(session_info.id))
+                        # Extract conversation ID from session
+                        conversation_id = str(session_info.id) if hasattr(session_info, "id") else None
+
+                        # Set standardized semantic conventions
+                        set_communication_attributes(
+                            span=span,
+                            protocol="slim",
+                            message=message,
+                            conversation_id=conversation_id,
+                            operation="publish_to",
+                        )
+
+                        # Keep legacy attribute for backwards compatibility
+                        if conversation_id:
+                            span.set_attribute("slim.session.id", conversation_id)
+
+                        # Record message sent event
+                        record_message_event(
+                            span,
+                            AgentCommunicationEvents.MESSAGE_SENT,
+                            message=message,
+                        )
                 else:
                     traceparent = get_current_traceparent()
 
@@ -162,9 +236,28 @@ class SLIMInstrumentor(BaseInstrumentor):
                     else wrapped_message
                 )
 
-                return await original_publish_to(
-                    self, session_info, message_to_send, *args, **kwargs
-                )
+                try:
+                    result = await original_publish_to(
+                        self, session_info, message_to_send, *args, **kwargs
+                    )
+                    # Set success status
+                    if _global_tracer:
+                        from opentelemetry import trace
+                        current_span = trace.get_current_span()
+                        if current_span and current_span.is_recording():
+                            current_span.set_attribute(
+                                AgentCommunicationAttributes.STATUS_CODE,
+                                StatusCode.OK
+                            )
+                    return result
+                except Exception as e:
+                    # Record error in span
+                    if _global_tracer:
+                        from opentelemetry import trace
+                        current_span = trace.get_current_span()
+                        if current_span and current_span.is_recording():
+                            set_error_attributes(current_span, e)
+                    raise
 
             slim_bindings.Slim.publish_to = instrumented_publish_to
 
@@ -178,14 +271,19 @@ class SLIMInstrumentor(BaseInstrumentor):
             ):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span(
-                        "slim.request_reply"
+                        "gen_ai.agent.communication"
                     ) as span:
                         traceparent = get_current_traceparent()
 
-                        # Add context to span
-                        if hasattr(session_info, "id"):
-                            span.set_attribute("slim.session.id", str(session_info.id))
+                        # Extract conversation and receiver info
+                        conversation_id = str(session_info.id) if hasattr(session_info, "id") else None
+                        receiver_id = None
+                        channel = None
+
                         if hasattr(remote_name, "organization"):
+                            receiver_id = f"{remote_name.organization}/{remote_name.namespace}/{remote_name.app}"
+                            channel = receiver_id
+                            # Keep legacy attributes for backwards compatibility
                             span.set_attribute(
                                 "slim.remote.organization", remote_name.organization
                             )
@@ -193,6 +291,28 @@ class SLIMInstrumentor(BaseInstrumentor):
                                 "slim.remote.namespace", remote_name.namespace
                             )
                             span.set_attribute("slim.remote.app", remote_name.app)
+
+                        # Set standardized semantic conventions
+                        set_communication_attributes(
+                            span=span,
+                            protocol="slim",
+                            receiver_id=receiver_id,
+                            channel=channel,
+                            message=message,
+                            conversation_id=conversation_id,
+                            operation="request_reply",
+                        )
+
+                        # Keep legacy attribute
+                        if conversation_id:
+                            span.set_attribute("slim.session.id", conversation_id)
+
+                        # Record message sent event
+                        record_message_event(
+                            span,
+                            AgentCommunicationEvents.MESSAGE_SENT,
+                            message=message,
+                        )
                 else:
                     traceparent = get_current_traceparent()
 
@@ -229,13 +349,53 @@ class SLIMInstrumentor(BaseInstrumentor):
                 if timeout is not None:
                     kwargs_with_timeout["timeout"] = timeout
 
-                return await original_request_reply(
-                    self,
-                    session_info,
-                    message_to_send,
-                    remote_name,
-                    **kwargs_with_timeout,
-                )
+                try:
+                    result = await original_request_reply(
+                        self,
+                        session_info,
+                        message_to_send,
+                        remote_name,
+                        **kwargs_with_timeout,
+                    )
+                    # Set success status and record received event
+                    if _global_tracer:
+                        from opentelemetry import trace
+                        current_span = trace.get_current_span()
+                        if current_span and current_span.is_recording():
+                            current_span.set_attribute(
+                                AgentCommunicationAttributes.STATUS_CODE,
+                                StatusCode.OK
+                            )
+                            # Record message received event for the reply
+                            record_message_event(
+                                current_span,
+                                AgentCommunicationEvents.MESSAGE_RECEIVED,
+                                message=result,
+                            )
+                    return result
+                except TimeoutError as e:
+                    # Record timeout error
+                    if _global_tracer:
+                        from opentelemetry import trace
+                        current_span = trace.get_current_span()
+                        if current_span and current_span.is_recording():
+                            current_span.set_attribute(
+                                AgentCommunicationAttributes.STATUS_CODE,
+                                StatusCode.TIMEOUT
+                            )
+                            record_message_event(
+                                current_span,
+                                AgentCommunicationEvents.MESSAGE_TIMEOUT,
+                            )
+                    raise
+                except Exception as e:
+                    # Record error in span
+                    if _global_tracer:
+                        from opentelemetry import trace
+                        current_span = trace.get_current_span()
+                        if current_span and current_span.is_recording():
+                            set_error_attributes(current_span, e)
+                    raise
 
             slim_bindings.Slim.request_reply = instrumented_request_reply
 
@@ -354,6 +514,17 @@ class SLIMInstrumentor(BaseInstrumentor):
                                 # Store in kv_store with thread safety
                                 with _kv_lock:
                                     kv_store.set(f"execution.{traceparent}", session_id)
+
+                            # Record message received event
+                            if _global_tracer:
+                                from opentelemetry import trace
+                                current_span = trace.get_current_span()
+                                if current_span and current_span.is_recording():
+                                    record_message_event(
+                                        current_span,
+                                        AgentCommunicationEvents.MESSAGE_RECEIVED,
+                                        message=raw_message,
+                                    )
 
                             # DON'T detach the context yet - we need it to persist for the callback
                             # The context will be cleaned up later or by the garbage collector
@@ -655,13 +826,36 @@ class SLIMInstrumentor(BaseInstrumentor):
         async def instrumented_session_publish(self, *args, **kwargs):
             if _global_tracer:
                 with _global_tracer.start_as_current_span(
-                    f"session.{method_name}"
+                    "gen_ai.agent.communication"
                 ) as span:
                     traceparent = get_current_traceparent()
 
-                    # Add session context to span
-                    if hasattr(self, "id"):
-                        span.set_attribute("slim.session.id", str(self.id))
+                    # Extract message for semantic conventions
+                    message_idx = 1 if method_name == "publish_to" else 0
+                    message = args[message_idx] if len(args) > message_idx else None
+
+                    # Extract conversation ID from session
+                    conversation_id = str(self.id) if hasattr(self, "id") else None
+
+                    # Set standardized semantic conventions
+                    set_communication_attributes(
+                        span=span,
+                        protocol="slim",
+                        message=message,
+                        conversation_id=conversation_id,
+                        operation=method_name,
+                    )
+
+                    # Keep legacy attribute for backwards compatibility
+                    if conversation_id:
+                        span.set_attribute("slim.session.id", conversation_id)
+
+                    # Record message sent event
+                    record_message_event(
+                        span,
+                        AgentCommunicationEvents.MESSAGE_SENT,
+                        message=message,
+                    )
 
                     # Handle message wrapping
                     if args:
@@ -707,7 +901,18 @@ class SLIMInstrumentor(BaseInstrumentor):
                             args_list[message_idx] = message_to_send
                             args = tuple(args_list)
 
-                    return await original_method(self, *args, **kwargs)
+                    try:
+                        result = await original_method(self, *args, **kwargs)
+                        # Set success status
+                        span.set_attribute(
+                            AgentCommunicationAttributes.STATUS_CODE,
+                            StatusCode.OK
+                        )
+                        return result
+                    except Exception as e:
+                        # Record error in span
+                        set_error_attributes(span, e)
+                        raise
             else:
                 # Handle message wrapping even without tracing
                 if args:

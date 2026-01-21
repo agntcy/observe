@@ -13,6 +13,14 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
+from ioa_observe.sdk.semantic_conventions import (
+    AgentCommunicationAttributes,
+    AgentCommunicationEvents,
+    StatusCode,
+    set_communication_attributes,
+    record_message_event,
+    set_error_attributes,
+)
 
 _instruments = ("a2a-sdk >= 0.3.0",)
 _global_tracer = None
@@ -42,13 +50,46 @@ class A2AInstrumentor(BaseInstrumentor):
         @functools.wraps(original_send_message)
         async def instrumented_send_message(self, request, *args, **kwargs):
             # Put context into A2A message metadata instead of HTTP headers
-            with _global_tracer.start_as_current_span("a2a.send_message"):
+            with _global_tracer.start_as_current_span("gen_ai.agent.communication") as span:
                 traceparent = get_current_traceparent()
                 session_id = None
                 if traceparent:
                     session_id = kv_store.get(f"execution.{traceparent}")
                     if session_id:
                         kv_store.set(f"execution.{traceparent}", session_id)
+
+                # Extract message and receiver info for semantic conventions
+                message = None
+                receiver_id = None
+                message_id = None
+
+                # Try to extract message content
+                try:
+                    if hasattr(request, "params"):
+                        message = getattr(request.params, "message", None)
+                        # Try to get receiver from target or other fields
+                        receiver_id = getattr(request.params, "target", None)
+                        message_id = getattr(request.params, "message_id", None) or getattr(request, "id", None)
+                except Exception:
+                    pass
+
+                # Set standardized semantic conventions
+                set_communication_attributes(
+                    span=span,
+                    protocol="a2a",
+                    receiver_id=receiver_id,
+                    message=message,
+                    session_id=session_id,
+                    message_id=message_id,
+                    operation="send_message",
+                )
+
+                # Record message sent event
+                record_message_event(
+                    span,
+                    AgentCommunicationEvents.MESSAGE_SENT,
+                    message=message,
+                )
 
                 # Ensure metadata dict exists
                 try:
@@ -85,7 +126,24 @@ class A2AInstrumentor(BaseInstrumentor):
                     )
 
             # Call through without transport-specific kwargs
-            return await original_send_message(self, request, *args, **kwargs)
+            try:
+                result = await original_send_message(self, request, *args, **kwargs)
+                # Set success status
+                from opentelemetry import trace
+                current_span = trace.get_current_span()
+                if current_span and current_span.is_recording():
+                    current_span.set_attribute(
+                        AgentCommunicationAttributes.STATUS_CODE,
+                        StatusCode.OK
+                    )
+                return result
+            except Exception as e:
+                # Record error in span
+                from opentelemetry import trace
+                current_span = trace.get_current_span()
+                if current_span and current_span.is_recording():
+                    set_error_attributes(current_span, e)
+                raise
 
         A2AClient.send_message = instrumented_send_message
 
@@ -96,13 +154,44 @@ class A2AInstrumentor(BaseInstrumentor):
             @functools.wraps(original_broadcast_message)
             async def instrumented_broadcast_message(self, request, *args, **kwargs):
                 # Put context into A2A message metadata instead of HTTP headers
-                with _global_tracer.start_as_current_span("a2a.broadcast_message"):
+                with _global_tracer.start_as_current_span("gen_ai.agent.communication") as span:
                     traceparent = get_current_traceparent()
                     session_id = None
                     if traceparent:
                         session_id = kv_store.get(f"execution.{traceparent}")
                         if session_id:
                             kv_store.set(f"execution.{traceparent}", session_id)
+
+                    # Extract message info for semantic conventions
+                    message = None
+                    message_id = None
+
+                    try:
+                        if hasattr(request, "params"):
+                            message = getattr(request.params, "message", None)
+                            message_id = getattr(request.params, "message_id", None) or getattr(request, "id", None)
+                    except Exception:
+                        pass
+
+                    # Set standardized semantic conventions (broadcast has no specific receiver)
+                    set_communication_attributes(
+                        span=span,
+                        protocol="a2a",
+                        message=message,
+                        session_id=session_id,
+                        message_id=message_id,
+                        operation="broadcast_message",
+                    )
+
+                    # Mark as broadcast type
+                    span.set_attribute(AgentCommunicationAttributes.MESSAGE_TYPE, "broadcast")
+
+                    # Record message sent event
+                    record_message_event(
+                        span,
+                        AgentCommunicationEvents.MESSAGE_SENT,
+                        message=message,
+                    )
 
                     # Ensure metadata dict exists
                     try:
@@ -139,7 +228,24 @@ class A2AInstrumentor(BaseInstrumentor):
                         )
 
                 # Call through without transport-specific kwargs
-                return await original_broadcast_message(self, request, *args, **kwargs)
+                try:
+                    result = await original_broadcast_message(self, request, *args, **kwargs)
+                    # Set success status
+                    from opentelemetry import trace
+                    current_span = trace.get_current_span()
+                    if current_span and current_span.is_recording():
+                        current_span.set_attribute(
+                            AgentCommunicationAttributes.STATUS_CODE,
+                            StatusCode.OK
+                        )
+                    return result
+                except Exception as e:
+                    # Record error in span
+                    from opentelemetry import trace
+                    current_span = trace.get_current_span()
+                    if current_span and current_span.is_recording():
+                        set_error_attributes(current_span, e)
+                    raise
 
             A2AClient.broadcast_message = instrumented_broadcast_message
 
@@ -179,6 +285,24 @@ class A2AInstrumentor(BaseInstrumentor):
                 if session_id and session_id != "None":
                     set_session_id(session_id, traceparent=carrier.get("traceparent"))
                     kv_store.set(f"execution.{carrier.get('traceparent')}", session_id)
+
+                # Record message received event
+                if _global_tracer:
+                    from opentelemetry import trace
+                    current_span = trace.get_current_span()
+                    if current_span and current_span.is_recording():
+                        # Extract message for the event
+                        message = None
+                        try:
+                            message = getattr(params, "message", None)
+                        except Exception:
+                            pass
+
+                        record_message_event(
+                            current_span,
+                            AgentCommunicationEvents.MESSAGE_RECEIVED,
+                            message=message,
+                        )
 
             try:
                 return await original_server_on_message_send(self, params, context)
