@@ -3,7 +3,6 @@
 
 import inspect
 import string
-import time
 from functools import wraps
 from json import JSONEncoder
 from typing import Optional
@@ -82,14 +81,14 @@ def process_slim_msg(name: Optional[str] = None):
                     span, ctx, ctx_token = _setup_span(entity_name)
                     _handle_span_input(span, args, kwargs, cls=JSONEncoder)
 
-                    start_time = time.time()
+                    # start_time = time.time()
 
                     try:
                         async for item in _ahandle_generator(
                             span, ctx_token, fn(*args, **kwargs)
                         ):
                             # Measure throughput and processing time per item
-                            item_process_time = time.time() - start_time
+                            # item_process_time = time.time() - start_time
                             # TracerWrapper().processing_time.record(
                             #     item_process_time, {"agent": entity_name}
                             # )
@@ -98,7 +97,7 @@ def process_slim_msg(name: Optional[str] = None):
                             )
 
                             # Reset timer for next item
-                            start_time = time.time()
+                            # start_time = time.time()
                             # Count each yielded item as a published message
                             TracerWrapper().messages_received_counter.add(
                                 1, {"agent": entity_name}
@@ -122,13 +121,13 @@ def process_slim_msg(name: Optional[str] = None):
 
                     # span, ctx, ctx_token = _setup_span(entity_name)
                     # _handle_span_input(span, args, kwargs, cls=JSONEncoder)
-                    start_time = time.time()
+                    # start_time = time.time()
 
                     try:
                         res = await fn(*args, **kwargs)
 
                         # Measure processing time
-                        process_time = time.time() - start_time
+                        # process_time = time.time() - start_time
                         # TracerWrapper().processing_time.record(
                         #     process_time, {"agent": entity_name}
                         # )
@@ -172,13 +171,13 @@ def process_slim_msg(name: Optional[str] = None):
                 # span, ctx, ctx_token = _setup_span(entity_name)
                 # _handle_span_input(span, args, kwargs, cls=JSONEncoder)
 
-                start_time = time.time()
+                # start_time = time.time()
 
                 try:
                     res = fn(*args, **kwargs)
 
                     # Measure processing time
-                    process_time = time.time() - start_time
+                    # process_time = time.time() - start_time
                     # TracerWrapper().processing_time.record(
                     #     process_time, {"agent": entity_name}
                     # )

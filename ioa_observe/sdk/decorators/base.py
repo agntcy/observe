@@ -312,18 +312,18 @@ def _cleanup_span(span, ctx_token):
     """End the span process and detach the context token"""
 
     # Calculate agent chain completion time before ending span
-    span_kind = span.attributes.get(OBSERVE_SPAN_KIND)
-    if span_kind == ObserveSpanKindValues.AGENT.value:
-        start_time = span.attributes.get("agent_chain_start_time")
-        if start_time is not None:
-            import time
-
-            completion_time = time.time() - start_time
-
-            # Emit the metric
-            # TracerWrapper().agent_chain_completion_time_histogram.record(
-            #     completion_time, attributes=span.attributes
-            # )
+    # span_kind = span.attributes.get(OBSERVE_SPAN_KIND)
+    # if span_kind == ObserveSpanKindValues.AGENT.value:
+    #     start_time = span.attributes.get("agent_chain_start_time")
+    #     if start_time is not None:
+    #         import time
+    #
+    #         # completion_time = time.time() - start_time
+    #
+    #         # Emit the metric
+    #         # TracerWrapper().agent_chain_completion_time_histogram.record(
+    #         #     completion_time, attributes=span.attributes
+    #         # )
     span.end()
     context_api.detach(ctx_token)
 

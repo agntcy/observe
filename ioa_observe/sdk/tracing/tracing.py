@@ -363,7 +363,7 @@ class TracerWrapper(object):
         self._processed_spans.add(span_id)
 
         determine_reliability_score(span)
-        start_time = span.attributes.get("ioa_start_time")
+        # start_time = span.attributes.get("ioa_start_time")
 
         # Apply transformations if enabled
         apply_transform = get_value("apply_transform")
