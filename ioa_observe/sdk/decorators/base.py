@@ -321,9 +321,9 @@ def _cleanup_span(span, ctx_token):
             completion_time = time.time() - start_time
 
             # Emit the metric
-            TracerWrapper().agent_chain_completion_time_histogram.record(
-                completion_time, attributes=span.attributes
-            )
+            # TracerWrapper().agent_chain_completion_time_histogram.record(
+            #     completion_time, attributes=span.attributes
+            # )
     span.end()
     context_api.detach(ctx_token)
 

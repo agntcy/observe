@@ -90,9 +90,9 @@ def process_slim_msg(name: Optional[str] = None):
                         ):
                             # Measure throughput and processing time per item
                             item_process_time = time.time() - start_time
-                            TracerWrapper().processing_time.record(
-                                item_process_time, {"agent": entity_name}
-                            )
+                            # TracerWrapper().processing_time.record(
+                            #     item_process_time, {"agent": entity_name}
+                            # )
                             TracerWrapper().throughput_counter.add(
                                 1, {"agent": entity_name}
                             )
@@ -129,9 +129,9 @@ def process_slim_msg(name: Optional[str] = None):
 
                         # Measure processing time
                         process_time = time.time() - start_time
-                        TracerWrapper().processing_time.record(
-                            process_time, {"agent": entity_name}
-                        )
+                        # TracerWrapper().processing_time.record(
+                        #     process_time, {"agent": entity_name}
+                        # )
                         TracerWrapper().throughput_counter.add(
                             1, {"agent": entity_name}
                         )
@@ -179,9 +179,9 @@ def process_slim_msg(name: Optional[str] = None):
 
                     # Measure processing time
                     process_time = time.time() - start_time
-                    TracerWrapper().processing_time.record(
-                        process_time, {"agent": entity_name}
-                    )
+                    # TracerWrapper().processing_time.record(
+                    #     process_time, {"agent": entity_name}
+                    # )
                     TracerWrapper().throughput_counter.add(1, {"agent": entity_name})
                     # span will be ended in the generator
                     # if isinstance(res, types.GeneratorType):

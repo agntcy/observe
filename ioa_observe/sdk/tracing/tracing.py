@@ -205,11 +205,11 @@ class TracerWrapper(object):
                 description="Counts agent failures by agent and reason",
                 unit="1",
             )
-            obj.response_latency_histogram = meter.create_histogram(
-                name="response_latency",
-                description="Records the latency of responses",
-                unit="ms",
-            )
+            # obj.response_latency_histogram = meter.create_histogram(
+            #     name="response_latency",
+            #     description="Records the latency of responses",
+            #     unit="ms",
+            # )
             obj.messages_received_counter = meter.create_counter(
                 "slim.messages.received",
                 description="Number of SLIM messages received per agent",
@@ -226,10 +226,10 @@ class TracerWrapper(object):
                 "slim.messages.processed",
                 description="Number of SLIM messages processed",
             )
-            obj.processing_time = meter.create_histogram(
-                "slim.message.processing_time",
-                description="Time taken to process SLIM messages",
-            )
+            # obj.processing_time = meter.create_histogram(
+            #     "slim.message.processing_time",
+            #     description="Time taken to process SLIM messages",
+            # )
             obj.throughput_counter = meter.create_counter(
                 "slim.message.throughput",
                 description="Message throughput for SLIM operations",
@@ -237,11 +237,11 @@ class TracerWrapper(object):
             obj.error_counter = meter.create_counter(
                 "slim.errors", description="Number of SLIM message errors or drops"
             )
-            obj.agent_chain_completion_time_histogram = meter.create_histogram(
-                name="gen_ai.client.ioa.agent.end_to_end_chain_completion_time",
-                description="Records the end-to-end chain completion time for a single agent",
-                unit="s",
-            )
+            # obj.agent_chain_completion_time_histogram = meter.create_histogram(
+            #     name="gen_ai.client.ioa.agent.end_to_end_chain_completion_time",
+            #     description="Records the end-to-end chain completion time for a single agent",
+            #     unit="s",
+            # )
             obj.agent_execution_success_rate = meter.create_observable_gauge(
                 name="gen_ai.client.ioa.agent.execution_success_rate",
                 description="Success rate of agent executions",
@@ -382,9 +382,9 @@ class TracerWrapper(object):
                 except Exception as e:
                     logging.error(f"Error applying span transformation: {e}")
 
-        if start_time is not None:
-            latency = (time.time() - start_time) * 1000
-            self.response_latency_histogram.record(latency, attributes=span.attributes)
+        # if start_time is not None:
+        #     latency = (time.time() - start_time) * 1000
+        #     self.response_latency_histogram.record(latency, attributes=span.attributes)
 
         # Call original on_end method if it exists
         if (
