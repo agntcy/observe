@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import uuid
 
@@ -63,6 +64,9 @@ from typing import Callable, Dict, Optional, Set
 
 TRACER_NAME = "ioa.observe.tracer"
 APP_NAME = ""
+
+SESSION_IDLE_TIMEOUT_SECONDS = 300  # e.g. 5 minutes
+SESSION_WATCHER_INTERVAL_SECONDS = 30
 
 
 def determine_reliability_score(span):
@@ -132,6 +136,9 @@ class TracerWrapper(object):
             if not TracerWrapper.endpoint:
                 return obj
 
+            # session activity tracking
+            obj._session_last_activity: Dict[str, float] = {}
+            obj._session_lock = threading.Lock()
             obj.__image_uploader = image_uploader
             # {(agent_name): [success_count, total_count]}
             obj._agent_execution_counts = {}
@@ -275,7 +282,61 @@ class TracerWrapper(object):
 
         return cls.instance
 
+    def _start_session_watcher(self) -> None:
+        t = threading.Thread(
+            target=self._session_watcher_loop,
+            name="ioa-session-watcher",
+            daemon=True,
+        )
+        t.start()
+
+    def _session_watcher_loop(self) -> None:
+        while True:
+            time.sleep(SESSION_WATCHER_INTERVAL_SECONDS)
+            now = time.time()
+            expired: dict[str, float] = {}
+
+            with self._session_lock:
+                for session_id, last_ts in list(self._session_last_activity.items()):
+                    if now - last_ts > SESSION_IDLE_TIMEOUT_SECONDS:
+                        expired[session_id] = last_ts
+                        del self._session_last_activity[session_id]
+
+            if not expired:
+                continue
+
+            tracer = self.get_tracer()
+            for session_id, _last_ts in expired.items():
+                with tracer.start_as_current_span("session.end") as span:
+                    span.set_attribute("session.id", session_id)
+                    # optionally add workflow / app name
+                    workflow_name = get_value("workflow_name")
+                    if workflow_name:
+                        span.set_attribute(OBSERVE_WORKFLOW_NAME, workflow_name)
+                    span.set_attribute("session.ended_at", _last_ts)
+
+                del expired[session_id]
+
+            # ensure end spans are exported reasonably fast
+            self.flush()
+
     def exit_handler(self):
+        # emit end spans for any sessions that never went idle
+        now = time.time()
+        tracer = self.get_tracer()
+
+        with self._session_lock:
+            remaining_ids = list(self._session_last_activity.keys())
+            self._session_last_activity.clear()
+
+        for session_id in remaining_ids:
+            with tracer.start_as_current_span("session.end") as span:
+                span.set_attribute("session.id", session_id)
+                workflow_name = get_value("workflow_name")
+                if workflow_name:
+                    span.set_attribute(OBSERVE_WORKFLOW_NAME, workflow_name)
+                span.set_attribute("session.ended_at", now)
+
         self.flush()
 
     def _span_processor_on_start(self, span, parent_context):
@@ -362,6 +423,12 @@ class TracerWrapper(object):
         # Mark this span as processed
         self._processed_spans.add(span_id)
 
+        # update last activity per session
+        session_id = span.attributes.get("session.id")
+        if session_id:
+            with self._session_lock:
+                self._session_last_activity[session_id] = time.time()
+
         determine_reliability_score(span)
         # start_time = span.attributes.get("ioa_start_time")
 
@@ -381,10 +448,6 @@ class TracerWrapper(object):
                     self._update_span_from_dict(span, transformed_span_dict)
                 except Exception as e:
                     logging.error(f"Error applying span transformation: {e}")
-
-        # if start_time is not None:
-        #     latency = (time.time() - start_time) * 1000
-        #     self.response_latency_histogram.record(latency, attributes=span.attributes)
 
         # Call original on_end method if it exists
         if (

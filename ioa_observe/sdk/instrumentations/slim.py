@@ -531,7 +531,15 @@ class SLIMInstrumentor(BaseInstrumentor):
             if timeout is not None:
                 kwargs["timeout"] = timeout
 
-            result = await original_get_message(self, **kwargs)
+            if _global_tracer:
+                with _global_tracer.start_as_current_span(
+                    "session.get_message"
+                ) as span:
+                    if hasattr(self, "id"):
+                        span.set_attribute("slim.session.id", str(self.id))
+                    result = await original_get_message(self, **kwargs)
+            else:
+                result = await original_get_message(self, **kwargs)
 
             # Handle different return types from get_message
             if result is None:
