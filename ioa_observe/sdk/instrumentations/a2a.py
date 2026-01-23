@@ -204,6 +204,122 @@ class A2AInstrumentor(BaseInstrumentor):
 
         # original_server_on_message_send = DefaultRequestHandler.on_message_send
 
+        # Instrumentation for slima2a
+        if importlib.util.find_spec("slima2a"):
+            from slima2a.client_transport import SRPCTransport
+
+            # send_message
+            original_srpc_transport_send_message = SRPCTransport.send_message
+
+            @functools.wraps(original_srpc_transport_send_message)
+            async def instrumented_srpc_transport_send_message(
+                self, request, *args, **kwargs
+            ):
+                # Put context into A2A message metadata instead of HTTP headers
+                with _global_tracer.start_as_current_span("slima2a.send_message"):
+                    traceparent = get_current_traceparent()
+                    session_id = None
+                    if traceparent:
+                        session_id = kv_store.get(f"execution.{traceparent}")
+                        if not session_id:
+                            session_id = get_value("session.id")
+                            if session_id:
+                                kv_store.set(f"execution.{traceparent}", session_id)
+
+                    # Ensure metadata dict exists
+                    try:
+                        md = getattr(request.params, "metadata", None)
+                    except AttributeError:
+                        md = None
+                    metadata = md if isinstance(md, dict) else {}
+
+                    observe_meta = dict(metadata.get("observe", {}))
+
+                    # Inject W3C trace context + baggage into observe_meta
+                    TraceContextTextMapPropagator().inject(carrier=observe_meta)
+                    W3CBaggagePropagator().inject(carrier=observe_meta)
+
+                    if traceparent:
+                        observe_meta["traceparent"] = traceparent
+                    if session_id:
+                        observe_meta["session_id"] = session_id
+                        baggage.set_baggage(f"execution.{traceparent}", session_id)
+
+                    metadata["observe"] = observe_meta
+
+                    # Write back metadata (pydantic models are mutable by default in v2)
+                    try:
+                        request.metadata = metadata
+                    except Exception:
+                        # Fallback
+                        request = request.model_copy(update={"metadata": metadata})
+
+                # Call through without transport-specific kwargs
+                return await original_srpc_transport_send_message(
+                    self, request, *args, **kwargs
+                )
+
+            SRPCTransport.send_message = instrumented_srpc_transport_send_message
+
+            # send_message_streaming
+            original_srpc_transport_send_message_streaming = (
+                SRPCTransport.send_message_streaming
+            )
+
+            @functools.wraps(original_srpc_transport_send_message_streaming)
+            async def instrumented_srpc_transport_send_message_streaming(
+                self, request, *args, **kwargs
+            ):
+                # Put context into A2A message metadata instead of HTTP headers
+                with _global_tracer.start_as_current_span(
+                    "slima2a.send_message_streaming"
+                ):
+                    traceparent = get_current_traceparent()
+                    session_id = None
+                    if traceparent:
+                        session_id = kv_store.get(f"execution.{traceparent}")
+                        if not session_id:
+                            session_id = get_value("session.id")
+                            if session_id:
+                                kv_store.set(f"execution.{traceparent}", session_id)
+
+                    # Ensure metadata dict exists
+                    try:
+                        md = getattr(request.params, "metadata", None)
+                    except AttributeError:
+                        md = None
+                    metadata = md if isinstance(md, dict) else {}
+
+                    observe_meta = dict(metadata.get("observe", {}))
+
+                    # Inject W3C trace context + baggage into observe_meta
+                    TraceContextTextMapPropagator().inject(carrier=observe_meta)
+                    W3CBaggagePropagator().inject(carrier=observe_meta)
+
+                    if traceparent:
+                        observe_meta["traceparent"] = traceparent
+                    if session_id:
+                        observe_meta["session_id"] = session_id
+                        baggage.set_baggage(f"execution.{traceparent}", session_id)
+
+                    metadata["observe"] = observe_meta
+
+                    # Write back metadata (pydantic models are mutable by default in v2)
+                    try:
+                        request.metadata = metadata
+                    except Exception:
+                        # Fallback
+                        request = request.model_copy(update={"metadata": metadata})
+
+                # Call through without transport-specific kwargs
+                return await original_srpc_transport_send_message_streaming(
+                    self, request, *args, **kwargs
+                )
+
+            SRPCTransport.send_message_streaming = (
+                instrumented_srpc_transport_send_message_streaming
+            )
+
     def _uninstrument(self, **kwargs):
         import importlib
 
@@ -227,3 +343,20 @@ class A2AInstrumentor(BaseInstrumentor):
         DefaultRequestHandler.on_message_send = (
             DefaultRequestHandler.on_message_send.__wrapped__
         )
+
+        # handle slima2a
+        if importlib.util.find_spec("slima2a"):
+            from slima2a.client_transport import SRPCTransport
+
+            # Uninstrument `send_message`
+            if hasattr(SRPCTransport, "send_message") and hasattr(
+                SRPCTransport.send_message, "__wrapped__"
+            ):
+                SRPCTransport.send_message = SRPCTransport.send_message.__wrapped__
+
+            if hasattr(SRPCTransport, "send_message_streaming") and hasattr(
+                SRPCTransport.send_message_streaming, "__wrapped__"
+            ):
+                SRPCTransport.send_message_streaming = (
+                    SRPCTransport.send_message.__wrapped__
+                )

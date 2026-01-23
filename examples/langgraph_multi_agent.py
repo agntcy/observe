@@ -62,7 +62,7 @@ class Router(TypedDict):
     next: Literal["researcher", "coder", "FINISH"]
 
 
-llm = ChatOpenAI(model="gpt-3.5-turbo")
+llm = ChatOpenAI(model=os.getenv("LLM_MODEL", "gpt-4o"))
 
 
 class State(MessagesState):

@@ -1,0 +1,28 @@
+[project]
+name = "examples"
+version = "0.1.0"
+description = "A LangGraph-based project"
+requires-python = ">=3.10"
+dependencies = [
+  "python-a2a>=0.3.2",
+  "a2a-sdk[http-server]>=0.3.2",
+  "uvicorn",
+  "slima2a>=0.2.2",
+  "ioa-observe-sdk",
+]
+
+[tool.uv.sources]
+ioa-observe-sdk = {path = "../../", editable=true}
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/a2a_examples"]
+
+[project.scripts]
+a2aserver = "a2a_examples.server:main"
+a2aclient = "a2a_examples.client:entrypoint"
+slima2aserver = "a2a_examples.slima2a_server:main"
+slima2aclient = "a2a_examples.slima2a_client:main"
