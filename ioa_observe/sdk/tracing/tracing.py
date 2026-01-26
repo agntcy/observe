@@ -137,7 +137,7 @@ class TracerWrapper(object):
                 return obj
 
             # session activity tracking
-            obj._session_last_activity: Dict[str, float] = {}
+            obj._session_last_activity: dict[str, float] = {}
             obj._session_lock = threading.Lock()
             obj.__image_uploader = image_uploader
             # {(agent_name): [success_count, total_count]}
@@ -277,6 +277,9 @@ class TracerWrapper(object):
 
             obj.__content_allow_list = ContentAllowList()
 
+            # start background watcher for session end
+            obj._start_session_watcher()
+
             # Force flushes for debug environments (e.g. local development)
             atexit.register(obj.exit_handler)
 
@@ -296,6 +299,7 @@ class TracerWrapper(object):
             now = time.time()
             expired: dict[str, float] = {}
 
+            # Find idle sessions and remove them from _session_last_activity
             with self._session_lock:
                 for session_id, last_ts in list(self._session_last_activity.items()):
                     if now - last_ts > SESSION_IDLE_TIMEOUT_SECONDS:
@@ -306,16 +310,16 @@ class TracerWrapper(object):
                 continue
 
             tracer = self.get_tracer()
-            for session_id, _last_ts in expired.items():
+
+            # Iterate over a snapshot and do *not* modify `expired` in the loop
+            for session_id, _last_ts in list(expired.items()):
+                print("ending session", session_id)
                 with tracer.start_as_current_span("session.end") as span:
                     span.set_attribute("session.id", session_id)
-                    # optionally add workflow / app name
                     workflow_name = get_value("workflow_name")
                     if workflow_name:
                         span.set_attribute(OBSERVE_WORKFLOW_NAME, workflow_name)
                     span.set_attribute("session.ended_at", _last_ts)
-
-                del expired[session_id]
 
             # ensure end spans are exported reasonably fast
             self.flush()
