@@ -80,7 +80,11 @@ async def main() -> None:
         print(response.model_dump_json(indent=2))
 
 
-if __name__ == "__main__":
+def entrypoint():
     import asyncio
 
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    entrypoint()
