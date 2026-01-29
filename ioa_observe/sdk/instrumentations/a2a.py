@@ -170,7 +170,6 @@ class A2AInstrumentor(BaseInstrumentor):
 
     def _instrument_legacy_client(self):
         """Instrument the legacy A2AClient for backward compatibility."""
-        import importlib
 
         # Try to import from legacy location first (v0.3.0+)
         legacy_client = None
