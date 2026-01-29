@@ -321,7 +321,6 @@ class TracerWrapper(object):
 
             # Iterate over a snapshot and do *not* modify `expired` in the loop
             for session_id, _last_ts in list(expired.items()):
-                print("ending session", session_id)
                 with tracer.start_as_current_span("session.end") as span:
                     span.set_attribute("session.id", session_id)
                     workflow_name = get_value("workflow_name")
@@ -437,8 +436,10 @@ class TracerWrapper(object):
             self._processed_spans.add(span_id)
 
         # update last activity per session
+        # Skip session.end spans to avoid infinite loop - these are cleanup spans
+        # that should not re-register the session as active
         session_id = span.attributes.get("session.id")
-        if session_id:
+        if session_id and span.name != "session.end":
             with self._session_lock:
                 self._session_last_activity[session_id] = time.time()
 
