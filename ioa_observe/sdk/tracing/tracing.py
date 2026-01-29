@@ -67,6 +67,7 @@ APP_NAME = ""
 
 SESSION_IDLE_TIMEOUT_SECONDS = 300  # e.g. 5 minutes
 SESSION_WATCHER_INTERVAL_SECONDS = 30
+MAX_PROCESSED_SPANS_SIZE = 100000  # Maximum size before cleanup
 
 
 def determine_reliability_score(span):
@@ -142,8 +143,10 @@ class TracerWrapper(object):
             obj.__image_uploader = image_uploader
             # {(agent_name): [success_count, total_count]}
             obj._agent_execution_counts = {}
+            obj._agent_execution_counts_lock = threading.Lock()
             # Track spans that have been processed to avoid duplicates
             obj._processed_spans = set()
+            obj._processed_spans_lock = threading.Lock()
             TracerWrapper.app_name = TracerWrapper.resource_attributes.get(
                 "service.name", "observe"
             )
@@ -306,6 +309,11 @@ class TracerWrapper(object):
                         expired[session_id] = last_ts
                         del self._session_last_activity[session_id]
 
+            # Periodic cleanup of processed spans to prevent unbounded memory growth
+            with self._processed_spans_lock:
+                if len(self._processed_spans) > MAX_PROCESSED_SPANS_SIZE:
+                    self._processed_spans.clear()
+
             if not expired:
                 continue
 
@@ -313,7 +321,6 @@ class TracerWrapper(object):
 
             # Iterate over a snapshot and do *not* modify `expired` in the loop
             for session_id, _last_ts in list(expired.items()):
-                print("ending session", session_id)
                 with tracer.start_as_current_span("session.end") as span:
                     span.set_attribute("session.id", session_id)
                     workflow_name = get_value("workflow_name")
@@ -420,16 +427,19 @@ class TracerWrapper(object):
         # Added for avoid duplicate on_ending with manual triggers
         # from decorators (@tool, @workflow) in base.py
         span_id = span.context.span_id
-        if span_id in self._processed_spans:
-            # This span was already processed, skip to avoid duplicates
-            return
+        with self._processed_spans_lock:
+            if span_id in self._processed_spans:
+                # This span was already processed, skip to avoid duplicates
+                return
 
-        # Mark this span as processed
-        self._processed_spans.add(span_id)
+            # Mark this span as processed
+            self._processed_spans.add(span_id)
 
         # update last activity per session
+        # Skip session.end spans to avoid infinite loop - these are cleanup spans
+        # that should not re-register the session as active
         session_id = span.attributes.get("session.id")
-        if session_id:
+        if session_id and span.name != "session.end":
             with self._session_lock:
                 self._session_last_activity[session_id] = time.time()
 
@@ -567,21 +577,23 @@ class TracerWrapper(object):
         return self.__tracer_provider.get_tracer(TRACER_NAME)
 
     def record_agent_execution(self, agent_name: str, success: bool):
-        counts = self._agent_execution_counts.setdefault(agent_name, [0, 0])
-        if success:
-            counts[0] += 1  # success count
-        counts[1] += 1  # total count
+        with self._agent_execution_counts_lock:
+            counts = self._agent_execution_counts.setdefault(agent_name, [0, 0])
+            if success:
+                counts[0] += 1  # success count
+            counts[1] += 1  # total count
 
     def _observe_agent_execution_success_rate(self, observer):
         measurements = []
-        for agent_name, (
-            success_count,
-            total_count,
-        ) in self._agent_execution_counts.items():
-            rate = (success_count / total_count) if total_count > 0 else 0.0
-            measurements.append(
-                Observation(value=rate, attributes={"agent_name": agent_name})
-            )
+        with self._agent_execution_counts_lock:
+            for agent_name, (
+                success_count,
+                total_count,
+            ) in self._agent_execution_counts.items():
+                rate = (success_count / total_count) if total_count > 0 else 0.0
+                measurements.append(
+                    Observation(value=rate, attributes={"agent_name": agent_name})
+                )
         return measurements
 
 

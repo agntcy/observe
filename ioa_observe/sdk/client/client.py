@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import sys
+import threading
 
 from .http import HTTPClient
 from ioa_observe.sdk.version import __version__
@@ -51,21 +52,29 @@ class Client:
 class KVStore(object):
     """
     Key-Value Store for storing key-value pairs (Singleton).
+    Thread-safe implementation for concurrent access.
     """
 
     _instance = None
+    _instance_lock = threading.Lock()
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super(KVStore, cls).__new__(cls)
-            cls._instance.store = {}
+            with cls._instance_lock:
+                # Double-check locking pattern
+                if cls._instance is None:
+                    cls._instance = super(KVStore, cls).__new__(cls)
+                    cls._instance.store = {}
+                    cls._instance._lock = threading.Lock()
         return cls._instance
 
     def set(self, key: str, value: str):
-        self.store[key] = value
+        with self._lock:
+            self.store[key] = value
 
     def get(self, key: str):
-        return self.store.get(key)
+        with self._lock:
+            return self.store.get(key)
 
 
 kv_store = KVStore()
