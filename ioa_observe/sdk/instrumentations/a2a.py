@@ -135,7 +135,9 @@ class A2AInstrumentor(BaseInstrumentor):
             async def instrumented_send_message(self, request, *args, **kwargs):
                 nonlocal original_send_message
                 with _global_tracer.start_as_current_span("a2a.client.send_message"):
-                    request = _inject_observe_metadata(request, "a2a.client.send_message")
+                    request = _inject_observe_metadata(
+                        request, "a2a.client.send_message"
+                    )
                 return await original_send_message(self, request, *args, **kwargs)
 
             BaseA2AClient.send_message = instrumented_send_message
@@ -367,7 +369,9 @@ class A2AInstrumentor(BaseInstrumentor):
 
         # Instrument on_message_send_stream for streaming message reception
         if hasattr(DefaultRequestHandler, "on_message_send_stream"):
-            original_on_message_send_stream = DefaultRequestHandler.on_message_send_stream
+            original_on_message_send_stream = (
+                DefaultRequestHandler.on_message_send_stream
+            )
             _original_methods["DefaultRequestHandler.on_message_send_stream"] = (
                 original_on_message_send_stream
             )
@@ -392,28 +396,38 @@ class A2AInstrumentor(BaseInstrumentor):
                     ctx = W3CBaggagePropagator().extract(carrier=carrier, context=ctx)
                     try:
                         from opentelemetry import context as otel_ctx
+
                         token = otel_ctx.attach(ctx)
                     except Exception:
                         token = None
 
                     session_id = observe_meta.get("session_id")
                     if session_id and session_id != "None":
-                        set_session_id(session_id, traceparent=carrier.get("traceparent"))
-                        kv_store.set(f"execution.{carrier.get('traceparent')}", session_id)
+                        set_session_id(
+                            session_id, traceparent=carrier.get("traceparent")
+                        )
+                        kv_store.set(
+                            f"execution.{carrier.get('traceparent')}", session_id
+                        )
 
                 try:
                     # This is an async generator
-                    async for event in original_on_message_send_stream(self, params, context):
+                    async for event in original_on_message_send_stream(
+                        self, params, context
+                    ):
                         yield event
                 finally:
                     if token is not None:
                         try:
                             from opentelemetry import context as otel_ctx
+
                             otel_ctx.detach(token)
                         except Exception:
                             pass
 
-            DefaultRequestHandler.on_message_send_stream = instrumented_on_message_send_stream
+            DefaultRequestHandler.on_message_send_stream = (
+                instrumented_on_message_send_stream
+            )
 
     def _instrument_slima2a(self):
         """Instrument slima2a transport if available."""
@@ -493,9 +507,7 @@ class A2AInstrumentor(BaseInstrumentor):
             self, request, *args, **kwargs
         ):
             # Put context into A2A message metadata instead of HTTP headers
-            with _global_tracer.start_as_current_span(
-                "slima2a.send_message_streaming"
-            ):
+            with _global_tracer.start_as_current_span("slima2a.send_message_streaming"):
                 traceparent = get_current_traceparent()
                 session_id = None
                 if traceparent:
@@ -658,4 +670,3 @@ class A2AInstrumentor(BaseInstrumentor):
 
         # Clear stored original methods
         _original_methods.clear()
-
