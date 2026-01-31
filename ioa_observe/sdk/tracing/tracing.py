@@ -30,8 +30,9 @@ from opentelemetry.sdk.trace.export import (
     SimpleSpanProcessor,
     BatchSpanProcessor,
 )
-from opentelemetry.trace import get_tracer_provider, ProxyTracerProvider
+from opentelemetry.trace import get_tracer_provider, ProxyTracerProvider, SpanContext, TraceFlags, NonRecordingSpan
 from opentelemetry.context import get_value, attach, set_value
+from opentelemetry.trace import set_span_in_context
 from opentelemetry.instrumentation.threading import ThreadingInstrumentor
 from opentelemetry.metrics import get_meter
 from ioa_observe.sdk.metrics.agents.agent_connections import connection_reliability
@@ -137,9 +138,12 @@ class TracerWrapper(object):
             if not TracerWrapper.endpoint:
                 return obj
 
-            # session activity tracking
-            obj._session_last_activity: dict[str, float] = {}
+            # session activity tracking: {session_id: (last_activity_time, trace_id)}
+            obj._session_last_activity: dict[str, tuple[float, int]] = {}
             obj._session_lock = threading.Lock()
+            # Track sessions that have already been ended to prevent duplicates
+            obj._ended_sessions: set[str] = set()
+            obj._ended_sessions_lock = threading.Lock()
             obj.__image_uploader = image_uploader
             # {(agent_name): [success_count, total_count]}
             obj._agent_execution_counts = {}
@@ -300,13 +304,13 @@ class TracerWrapper(object):
         while True:
             time.sleep(SESSION_WATCHER_INTERVAL_SECONDS)
             now = time.time()
-            expired: dict[str, float] = {}
+            expired: dict[str, tuple[float, int]] = {}
 
             # Find idle sessions and remove them from _session_last_activity
             with self._session_lock:
-                for session_id, last_ts in list(self._session_last_activity.items()):
+                for session_id, (last_ts, trace_id) in list(self._session_last_activity.items()):
                     if now - last_ts > SESSION_IDLE_TIMEOUT_SECONDS:
-                        expired[session_id] = last_ts
+                        expired[session_id] = (last_ts, trace_id)
                         del self._session_last_activity[session_id]
 
             # Periodic cleanup of processed spans to prevent unbounded memory growth
@@ -314,19 +318,40 @@ class TracerWrapper(object):
                 if len(self._processed_spans) > MAX_PROCESSED_SPANS_SIZE:
                     self._processed_spans.clear()
 
+            # Periodic cleanup of ended sessions to prevent unbounded memory growth
+            with self._ended_sessions_lock:
+                if len(self._ended_sessions) > MAX_PROCESSED_SPANS_SIZE:
+                    self._ended_sessions.clear()
+
             if not expired:
                 continue
 
             tracer = self.get_tracer()
 
             # Iterate over a snapshot and do *not* modify `expired` in the loop
-            for session_id, _last_ts in list(expired.items()):
-                with tracer.start_as_current_span("session.end") as span:
+            for session_id, (last_ts, trace_id) in list(expired.items()):
+                # Check if this session has already been ended to prevent duplicates
+                with self._ended_sessions_lock:
+                    if session_id in self._ended_sessions:
+                        continue
+                    self._ended_sessions.add(session_id)
+
+                # Create a parent context from the stored trace_id to keep session.end under the same trace
+                parent_span_context = SpanContext(
+                    trace_id=trace_id,
+                    span_id=0,  # Use 0 as we don't have a specific parent span
+                    is_remote=False,
+                    trace_flags=TraceFlags(TraceFlags.SAMPLED),
+                )
+                parent_span = NonRecordingSpan(parent_span_context)
+                parent_context = set_span_in_context(parent_span)
+
+                with tracer.start_as_current_span("session.end", context=parent_context) as span:
                     span.set_attribute("session.id", session_id)
                     workflow_name = get_value("workflow_name")
                     if workflow_name:
                         span.set_attribute(OBSERVE_WORKFLOW_NAME, workflow_name)
-                    span.set_attribute("session.ended_at", _last_ts)
+                    span.set_attribute("session.ended_at", last_ts)
 
             # ensure end spans are exported reasonably fast
             self.flush()
@@ -337,11 +362,27 @@ class TracerWrapper(object):
         tracer = self.get_tracer()
 
         with self._session_lock:
-            remaining_ids = list(self._session_last_activity.keys())
+            remaining_sessions = dict(self._session_last_activity)
             self._session_last_activity.clear()
 
-        for session_id in remaining_ids:
-            with tracer.start_as_current_span("session.end") as span:
+        for session_id, (_, trace_id) in remaining_sessions.items():
+            # Check if this session has already been ended to prevent duplicates
+            with self._ended_sessions_lock:
+                if session_id in self._ended_sessions:
+                    continue
+                self._ended_sessions.add(session_id)
+
+            # Create a parent context from the stored trace_id to keep session.end under the same trace
+            parent_span_context = SpanContext(
+                trace_id=trace_id,
+                span_id=0,  # Use 0 as we don't have a specific parent span
+                is_remote=False,
+                trace_flags=TraceFlags(TraceFlags.SAMPLED),
+            )
+            parent_span = NonRecordingSpan(parent_span_context)
+            parent_context = set_span_in_context(parent_span)
+
+            with tracer.start_as_current_span("session.end", context=parent_context) as span:
                 span.set_attribute("session.id", session_id)
                 workflow_name = get_value("workflow_name")
                 if workflow_name:
@@ -441,7 +482,8 @@ class TracerWrapper(object):
         session_id = span.attributes.get("session.id")
         if session_id and span.name != "session.end":
             with self._session_lock:
-                self._session_last_activity[session_id] = time.time()
+                # Store both the last activity time and the trace_id for this session
+                self._session_last_activity[session_id] = (time.time(), span.context.trace_id)
 
         determine_reliability_score(span)
         # start_time = span.attributes.get("ioa_start_time")
