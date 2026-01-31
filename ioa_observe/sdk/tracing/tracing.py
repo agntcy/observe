@@ -30,7 +30,13 @@ from opentelemetry.sdk.trace.export import (
     SimpleSpanProcessor,
     BatchSpanProcessor,
 )
-from opentelemetry.trace import get_tracer_provider, ProxyTracerProvider, SpanContext, TraceFlags, NonRecordingSpan
+from opentelemetry.trace import (
+    get_tracer_provider,
+    ProxyTracerProvider,
+    SpanContext,
+    TraceFlags,
+    NonRecordingSpan,
+)
 from opentelemetry.context import get_value, attach, set_value
 from opentelemetry.trace import set_span_in_context
 from opentelemetry.instrumentation.threading import ThreadingInstrumentor
@@ -308,7 +314,9 @@ class TracerWrapper(object):
 
             # Find idle sessions and remove them from _session_last_activity
             with self._session_lock:
-                for session_id, (last_ts, trace_id) in list(self._session_last_activity.items()):
+                for session_id, (last_ts, trace_id) in list(
+                    self._session_last_activity.items()
+                ):
                     if now - last_ts > SESSION_IDLE_TIMEOUT_SECONDS:
                         expired[session_id] = (last_ts, trace_id)
                         del self._session_last_activity[session_id]
@@ -346,7 +354,9 @@ class TracerWrapper(object):
                 parent_span = NonRecordingSpan(parent_span_context)
                 parent_context = set_span_in_context(parent_span)
 
-                with tracer.start_as_current_span("session.end", context=parent_context) as span:
+                with tracer.start_as_current_span(
+                    "session.end", context=parent_context
+                ) as span:
                     span.set_attribute("session.id", session_id)
                     workflow_name = get_value("workflow_name")
                     if workflow_name:
@@ -382,7 +392,9 @@ class TracerWrapper(object):
             parent_span = NonRecordingSpan(parent_span_context)
             parent_context = set_span_in_context(parent_span)
 
-            with tracer.start_as_current_span("session.end", context=parent_context) as span:
+            with tracer.start_as_current_span(
+                "session.end", context=parent_context
+            ) as span:
                 span.set_attribute("session.id", session_id)
                 workflow_name = get_value("workflow_name")
                 if workflow_name:
@@ -483,7 +495,10 @@ class TracerWrapper(object):
         if session_id and span.name != "session.end":
             with self._session_lock:
                 # Store both the last activity time and the trace_id for this session
-                self._session_last_activity[session_id] = (time.time(), span.context.trace_id)
+                self._session_last_activity[session_id] = (
+                    time.time(),
+                    span.context.trace_id,
+                )
 
         determine_reliability_score(span)
         # start_time = span.attributes.get("ioa_start_time")

@@ -81,7 +81,6 @@ class SLIMInstrumentor(BaseInstrumentor):
                     with _kv_lock:
                         session_id = kv_store.get(f"execution.{traceparent}")
 
-
                 headers = {
                     "session_id": session_id if session_id else None,
                     "traceparent": traceparent,
@@ -671,7 +670,9 @@ class SLIMInstrumentor(BaseInstrumentor):
                                 if not session_id:
                                     session_id = get_value("session.id")
                                     if session_id:
-                                        kv_store.set(f"execution.{traceparent}", session_id)
+                                        kv_store.set(
+                                            f"execution.{traceparent}", session_id
+                                        )
 
                         headers = {
                             "session_id": session_id if session_id else None,
