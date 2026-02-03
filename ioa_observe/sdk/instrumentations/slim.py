@@ -77,13 +77,42 @@ class SLIMInstrumentor(BaseInstrumentor):
 
                 # Thread-safe access to kv_store
                 session_id = None
+                last_agent_span_id = None
+                last_agent_trace_id = None
+                last_agent_name = None
+                agent_sequence = None
                 if traceparent:
                     with _kv_lock:
                         session_id = kv_store.get(f"execution.{traceparent}")
+                        # Get agent linking info for cross-process propagation
+                        if session_id:
+                            last_agent_span_id = (
+                                kv_store.get(f"session.{session_id}.last_agent_span_id")
+                                or None
+                            )
+                            last_agent_trace_id = (
+                                kv_store.get(
+                                    f"session.{session_id}.last_agent_trace_id"
+                                )
+                                or None
+                            )
+                            last_agent_name = (
+                                kv_store.get(f"session.{session_id}.last_agent_name")
+                                or None
+                            )
+                            agent_sequence = (
+                                kv_store.get(f"session.{session_id}.agent_sequence")
+                                or None
+                            )
 
                 headers = {
                     "session_id": session_id if session_id else None,
                     "traceparent": traceparent,
+                    # Agent linking info for cross-process span linking
+                    "last_agent_span_id": last_agent_span_id,
+                    "last_agent_trace_id": last_agent_trace_id,
+                    "last_agent_name": last_agent_name,
+                    "agent_sequence": agent_sequence,
                 }
 
                 # Set baggage context
@@ -134,11 +163,28 @@ class SLIMInstrumentor(BaseInstrumentor):
 
                 # Thread-safe access to kv_store
                 session_id = None
+                last_agent_span_id = None
+                last_agent_trace_id = None
+                last_agent_name = None
+                agent_sequence = None
                 if traceparent:
                     with _kv_lock:
                         session_id = kv_store.get(f"execution.{traceparent}")
                         if session_id:
                             kv_store.set(f"execution.{traceparent}", session_id)
+                            # Get agent linking info for cross-process propagation
+                            last_agent_span_id = kv_store.get(
+                                f"session.{session_id}.last_agent_span_id"
+                            )
+                            last_agent_trace_id = kv_store.get(
+                                f"session.{session_id}.last_agent_trace_id"
+                            )
+                            last_agent_name = kv_store.get(
+                                f"session.{session_id}.last_agent_name"
+                            )
+                            agent_sequence = kv_store.get(
+                                f"session.{session_id}.agent_sequence"
+                            )
 
                 headers = {
                     "session_id": session_id if session_id else None,
@@ -146,6 +192,11 @@ class SLIMInstrumentor(BaseInstrumentor):
                     "slim_session_id": str(session_info.id)
                     if hasattr(session_info, "id")
                     else None,
+                    # Agent linking info for cross-process span linking
+                    "last_agent_span_id": last_agent_span_id,
+                    "last_agent_trace_id": last_agent_trace_id,
+                    "last_agent_name": last_agent_name,
+                    "agent_sequence": agent_sequence,
                 }
 
                 # Set baggage context
@@ -197,9 +248,27 @@ class SLIMInstrumentor(BaseInstrumentor):
 
                 # Thread-safe access to kv_store
                 session_id = None
+                last_agent_span_id = None
+                last_agent_trace_id = None
+                last_agent_name = None
+                agent_sequence = None
                 if traceparent:
                     with _kv_lock:
                         session_id = kv_store.get(f"execution.{traceparent}")
+                        # Get agent linking info for cross-process propagation
+                        if session_id:
+                            last_agent_span_id = kv_store.get(
+                                f"session.{session_id}.last_agent_span_id"
+                            )
+                            last_agent_trace_id = kv_store.get(
+                                f"session.{session_id}.last_agent_trace_id"
+                            )
+                            last_agent_name = kv_store.get(
+                                f"session.{session_id}.last_agent_name"
+                            )
+                            agent_sequence = kv_store.get(
+                                f"session.{session_id}.agent_sequence"
+                            )
 
                 headers = {
                     "session_id": session_id if session_id else None,
@@ -207,6 +276,11 @@ class SLIMInstrumentor(BaseInstrumentor):
                     "slim_session_id": str(session_info.id)
                     if hasattr(session_info, "id")
                     else None,
+                    # Agent linking info for cross-process span linking
+                    "last_agent_span_id": last_agent_span_id,
+                    "last_agent_trace_id": last_agent_trace_id,
+                    "last_agent_name": last_agent_name,
+                    "agent_sequence": agent_sequence,
                 }
 
                 # Set baggage context
@@ -325,6 +399,12 @@ class SLIMInstrumentor(BaseInstrumentor):
                     traceparent = headers.get("traceparent")
                     session_id = headers.get("session_id")
 
+                    # Extract agent linking info from headers
+                    last_agent_span_id = headers.get("last_agent_span_id")
+                    last_agent_trace_id = headers.get("last_agent_trace_id")
+                    last_agent_name = headers.get("last_agent_name")
+                    agent_sequence = headers.get("agent_sequence")
+
                     # Create carrier for context propagation
                     carrier = {}
                     for key in ["traceparent", "Traceparent", "baggage", "Baggage"]:
@@ -352,6 +432,34 @@ class SLIMInstrumentor(BaseInstrumentor):
                                 with _kv_lock:
                                     kv_store.set(f"execution.{traceparent}", session_id)
 
+                                    # Store agent linking info for cross-process span linking
+                                    if (
+                                        last_agent_span_id
+                                        and last_agent_span_id != "None"
+                                    ):
+                                        kv_store.set(
+                                            f"session.{session_id}.last_agent_span_id",
+                                            last_agent_span_id,
+                                        )
+                                    if (
+                                        last_agent_trace_id
+                                        and last_agent_trace_id != "None"
+                                    ):
+                                        kv_store.set(
+                                            f"session.{session_id}.last_agent_trace_id",
+                                            last_agent_trace_id,
+                                        )
+                                    if last_agent_name and last_agent_name != "None":
+                                        kv_store.set(
+                                            f"session.{session_id}.last_agent_name",
+                                            last_agent_name,
+                                        )
+                                    if agent_sequence and agent_sequence != "None":
+                                        kv_store.set(
+                                            f"session.{session_id}.agent_sequence",
+                                            agent_sequence,
+                                        )
+
                             # DON'T detach the context yet - we need it to persist for the callback
                             # The context will be cleaned up later or by the garbage collector
 
@@ -362,6 +470,29 @@ class SLIMInstrumentor(BaseInstrumentor):
                     elif traceparent and session_id and session_id != "None":
                         # Even without carrier context, set session ID if we have the data
                         set_session_id(session_id, traceparent=traceparent)
+
+                        # Store agent linking info even without carrier context
+                        with _kv_lock:
+                            if last_agent_span_id and last_agent_span_id != "None":
+                                kv_store.set(
+                                    f"session.{session_id}.last_agent_span_id",
+                                    last_agent_span_id,
+                                )
+                            if last_agent_trace_id and last_agent_trace_id != "None":
+                                kv_store.set(
+                                    f"session.{session_id}.last_agent_trace_id",
+                                    last_agent_trace_id,
+                                )
+                            if last_agent_name and last_agent_name != "None":
+                                kv_store.set(
+                                    f"session.{session_id}.last_agent_name",
+                                    last_agent_name,
+                                )
+                            if agent_sequence and agent_sequence != "None":
+                                kv_store.set(
+                                    f"session.{session_id}.agent_sequence",
+                                    agent_sequence,
+                                )
 
                     # Fallback: check stored execution ID if not found in headers
                     if traceparent and (not session_id or session_id == "None"):
@@ -379,6 +510,11 @@ class SLIMInstrumentor(BaseInstrumentor):
                         headers_copy.pop("traceparent", None)
                         headers_copy.pop("session_id", None)
                         headers_copy.pop("slim_session_id", None)
+                        # Remove agent linking headers
+                        headers_copy.pop("last_agent_span_id", None)
+                        headers_copy.pop("last_agent_trace_id", None)
+                        headers_copy.pop("last_agent_name", None)
+                        headers_copy.pop("agent_sequence", None)
                         if headers_copy:
                             message_to_return["headers"] = headers_copy
                         else:

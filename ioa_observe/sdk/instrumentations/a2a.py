@@ -46,12 +46,37 @@ class A2AInstrumentor(BaseInstrumentor):
             with _global_tracer.start_as_current_span("a2a.send_message"):
                 traceparent = get_current_traceparent()
                 session_id = None
+                last_agent_span_id = None
+                last_agent_trace_id = None
+                last_agent_name = None
+                agent_sequence = None
                 if traceparent:
                     session_id = kv_store.get(f"execution.{traceparent}")
                     if not session_id:
                         session_id = get_value("session.id")
                         if session_id:
                             kv_store.set(f"execution.{traceparent}", session_id)
+                    # Get agent linking info for cross-process propagation
+                    if session_id:
+                        with _kv_lock:
+                            last_agent_span_id = (
+                                kv_store.get(f"session.{session_id}.last_agent_span_id")
+                                or None
+                            )
+                            last_agent_trace_id = (
+                                kv_store.get(
+                                    f"session.{session_id}.last_agent_trace_id"
+                                )
+                                or None
+                            )
+                            last_agent_name = (
+                                kv_store.get(f"session.{session_id}.last_agent_name")
+                                or None
+                            )
+                            agent_sequence = (
+                                kv_store.get(f"session.{session_id}.agent_sequence")
+                                or None
+                            )
 
                 # Ensure metadata dict exists
                 try:
@@ -71,6 +96,16 @@ class A2AInstrumentor(BaseInstrumentor):
                 if session_id:
                     observe_meta["session_id"] = session_id
                     baggage.set_baggage(f"execution.{traceparent}", session_id)
+
+                # Add agent linking info for cross-process span linking
+                if last_agent_span_id:
+                    observe_meta["last_agent_span_id"] = last_agent_span_id
+                if last_agent_trace_id:
+                    observe_meta["last_agent_trace_id"] = last_agent_trace_id
+                if last_agent_name:
+                    observe_meta["last_agent_name"] = last_agent_name
+                if agent_sequence:
+                    observe_meta["agent_sequence"] = agent_sequence
 
                 metadata["observe"] = observe_meta
 
@@ -219,12 +254,31 @@ class A2AInstrumentor(BaseInstrumentor):
                 with _global_tracer.start_as_current_span("slima2a.send_message"):
                     traceparent = get_current_traceparent()
                     session_id = None
+                    last_agent_span_id = None
+                    last_agent_trace_id = None
+                    last_agent_name = None
+                    agent_sequence = None
                     if traceparent:
                         session_id = kv_store.get(f"execution.{traceparent}")
                         if not session_id:
                             session_id = get_value("session.id")
                             if session_id:
                                 kv_store.set(f"execution.{traceparent}", session_id)
+                        # Get agent linking info for cross-process propagation
+                        if session_id:
+                            with _kv_lock:
+                                last_agent_span_id = kv_store.get(
+                                    f"session.{session_id}.last_agent_span_id"
+                                )
+                                last_agent_trace_id = kv_store.get(
+                                    f"session.{session_id}.last_agent_trace_id"
+                                )
+                                last_agent_name = kv_store.get(
+                                    f"session.{session_id}.last_agent_name"
+                                )
+                                agent_sequence = kv_store.get(
+                                    f"session.{session_id}.agent_sequence"
+                                )
 
                     # Ensure metadata dict exists
                     try:
@@ -244,6 +298,16 @@ class A2AInstrumentor(BaseInstrumentor):
                     if session_id:
                         observe_meta["session_id"] = session_id
                         baggage.set_baggage(f"execution.{traceparent}", session_id)
+
+                    # Add agent linking info for cross-process span linking
+                    if last_agent_span_id:
+                        observe_meta["last_agent_span_id"] = last_agent_span_id
+                    if last_agent_trace_id:
+                        observe_meta["last_agent_trace_id"] = last_agent_trace_id
+                    if last_agent_name:
+                        observe_meta["last_agent_name"] = last_agent_name
+                    if agent_sequence:
+                        observe_meta["agent_sequence"] = agent_sequence
 
                     metadata["observe"] = observe_meta
 
@@ -276,12 +340,31 @@ class A2AInstrumentor(BaseInstrumentor):
                 ):
                     traceparent = get_current_traceparent()
                     session_id = None
+                    last_agent_span_id = None
+                    last_agent_trace_id = None
+                    last_agent_name = None
+                    agent_sequence = None
                     if traceparent:
                         session_id = kv_store.get(f"execution.{traceparent}")
                         if not session_id:
                             session_id = get_value("session.id")
                             if session_id:
                                 kv_store.set(f"execution.{traceparent}", session_id)
+                        # Get agent linking info for cross-process propagation
+                        if session_id:
+                            with _kv_lock:
+                                last_agent_span_id = kv_store.get(
+                                    f"session.{session_id}.last_agent_span_id"
+                                )
+                                last_agent_trace_id = kv_store.get(
+                                    f"session.{session_id}.last_agent_trace_id"
+                                )
+                                last_agent_name = kv_store.get(
+                                    f"session.{session_id}.last_agent_name"
+                                )
+                                agent_sequence = kv_store.get(
+                                    f"session.{session_id}.agent_sequence"
+                                )
 
                     # Ensure metadata dict exists
                     try:
@@ -301,6 +384,16 @@ class A2AInstrumentor(BaseInstrumentor):
                     if session_id:
                         observe_meta["session_id"] = session_id
                         baggage.set_baggage(f"execution.{traceparent}", session_id)
+
+                    # Add agent linking info for cross-process span linking
+                    if last_agent_span_id:
+                        observe_meta["last_agent_span_id"] = last_agent_span_id
+                    if last_agent_trace_id:
+                        observe_meta["last_agent_trace_id"] = last_agent_trace_id
+                    if last_agent_name:
+                        observe_meta["last_agent_name"] = last_agent_name
+                    if agent_sequence:
+                        observe_meta["agent_sequence"] = agent_sequence
 
                     metadata["observe"] = observe_meta
 

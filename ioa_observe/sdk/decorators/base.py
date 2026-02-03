@@ -20,9 +20,11 @@ from langgraph.graph.state import CompiledStateGraph
 from opentelemetry import trace
 from opentelemetry import context as context_api
 from opentelemetry.context import get_value, attach, set_value
+from opentelemetry.trace import Link, SpanContext, TraceFlags
 from pydantic_core import PydanticSerializationError
 from typing_extensions import ParamSpec
 
+from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.decorators.util import determine_workflow_type, _serialize_object
 from ioa_observe.sdk.metrics.agents.availability import agent_availability
 from ioa_observe.sdk.metrics.agents.recovery_tracker import agent_recovery_tracker
@@ -87,6 +89,74 @@ def _should_send_prompts():
     ).lower() == "true" or context_api.get_value("override_enable_content_tracing")
 
 
+def _get_session_span_key(session_id: str, key_type: str) -> str:
+    """Generate a kv_store key for session-scoped span tracking."""
+    return f"session.{session_id}.{key_type}"
+
+
+def _store_agent_span_info(session_id: str, span, entity_name: str) -> None:
+    """Store current agent's span info in kv_store for next agent to link to."""
+    if not session_id:
+        return
+
+    span_context = span.get_span_context()
+
+    # Store span info for linking
+    kv_store.set(
+        _get_session_span_key(session_id, "last_agent_span_id"),
+        format(span_context.span_id, "016x"),
+    )
+    kv_store.set(
+        _get_session_span_key(session_id, "last_agent_trace_id"),
+        format(span_context.trace_id, "032x"),
+    )
+    kv_store.set(_get_session_span_key(session_id, "last_agent_name"), entity_name)
+
+    # Increment agent sequence number
+    sequence_key = _get_session_span_key(session_id, "agent_sequence")
+    current_seq = kv_store.get(sequence_key)
+    new_seq = (int(current_seq) + 1) if current_seq else 1
+    kv_store.set(sequence_key, str(new_seq))
+
+
+def _get_previous_agent_link(session_id: str) -> tuple:
+    """Get link to previous agent's span from kv_store.
+
+    Returns:
+        tuple: (Link object or None, previous_agent_name or None, sequence_number or 0)
+    """
+    if not session_id:
+        return None, None, 0
+
+    prev_span_id = kv_store.get(_get_session_span_key(session_id, "last_agent_span_id"))
+    prev_trace_id = kv_store.get(
+        _get_session_span_key(session_id, "last_agent_trace_id")
+    )
+    prev_agent_name = kv_store.get(_get_session_span_key(session_id, "last_agent_name"))
+    sequence = kv_store.get(_get_session_span_key(session_id, "agent_sequence"))
+
+    if prev_span_id and prev_trace_id:
+        try:
+            link_context = SpanContext(
+                trace_id=int(prev_trace_id, 16),
+                span_id=int(prev_span_id, 16),
+                is_remote=False,
+                trace_flags=TraceFlags(TraceFlags.SAMPLED),
+            )
+            link = Link(
+                context=link_context,
+                attributes={
+                    "link.type": "agent_handoff",
+                    "link.from_agent": prev_agent_name or "unknown",
+                },
+            )
+            return link, prev_agent_name, int(sequence) if sequence else 0
+        except (ValueError, TypeError):
+            pass
+
+    return None, prev_agent_name, int(sequence) if sequence else 0
+
+
 def _setup_span(
     entity_name,
     tlp_span_kind: Optional[ObserveSpanKindValues] = None,
@@ -110,12 +180,28 @@ def _setup_span(
     else:
         span_name = f"{entity_name}.{tlp_span_kind.value}"
 
+    # Get session_id early (before creating span) for linking
+    session_id_value = get_value("session.id")
+    session_id: Optional[str] = str(session_id_value) if session_id_value else None
+
+    # Get link to previous agent (for agent spans only)
+    links = []
+    previous_agent_name = None
+    agent_sequence = 0
+
+    if tlp_span_kind == ObserveSpanKindValues.AGENT and session_id:
+        prev_link, previous_agent_name, agent_sequence = _get_previous_agent_link(
+            session_id
+        )
+        if prev_link:
+            links.append(prev_link)
+
     with get_tracer() as tracer:
-        span = tracer.start_span(span_name)
+        # Create span with links to previous agent
+        span = tracer.start_span(span_name, links=links if links else None)
         ctx = trace.set_span_in_context(span)
 
         # Preserve existing context values before attaching new context
-        session_id = get_value("session.id")
         current_traceparent = get_value("current_traceparent")
         agent_id = get_value("agent_id")
         application_id_ctx = get_value("application_id")
@@ -169,6 +255,16 @@ def _setup_span(
                     },
                 )
             # start_span.end()  # end the span immediately
+
+            # Set agent sequence and previous agent info for linking
+            span.set_attribute("ioa_observe.agent.sequence", agent_sequence + 1)
+            if previous_agent_name:
+                span.set_attribute("ioa_observe.agent.previous", previous_agent_name)
+
+            # Store this agent's span info for the next agent to link to
+            if session_id:
+                _store_agent_span_info(session_id, span, entity_name)
+
         if tlp_span_kind in [
             ObserveSpanKindValues.TASK,
             ObserveSpanKindValues.TOOL,
