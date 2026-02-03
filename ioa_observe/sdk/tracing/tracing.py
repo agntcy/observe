@@ -707,6 +707,10 @@ def session_start(apply_transform: bool = False):
     session_id = (TracerWrapper.app_name or "observe") + "_" + str(uuid.uuid4())
     set_session_id(session_id)
 
+    # Initialize span tracking for this session (for agent linking)
+    kv_store.set(f"session.{session_id}.agent_sequence", "0")
+    kv_store.set(f"session.{session_id}.started_at", str(time.time()))
+
     # Check if environment variable overrides the apply_transform parameter
     transformer_enabled_env = os.getenv("SPAN_TRANSFORMER_RULES_ENABLED")
     if transformer_enabled_env:
