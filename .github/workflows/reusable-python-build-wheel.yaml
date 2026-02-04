@@ -33,7 +33,7 @@ jobs:
             target: aarch64
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
       - name: Setup Python
         uses: ./.github/actions/setup-python
         with:
@@ -44,7 +44,7 @@ jobs:
         run: |
           uv build
       - name: Upload wheel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: wheel-${{ matrix.platform.os }}-${{ matrix.platform.target }}
           path: ./dist
