@@ -1,7 +1,7 @@
 
 services:
   slim_gateway:
-    image: ghcr.io/agntcy/slim:latest
+    image: ghcr.io/agntcy/slim:1.0.0
     container_name: slim_gateway
     ports:
       - "46357:46357"
