@@ -6,7 +6,6 @@ import datetime
 import logging
 import os
 import signal
-import sys
 
 import slim_bindings
 from dotenv import load_dotenv
