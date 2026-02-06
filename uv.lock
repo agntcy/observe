@@ -745,7 +745,7 @@ wheels = [
 
 [[package]]
 name = "ioa-observe-sdk"
-version = "1.0.31"
+version = "1.0.32"
 source = { editable = "." }
 dependencies = [
     { name = "colorama" },
