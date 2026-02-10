@@ -70,11 +70,44 @@ def _process_received_message(raw_message):
                 with _kv_lock:
                     kv_store.set(f"execution.{traceparent}", session_id)
 
+                    # Restore agent linking info for cross-process span linking (agent handoff event)
+                    last_agent_span_id = headers.get("last_agent_span_id")
+                    last_agent_trace_id = headers.get("last_agent_trace_id")
+                    last_agent_name = headers.get("last_agent_name")
+                    agent_sequence = headers.get("agent_sequence")
+
+                    if last_agent_span_id:
+                        kv_store.set(
+                            f"session.{session_id}.last_agent_span_id",
+                            last_agent_span_id,
+                        )
+                    if last_agent_trace_id:
+                        kv_store.set(
+                            f"session.{session_id}.last_agent_trace_id",
+                            last_agent_trace_id,
+                        )
+                    if last_agent_name:
+                        kv_store.set(
+                            f"session.{session_id}.last_agent_name", last_agent_name
+                        )
+                    if agent_sequence:
+                        kv_store.set(
+                            f"session.{session_id}.agent_sequence", agent_sequence
+                        )
+
         # Clean headers
         cleaned = message_dict.copy()
         if "headers" in cleaned:
             h = cleaned["headers"].copy()
-            for k in ["traceparent", "session_id", "slim_session_id"]:
+            for k in [
+                "traceparent",
+                "session_id",
+                "slim_session_id",
+                "last_agent_span_id",
+                "last_agent_trace_id",
+                "last_agent_name",
+                "agent_sequence",
+            ]:
                 h.pop(k, None)
             if h:
                 cleaned["headers"] = h
@@ -96,6 +129,34 @@ def _process_received_message(raw_message):
 
     except Exception:
         return raw_message
+
+
+def _get_agent_linking_info(session_id):
+    """Get agent linking info for cross-process propagation.
+
+    Returns:
+        dict: Agent linking info including span_id, trace_id, agent_name, and sequence.
+    """
+    if not session_id:
+        return {}
+
+    linking_info = {}
+    with _kv_lock:
+        last_agent_span_id = kv_store.get(f"session.{session_id}.last_agent_span_id")
+        last_agent_trace_id = kv_store.get(f"session.{session_id}.last_agent_trace_id")
+        last_agent_name = kv_store.get(f"session.{session_id}.last_agent_name")
+        agent_sequence = kv_store.get(f"session.{session_id}.agent_sequence")
+
+        if last_agent_span_id:
+            linking_info["last_agent_span_id"] = last_agent_span_id
+        if last_agent_trace_id:
+            linking_info["last_agent_trace_id"] = last_agent_trace_id
+        if last_agent_name:
+            linking_info["last_agent_name"] = last_agent_name
+        if agent_sequence:
+            linking_info["agent_sequence"] = agent_sequence
+
+    return linking_info
 
 
 def _wrap_message_with_headers(message, headers):
@@ -410,6 +471,11 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             slim_session_id = _get_session_id(self)
 
+            # Get agent linking info for cross-process propagation (agent handoff event)
+            agent_linking_info = (
+                _get_agent_linking_info(session_id) if session_id else {}
+            )
+
             if _global_tracer:
                 with _global_tracer.start_as_current_span(
                     f"session.{method_name}"
@@ -423,6 +489,25 @@ class SLIMInstrumentor(BaseInstrumentor):
                             "traceparent": traceparent,
                             "slim_session_id": slim_session_id,
                         }
+
+                        # Add agent linking info for cross-process span linking
+                        if agent_linking_info.get("last_agent_span_id"):
+                            headers["last_agent_span_id"] = agent_linking_info[
+                                "last_agent_span_id"
+                            ]
+                        if agent_linking_info.get("last_agent_trace_id"):
+                            headers["last_agent_trace_id"] = agent_linking_info[
+                                "last_agent_trace_id"
+                            ]
+                        if agent_linking_info.get("last_agent_name"):
+                            headers["last_agent_name"] = agent_linking_info[
+                                "last_agent_name"
+                            ]
+                        if agent_linking_info.get("agent_sequence"):
+                            headers["agent_sequence"] = agent_linking_info[
+                                "agent_sequence"
+                            ]
+
                         if traceparent and session_id:
                             baggage.set_baggage(f"execution.{traceparent}", session_id)
 
@@ -445,6 +530,23 @@ class SLIMInstrumentor(BaseInstrumentor):
                         "traceparent": traceparent,
                         "slim_session_id": slim_session_id,
                     }
+
+                    # Add agent linking info for cross-process span linking
+                    if agent_linking_info.get("last_agent_span_id"):
+                        headers["last_agent_span_id"] = agent_linking_info[
+                            "last_agent_span_id"
+                        ]
+                    if agent_linking_info.get("last_agent_trace_id"):
+                        headers["last_agent_trace_id"] = agent_linking_info[
+                            "last_agent_trace_id"
+                        ]
+                    if agent_linking_info.get("last_agent_name"):
+                        headers["last_agent_name"] = agent_linking_info[
+                            "last_agent_name"
+                        ]
+                    if agent_linking_info.get("agent_sequence"):
+                        headers["agent_sequence"] = agent_linking_info["agent_sequence"]
+
                     args_list = list(args)
                     wrapped_msg = _wrap_message_with_headers(
                         args_list[msg_idx], headers
