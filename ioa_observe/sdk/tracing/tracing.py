@@ -1054,7 +1054,6 @@ def init_openai_instrumentor(
             instrumentor = OpenAIInstrumentor(
                 exception_logger=lambda e: Telemetry().log_exception(e),
                 enrich_assistant=should_enrich_metrics,
-                enrich_token_usage=should_enrich_metrics,
                 get_common_metrics_attributes=metrics_common_attributes,
                 upload_base64_image=base64_image_uploader,
             )

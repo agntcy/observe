@@ -15,8 +15,8 @@ pydantic-settings>=2.8.1
 uvicorn>=0.34.0
 requests>=2.32.3
 python-json-logger>=3.3.0
-slim-bindings>=0.7.0
-ioa_observe_sdk>=1.0.25
+slim-bindings>=1.0.0  # SLIM v1.x required
+ioa_observe_sdk>=1.0.29
 openai>=1.0.0
 # If you need to debug langgraph studio
 # debugpy==1.8.12
