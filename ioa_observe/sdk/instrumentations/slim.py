@@ -461,6 +461,7 @@ class SLIMInstrumentor(BaseInstrumentor):
             traceparent = get_current_traceparent()
             session_id = None
 
+            # Try to get session_id from kv_store using traceparent
             if traceparent:
                 with _kv_lock:
                     session_id = kv_store.get(f"execution.{traceparent}")
@@ -468,6 +469,10 @@ class SLIMInstrumentor(BaseInstrumentor):
                         session_id = get_value("session.id")
                         if session_id:
                             kv_store.set(f"execution.{traceparent}", session_id)
+
+            # Fallback: always try to get session_id from context if not found
+            if not session_id:
+                session_id = get_value("session.id")
 
             slim_session_id = _get_session_id(self)
 
@@ -480,13 +485,18 @@ class SLIMInstrumentor(BaseInstrumentor):
                 with _global_tracer.start_as_current_span(
                     f"session.{method_name}"
                 ) as span:
+                    # Get traceparent from inside the span context
+                    current_traceparent = get_current_traceparent()
+
                     if slim_session_id:
                         span.set_attribute("slim.session.id", slim_session_id)
+                    if session_id:
+                        span.set_attribute("session.id", session_id)
 
-                    if args and len(args) > msg_idx and (traceparent or session_id):
+                    if args and len(args) > msg_idx and (current_traceparent or session_id):
                         headers = {
                             "session_id": session_id,
-                            "traceparent": traceparent,
+                            "traceparent": current_traceparent,
                             "slim_session_id": slim_session_id,
                         }
 
@@ -508,8 +518,8 @@ class SLIMInstrumentor(BaseInstrumentor):
                                 "agent_sequence"
                             ]
 
-                        if traceparent and session_id:
-                            baggage.set_baggage(f"execution.{traceparent}", session_id)
+                        if current_traceparent and session_id:
+                            baggage.set_baggage(f"execution.{current_traceparent}", session_id)
 
                         args_list = list(args)
                         wrapped_msg = _wrap_message_with_headers(
