@@ -18,6 +18,7 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
+from ioa_observe.sdk.tracing.context_utils import _get_agent_linking_info
 
 _instruments = ("slim-bindings >= 1.0.0",)
 _global_tracer = None
@@ -129,34 +130,6 @@ def _process_received_message(raw_message):
 
     except Exception:
         return raw_message
-
-
-def _get_agent_linking_info(session_id):
-    """Get agent linking info for cross-process propagation.
-
-    Returns:
-        dict: Agent linking info including span_id, trace_id, agent_name, and sequence.
-    """
-    if not session_id:
-        return {}
-
-    linking_info = {}
-    with _kv_lock:
-        last_agent_span_id = kv_store.get(f"session.{session_id}.last_agent_span_id")
-        last_agent_trace_id = kv_store.get(f"session.{session_id}.last_agent_trace_id")
-        last_agent_name = kv_store.get(f"session.{session_id}.last_agent_name")
-        agent_sequence = kv_store.get(f"session.{session_id}.agent_sequence")
-
-        if last_agent_span_id:
-            linking_info["last_agent_span_id"] = last_agent_span_id
-        if last_agent_trace_id:
-            linking_info["last_agent_trace_id"] = last_agent_trace_id
-        if last_agent_name:
-            linking_info["last_agent_name"] = last_agent_name
-        if agent_sequence:
-            linking_info["agent_sequence"] = agent_sequence
-
-    return linking_info
 
 
 def _wrap_message_with_headers(message, headers):
