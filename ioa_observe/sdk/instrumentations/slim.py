@@ -493,7 +493,11 @@ class SLIMInstrumentor(BaseInstrumentor):
                     if session_id:
                         span.set_attribute("session.id", session_id)
 
-                    if args and len(args) > msg_idx and (current_traceparent or session_id):
+                    if (
+                        args
+                        and len(args) > msg_idx
+                        and (current_traceparent or session_id)
+                    ):
                         headers = {
                             "session_id": session_id,
                             "traceparent": current_traceparent,
@@ -519,7 +523,9 @@ class SLIMInstrumentor(BaseInstrumentor):
                             ]
 
                         if current_traceparent and session_id:
-                            baggage.set_baggage(f"execution.{current_traceparent}", session_id)
+                            baggage.set_baggage(
+                                f"execution.{current_traceparent}", session_id
+                            )
 
                         args_list = list(args)
                         wrapped_msg = _wrap_message_with_headers(
