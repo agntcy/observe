@@ -37,7 +37,6 @@ from ioa_observe.sdk.decorators.fork_join import (
     unregister_active_span,
     annotate_fork_branch,
     annotate_join,
-    get_fork_parent_seq,
 )
 from ioa_observe.sdk.decorators.util import determine_workflow_type, _serialize_object
 from ioa_observe.sdk.metrics.agents.availability import agent_availability
