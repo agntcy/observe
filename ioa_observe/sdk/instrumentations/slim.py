@@ -96,6 +96,27 @@ def _process_received_message(raw_message):
                             f"session.{session_id}.agent_sequence", agent_sequence
                         )
 
+                    # Restore fork context for cross-process fork detection
+                    fork_id = headers.get("fork_id")
+                    fork_parent_seq = headers.get("fork_parent_seq")
+                    fork_branch_index = headers.get("fork_branch_index")
+                    if fork_id and agent_sequence:
+                        seq = int(agent_sequence)
+                        kv_store.set(
+                            f"session.{session_id}.agents.{seq}.fork_id",
+                            fork_id,
+                        )
+                        if fork_parent_seq:
+                            kv_store.set(
+                                f"session.{session_id}.agents.{seq}.parent_seq",
+                                fork_parent_seq,
+                            )
+                        if fork_branch_index:
+                            kv_store.set(
+                                f"session.{session_id}.agents.{seq}.branch_index",
+                                fork_branch_index,
+                            )
+
         # Clean headers
         cleaned = message_dict.copy()
         if "headers" in cleaned:
@@ -108,6 +129,9 @@ def _process_received_message(raw_message):
                 "last_agent_trace_id",
                 "last_agent_name",
                 "agent_sequence",
+                "fork_id",
+                "fork_parent_seq",
+                "fork_branch_index",
             ]:
                 h.pop(k, None)
             if h:
@@ -495,6 +519,18 @@ class SLIMInstrumentor(BaseInstrumentor):
                                 "agent_sequence"
                             ]
 
+                        # Add fork context for cross-process fork detection
+                        if agent_linking_info.get("fork_id"):
+                            headers["fork_id"] = agent_linking_info["fork_id"]
+                        if agent_linking_info.get("fork_parent_seq"):
+                            headers["fork_parent_seq"] = agent_linking_info[
+                                "fork_parent_seq"
+                            ]
+                        if agent_linking_info.get("fork_branch_index"):
+                            headers["fork_branch_index"] = agent_linking_info[
+                                "fork_branch_index"
+                            ]
+
                         if current_traceparent and session_id:
                             baggage.set_baggage(
                                 f"execution.{current_traceparent}", session_id
@@ -535,6 +571,18 @@ class SLIMInstrumentor(BaseInstrumentor):
                         ]
                     if agent_linking_info.get("agent_sequence"):
                         headers["agent_sequence"] = agent_linking_info["agent_sequence"]
+
+                    # Add fork context for cross-process fork detection
+                    if agent_linking_info.get("fork_id"):
+                        headers["fork_id"] = agent_linking_info["fork_id"]
+                    if agent_linking_info.get("fork_parent_seq"):
+                        headers["fork_parent_seq"] = agent_linking_info[
+                            "fork_parent_seq"
+                        ]
+                    if agent_linking_info.get("fork_branch_index"):
+                        headers["fork_branch_index"] = agent_linking_info[
+                            "fork_branch_index"
+                        ]
 
                     args_list = list(args)
                     wrapped_msg = _wrap_message_with_headers(
