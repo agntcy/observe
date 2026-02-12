@@ -300,9 +300,6 @@ def _handle_span_output(span, tlp_span_kind, res, cls=None):
                     OBSERVE_ENTITY_OUTPUT,
                     json_output,
                 )
-                TracerWrapper().span_processor_on_ending(
-                    span
-                )  # record the response latency
     except Exception as e:
         print(f"Warning: Failed to serialize output for span: {e}")
         Telemetry().log_exception(e)
