@@ -409,7 +409,9 @@ class SLIMInstrumentor(BaseInstrumentor):
                 self._wrap_publish(session_class, "publish_and_wait_async")
 
             if hasattr(session_class, "publish_to_and_wait_async"):
-                self._wrap_publish(session_class, "publish_to_and_wait_async", msg_idx=1)
+                self._wrap_publish(
+                    session_class, "publish_to_and_wait_async", msg_idx=1
+                )
 
     def _wrap_get_message(self, session_class):
         """Wrap get_message_async to extract tracing context."""
