@@ -328,9 +328,12 @@ class TracerWrapper(object):
             with self._processed_spans_lock:
                 if len(self._processed_spans) > MAX_PROCESSED_SPANS_SIZE:
                     evict_count = len(self._processed_spans) // 2
-                    it = iter(self._processed_spans)
-                    to_remove = [next(it) for _ in range(evict_count)]
-                    self._processed_spans.difference_update(to_remove)
+                    to_remove = set()
+                    for i, span_id in enumerate(self._processed_spans):
+                        if i >= evict_count:
+                            break
+                        to_remove.add(span_id)
+                    self._processed_spans -= to_remove
 
             # Periodic cleanup of ended sessions to prevent unbounded memory growth
             with self._ended_sessions_lock:
