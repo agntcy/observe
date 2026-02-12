@@ -18,6 +18,7 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
+from ioa_observe.sdk.tracing.context_utils import _get_agent_linking_info
 
 _instruments = ("slim-bindings >= 1.0.0",)
 _global_tracer = None
@@ -70,11 +71,44 @@ def _process_received_message(raw_message):
                 with _kv_lock:
                     kv_store.set(f"execution.{traceparent}", session_id)
 
+                    # Restore agent linking info for cross-process span linking (agent handoff event)
+                    last_agent_span_id = headers.get("last_agent_span_id")
+                    last_agent_trace_id = headers.get("last_agent_trace_id")
+                    last_agent_name = headers.get("last_agent_name")
+                    agent_sequence = headers.get("agent_sequence")
+
+                    if last_agent_span_id:
+                        kv_store.set(
+                            f"session.{session_id}.last_agent_span_id",
+                            last_agent_span_id,
+                        )
+                    if last_agent_trace_id:
+                        kv_store.set(
+                            f"session.{session_id}.last_agent_trace_id",
+                            last_agent_trace_id,
+                        )
+                    if last_agent_name:
+                        kv_store.set(
+                            f"session.{session_id}.last_agent_name", last_agent_name
+                        )
+                    if agent_sequence:
+                        kv_store.set(
+                            f"session.{session_id}.agent_sequence", agent_sequence
+                        )
+
         # Clean headers
         cleaned = message_dict.copy()
         if "headers" in cleaned:
             h = cleaned["headers"].copy()
-            for k in ["traceparent", "session_id", "slim_session_id"]:
+            for k in [
+                "traceparent",
+                "session_id",
+                "slim_session_id",
+                "last_agent_span_id",
+                "last_agent_trace_id",
+                "last_agent_name",
+                "agent_sequence",
+            ]:
                 h.pop(k, None)
             if h:
                 cleaned["headers"] = h
@@ -326,6 +360,23 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             App.listen_for_session = wrapped_listen_for_session
 
+        # listen_for_session_async
+        if hasattr(App, "listen_for_session_async"):
+            original_listen_for_session_async = App.listen_for_session_async
+
+            @functools.wraps(original_listen_for_session_async)
+            async def wrapped_listen_for_session_async(self, *args, **kwargs):
+                if _global_tracer:
+                    with _global_tracer.start_as_current_span(
+                        "slim.app.listen_for_session"
+                    ):
+                        return await original_listen_for_session_async(
+                            self, *args, **kwargs
+                        )
+                return await original_listen_for_session_async(self, *args, **kwargs)
+
+            App.listen_for_session_async = wrapped_listen_for_session_async
+
     def _instrument_sessions(self, slim_bindings):
         """Instrument session classes for v1.x."""
         session_classes = set()
@@ -352,6 +403,15 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             if hasattr(session_class, "publish_to_async"):
                 self._wrap_publish(session_class, "publish_to_async", msg_idx=1)
+
+            # Also instrument the _and_wait variants
+            if hasattr(session_class, "publish_and_wait_async"):
+                self._wrap_publish(session_class, "publish_and_wait_async")
+
+            if hasattr(session_class, "publish_to_and_wait_async"):
+                self._wrap_publish(
+                    session_class, "publish_to_and_wait_async", msg_idx=1
+                )
 
     def _wrap_get_message(self, session_class):
         """Wrap get_message_async to extract tracing context."""
@@ -400,6 +460,7 @@ class SLIMInstrumentor(BaseInstrumentor):
             traceparent = get_current_traceparent()
             session_id = None
 
+            # Try to get session_id from kv_store using traceparent
             if traceparent:
                 with _kv_lock:
                     session_id = kv_store.get(f"execution.{traceparent}")
@@ -408,23 +469,62 @@ class SLIMInstrumentor(BaseInstrumentor):
                         if session_id:
                             kv_store.set(f"execution.{traceparent}", session_id)
 
+            # Fallback: always try to get session_id from context if not found
+            if not session_id:
+                session_id = get_value("session.id")
+
             slim_session_id = _get_session_id(self)
+
+            # Get agent linking info for cross-process propagation (agent handoff event)
+            agent_linking_info = (
+                _get_agent_linking_info(session_id) if session_id else {}
+            )
 
             if _global_tracer:
                 with _global_tracer.start_as_current_span(
                     f"session.{method_name}"
                 ) as span:
+                    # Get traceparent from inside the span context
+                    current_traceparent = get_current_traceparent()
+
                     if slim_session_id:
                         span.set_attribute("slim.session.id", slim_session_id)
+                    if session_id:
+                        span.set_attribute("session.id", session_id)
 
-                    if args and len(args) > msg_idx and (traceparent or session_id):
+                    if (
+                        args
+                        and len(args) > msg_idx
+                        and (current_traceparent or session_id)
+                    ):
                         headers = {
                             "session_id": session_id,
-                            "traceparent": traceparent,
+                            "traceparent": current_traceparent,
                             "slim_session_id": slim_session_id,
                         }
-                        if traceparent and session_id:
-                            baggage.set_baggage(f"execution.{traceparent}", session_id)
+
+                        # Add agent linking info for cross-process span linking
+                        if agent_linking_info.get("last_agent_span_id"):
+                            headers["last_agent_span_id"] = agent_linking_info[
+                                "last_agent_span_id"
+                            ]
+                        if agent_linking_info.get("last_agent_trace_id"):
+                            headers["last_agent_trace_id"] = agent_linking_info[
+                                "last_agent_trace_id"
+                            ]
+                        if agent_linking_info.get("last_agent_name"):
+                            headers["last_agent_name"] = agent_linking_info[
+                                "last_agent_name"
+                            ]
+                        if agent_linking_info.get("agent_sequence"):
+                            headers["agent_sequence"] = agent_linking_info[
+                                "agent_sequence"
+                            ]
+
+                        if current_traceparent and session_id:
+                            baggage.set_baggage(
+                                f"execution.{current_traceparent}", session_id
+                            )
 
                         args_list = list(args)
                         wrapped_msg = _wrap_message_with_headers(
@@ -445,6 +545,23 @@ class SLIMInstrumentor(BaseInstrumentor):
                         "traceparent": traceparent,
                         "slim_session_id": slim_session_id,
                     }
+
+                    # Add agent linking info for cross-process span linking
+                    if agent_linking_info.get("last_agent_span_id"):
+                        headers["last_agent_span_id"] = agent_linking_info[
+                            "last_agent_span_id"
+                        ]
+                    if agent_linking_info.get("last_agent_trace_id"):
+                        headers["last_agent_trace_id"] = agent_linking_info[
+                            "last_agent_trace_id"
+                        ]
+                    if agent_linking_info.get("last_agent_name"):
+                        headers["last_agent_name"] = agent_linking_info[
+                            "last_agent_name"
+                        ]
+                    if agent_linking_info.get("agent_sequence"):
+                        headers["agent_sequence"] = agent_linking_info["agent_sequence"]
+
                     args_list = list(args)
                     wrapped_msg = _wrap_message_with_headers(
                         args_list[msg_idx], headers
@@ -485,11 +602,18 @@ class SLIMInstrumentor(BaseInstrumentor):
                     "subscribe_async",
                     "set_route_async",
                     "listen_for_session",
+                    "listen_for_session_async",
                 ],
             )
 
         # Restore session methods
-        session_methods = ["publish_async", "publish_to_async", "get_message_async"]
+        session_methods = [
+            "publish_async",
+            "publish_to_async",
+            "publish_and_wait_async",
+            "publish_to_and_wait_async",
+            "get_message_async",
+        ]
         for name in dir(slim_bindings):
             cls = getattr(slim_bindings, name)
             if isinstance(cls, type):

@@ -1,3 +1,4 @@
+import threading
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry import baggage
@@ -18,6 +19,36 @@ Receiver:
 After receiving a message, extract headers and call set_context_from_headers(headers) before processing.
 """
 
+_kv_lock = threading.RLock()
+
+
+def _get_agent_linking_info(session_id):
+    """Get agent linking info for cross-process propagation.
+
+    Returns:
+        dict: Agent linking info including span_id, trace_id, agent_name, and sequence.
+    """
+    if not session_id:
+        return {}
+
+    linking_info = {}
+    with _kv_lock:
+        last_agent_span_id = kv_store.get(f"session.{session_id}.last_agent_span_id")
+        last_agent_trace_id = kv_store.get(f"session.{session_id}.last_agent_trace_id")
+        last_agent_name = kv_store.get(f"session.{session_id}.last_agent_name")
+        agent_sequence = kv_store.get(f"session.{session_id}.agent_sequence")
+
+        if last_agent_span_id:
+            linking_info["last_agent_span_id"] = last_agent_span_id
+        if last_agent_trace_id:
+            linking_info["last_agent_trace_id"] = last_agent_trace_id
+        if last_agent_name:
+            linking_info["last_agent_name"] = last_agent_name
+        if agent_sequence:
+            linking_info["agent_sequence"] = agent_sequence
+
+    return linking_info
+
 
 def get_current_context_headers():
     """
@@ -36,6 +67,9 @@ def get_current_context_headers():
             session_id = kv_store.get(f"execution.{traceparent}")
             if session_id:
                 carrier["session_id"] = session_id
+        if session_id:
+            linking_info = _get_agent_linking_info(session_id)
+            carrier.update(linking_info)
         return carrier
 
 

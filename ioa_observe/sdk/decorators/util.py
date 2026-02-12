@@ -17,6 +17,71 @@ def _serialize_object(obj, max_depth=3, current_depth=0):
     """
     Intelligently serialize an object to a more meaningful representation
     """
+    # Handle LangGraph and LangChain types early - before depth check
+    if hasattr(obj, "__class__"):
+        class_name = obj.__class__.__name__
+        module_name = getattr(type(obj), "__module__", "")
+
+        # LangGraph compiled graphs - extract only meaningful metadata
+        if class_name in ("CompiledStateGraph", "CompiledGraph", "Pregel"):
+            result = {"type": class_name}
+            if hasattr(obj, "nodes") and obj.nodes:
+                try:
+                    result["nodes"] = list(obj.nodes.keys())
+                except Exception:
+                    pass
+            if hasattr(obj, "output_channels"):
+                result["output_channels"] = obj.output_channels
+            return result
+
+        # LangGraph Command type
+        if class_name == "Command" and "langgraph" in module_name:
+            return {
+                "type": "Command",
+                "goto": getattr(obj, "goto", None),
+                "update": getattr(obj, "update", None),
+            }
+
+        # LangChain message types - extract content and role
+        if "Message" in class_name and "langchain" in module_name:
+            result = {"type": class_name}
+            if hasattr(obj, "content"):
+                content = obj.content
+                # Truncate long content
+                if isinstance(content, str) and len(content) > 500:
+                    content = content[:500] + "..."
+                result["content"] = content
+            if hasattr(obj, "name") and obj.name:
+                result["name"] = obj.name
+            if hasattr(obj, "tool_calls") and obj.tool_calls:
+                result["tool_calls"] = [
+                    {"name": tc.get("name"), "id": tc.get("id")}
+                    for tc in obj.tool_calls[:5]
+                ]
+            return result
+
+        # LangGraph internal types - simplify to type name
+        if class_name in (
+            "PregelNode",
+            "ChannelWrite",
+            "RunnableCallable",
+            "RunnableSeq",
+            "ToolNode",
+            "BinaryOperatorAggregate",
+            "EphemeralValue",
+            "Topic",
+            "ChannelRead",
+        ):
+            return f"<{class_name}>"
+
+        # Tool results
+        if class_name == "ToolMessage" or (class_name == "ToolCall"):
+            return {
+                "type": class_name,
+                "name": getattr(obj, "name", None),
+                "content": str(getattr(obj, "content", ""))[:500],
+            }
+
     if current_depth > max_depth:
         return f"<{type(obj).__name__}:max_depth_reached>"
 
@@ -30,7 +95,7 @@ def _serialize_object(obj, max_depth=3, current_depth=0):
             return [
                 _serialize_object(item, max_depth, current_depth + 1)
                 for item in obj[:10]
-            ]  # Limit to first 10 items
+            ]
         except Exception:
             return f"<{type(obj).__name__}:length={len(obj)}>"
 
@@ -38,7 +103,7 @@ def _serialize_object(obj, max_depth=3, current_depth=0):
     if isinstance(obj, dict):
         try:
             serialized = {}
-            for key, value in list(obj.items())[:10]:  # Limit to first 10 items
+            for key, value in list(obj.items())[:10]:
                 serialized[str(key)] = _serialize_object(
                     value, max_depth, current_depth + 1
                 )
