@@ -76,5 +76,15 @@ class KVStore(object):
         with self._lock:
             return self.store.get(key)
 
+    def delete(self, key: str):
+        """Delete a key from the store. Returns True if key existed."""
+        with self._lock:
+            return self.store.pop(key, None) is not None
+
+    def get_keys_by_prefix(self, prefix: str) -> list:
+        """Return all keys that start with the given prefix."""
+        with self._lock:
+            return [k for k in self.store if k.startswith(prefix)]
+
 
 kv_store = KVStore()

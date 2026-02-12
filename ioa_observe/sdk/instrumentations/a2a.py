@@ -14,6 +14,7 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
+from ioa_observe.sdk.tracing.context_utils import _get_agent_linking_info
 
 _instruments = ("a2a-sdk >= 0.3.0",)
 _global_tracer = None
@@ -37,6 +38,9 @@ def _inject_observe_metadata(request, span_name: str):
             if session_id:
                 kv_store.set(f"execution.{traceparent}", session_id)
 
+    # Get agent linking info for cross-process propagation (agent handoff event)
+    agent_linking_info = _get_agent_linking_info(session_id) if session_id else {}
+
     # Ensure metadata dict exists - handle both request.params.metadata and request.metadata
     try:
         if hasattr(request, "params") and hasattr(request.params, "metadata"):
@@ -58,6 +62,24 @@ def _inject_observe_metadata(request, span_name: str):
     if session_id:
         observe_meta["session_id"] = session_id
         baggage.set_baggage(f"execution.{traceparent}", session_id)
+
+    # Add agent linking info for cross-process span linking
+    if agent_linking_info.get("last_agent_span_id"):
+        observe_meta["last_agent_span_id"] = agent_linking_info["last_agent_span_id"]
+    if agent_linking_info.get("last_agent_trace_id"):
+        observe_meta["last_agent_trace_id"] = agent_linking_info["last_agent_trace_id"]
+    if agent_linking_info.get("last_agent_name"):
+        observe_meta["last_agent_name"] = agent_linking_info["last_agent_name"]
+    if agent_linking_info.get("agent_sequence"):
+        observe_meta["agent_sequence"] = agent_linking_info["agent_sequence"]
+
+    # Add fork context for cross-process fork detection
+    if agent_linking_info.get("fork_id"):
+        observe_meta["fork_id"] = agent_linking_info["fork_id"]
+    if agent_linking_info.get("fork_parent_seq"):
+        observe_meta["fork_parent_seq"] = agent_linking_info["fork_parent_seq"]
+    if agent_linking_info.get("fork_branch_index"):
+        observe_meta["fork_branch_index"] = agent_linking_info["fork_branch_index"]
 
     metadata["observe"] = observe_meta
 
@@ -207,12 +229,37 @@ class A2AInstrumentor(BaseInstrumentor):
             with _global_tracer.start_as_current_span("a2a.send_message"):
                 traceparent = get_current_traceparent()
                 session_id = None
+                last_agent_span_id = None
+                last_agent_trace_id = None
+                last_agent_name = None
+                agent_sequence = None
                 if traceparent:
                     session_id = kv_store.get(f"execution.{traceparent}")
                     if not session_id:
                         session_id = get_value("session.id")
                         if session_id:
                             kv_store.set(f"execution.{traceparent}", session_id)
+                    # Get agent linking info for cross-process propagation
+                    if session_id:
+                        with _kv_lock:
+                            last_agent_span_id = (
+                                kv_store.get(f"session.{session_id}.last_agent_span_id")
+                                or None
+                            )
+                            last_agent_trace_id = (
+                                kv_store.get(
+                                    f"session.{session_id}.last_agent_trace_id"
+                                )
+                                or None
+                            )
+                            last_agent_name = (
+                                kv_store.get(f"session.{session_id}.last_agent_name")
+                                or None
+                            )
+                            agent_sequence = (
+                                kv_store.get(f"session.{session_id}.agent_sequence")
+                                or None
+                            )
 
                 # Ensure metadata dict exists
                 try:
@@ -232,6 +279,26 @@ class A2AInstrumentor(BaseInstrumentor):
                 if session_id:
                     observe_meta["session_id"] = session_id
                     baggage.set_baggage(f"execution.{traceparent}", session_id)
+
+                # Add agent linking info for cross-process span linking
+                if last_agent_span_id:
+                    observe_meta["last_agent_span_id"] = last_agent_span_id
+                if last_agent_trace_id:
+                    observe_meta["last_agent_trace_id"] = last_agent_trace_id
+                if last_agent_name:
+                    observe_meta["last_agent_name"] = last_agent_name
+                if agent_sequence:
+                    observe_meta["agent_sequence"] = agent_sequence
+
+                # Add fork context for cross-process fork detection
+                if session_id:
+                    fork_linking_info = _get_agent_linking_info(session_id)
+                    if fork_linking_info.get("fork_id"):
+                        observe_meta["fork_id"] = fork_linking_info["fork_id"]
+                    if fork_linking_info.get("fork_parent_seq"):
+                        observe_meta["fork_parent_seq"] = fork_linking_info["fork_parent_seq"]
+                    if fork_linking_info.get("fork_branch_index"):
+                        observe_meta["fork_branch_index"] = fork_linking_info["fork_branch_index"]
 
                 metadata["observe"] = observe_meta
 
@@ -266,12 +333,40 @@ class A2AInstrumentor(BaseInstrumentor):
                 with _global_tracer.start_as_current_span("a2a.broadcast_message"):
                     traceparent = get_current_traceparent()
                     session_id = None
+                    last_agent_span_id = None
+                    last_agent_trace_id = None
+                    last_agent_name = None
+                    agent_sequence = None
                     if traceparent:
                         session_id = kv_store.get(f"execution.{traceparent}")
                         if not session_id:
                             session_id = get_value("session.id")
                             if session_id:
                                 kv_store.set(f"execution.{traceparent}", session_id)
+                        if session_id:
+                            with _kv_lock:
+                                last_agent_span_id = (
+                                    kv_store.get(
+                                        f"session.{session_id}.last_agent_span_id"
+                                    )
+                                    or None
+                                )
+                                last_agent_trace_id = (
+                                    kv_store.get(
+                                        f"session.{session_id}.last_agent_trace_id"
+                                    )
+                                    or None
+                                )
+                                last_agent_name = (
+                                    kv_store.get(
+                                        f"session.{session_id}.last_agent_name"
+                                    )
+                                    or None
+                                )
+                                agent_sequence = (
+                                    kv_store.get(f"session.{session_id}.agent_sequence")
+                                    or None
+                                )
 
                     # Ensure metadata dict exists
                     try:
@@ -281,6 +376,26 @@ class A2AInstrumentor(BaseInstrumentor):
                     metadata = md if isinstance(md, dict) else {}
 
                     observe_meta = dict(metadata.get("observe", {}))
+
+                    # Add agent linking info for cross-process span linking
+                    if last_agent_span_id:
+                        observe_meta["last_agent_span_id"] = last_agent_span_id
+                    if last_agent_trace_id:
+                        observe_meta["last_agent_trace_id"] = last_agent_trace_id
+                    if last_agent_name:
+                        observe_meta["last_agent_name"] = last_agent_name
+                    if agent_sequence:
+                        observe_meta["agent_sequence"] = agent_sequence
+
+                    # Add fork context for cross-process fork detection
+                    if session_id:
+                        fork_linking_info = _get_agent_linking_info(session_id)
+                        if fork_linking_info.get("fork_id"):
+                            observe_meta["fork_id"] = fork_linking_info["fork_id"]
+                        if fork_linking_info.get("fork_parent_seq"):
+                            observe_meta["fork_parent_seq"] = fork_linking_info["fork_parent_seq"]
+                        if fork_linking_info.get("fork_branch_index"):
+                            observe_meta["fork_branch_index"] = fork_linking_info["fork_branch_index"]
 
                     # Inject W3C trace context + baggage into observe_meta
                     TraceContextTextMapPropagator().inject(carrier=observe_meta)
@@ -353,6 +468,53 @@ class A2AInstrumentor(BaseInstrumentor):
                     set_session_id(session_id, traceparent=carrier.get("traceparent"))
                     kv_store.set(f"execution.{carrier.get('traceparent')}", session_id)
 
+                    # Restore agent linking info for cross-process span linking (agent handoff event)
+                    with _kv_lock:
+                        last_agent_span_id = observe_meta.get("last_agent_span_id")
+                        last_agent_trace_id = observe_meta.get("last_agent_trace_id")
+                        last_agent_name = observe_meta.get("last_agent_name")
+                        agent_sequence = observe_meta.get("agent_sequence")
+
+                        if last_agent_span_id:
+                            kv_store.set(
+                                f"session.{session_id}.last_agent_span_id",
+                                last_agent_span_id,
+                            )
+                        if last_agent_trace_id:
+                            kv_store.set(
+                                f"session.{session_id}.last_agent_trace_id",
+                                last_agent_trace_id,
+                            )
+                        if last_agent_name:
+                            kv_store.set(
+                                f"session.{session_id}.last_agent_name", last_agent_name
+                            )
+                        if agent_sequence:
+                            kv_store.set(
+                                f"session.{session_id}.agent_sequence", agent_sequence
+                            )
+
+                        # Restore fork context for cross-process fork detection
+                        fork_id = observe_meta.get("fork_id")
+                        fork_parent_seq = observe_meta.get("fork_parent_seq")
+                        fork_branch_index = observe_meta.get("fork_branch_index")
+                        if fork_id and agent_sequence:
+                            seq = int(agent_sequence)
+                            kv_store.set(
+                                f"session.{session_id}.agents.{seq}.fork_id",
+                                fork_id,
+                            )
+                            if fork_parent_seq:
+                                kv_store.set(
+                                    f"session.{session_id}.agents.{seq}.parent_seq",
+                                    fork_parent_seq,
+                                )
+                            if fork_branch_index:
+                                kv_store.set(
+                                    f"session.{session_id}.agents.{seq}.branch_index",
+                                    fork_branch_index,
+                                )
+
             try:
                 return await original_server_on_message_send(self, params, context)
             finally:
@@ -409,6 +571,57 @@ class A2AInstrumentor(BaseInstrumentor):
                             f"execution.{carrier.get('traceparent')}", session_id
                         )
 
+                        # Restore agent linking info for cross-process span linking (agent handoff event)
+                        with _kv_lock:
+                            last_agent_span_id = observe_meta.get("last_agent_span_id")
+                            last_agent_trace_id = observe_meta.get(
+                                "last_agent_trace_id"
+                            )
+                            last_agent_name = observe_meta.get("last_agent_name")
+                            agent_sequence = observe_meta.get("agent_sequence")
+
+                            if last_agent_span_id:
+                                kv_store.set(
+                                    f"session.{session_id}.last_agent_span_id",
+                                    last_agent_span_id,
+                                )
+                            if last_agent_trace_id:
+                                kv_store.set(
+                                    f"session.{session_id}.last_agent_trace_id",
+                                    last_agent_trace_id,
+                                )
+                            if last_agent_name:
+                                kv_store.set(
+                                    f"session.{session_id}.last_agent_name",
+                                    last_agent_name,
+                                )
+                            if agent_sequence:
+                                kv_store.set(
+                                    f"session.{session_id}.agent_sequence",
+                                    agent_sequence,
+                                )
+
+                            # Restore fork context for cross-process fork detection
+                            fork_id = observe_meta.get("fork_id")
+                            fork_parent_seq = observe_meta.get("fork_parent_seq")
+                            fork_branch_index = observe_meta.get("fork_branch_index")
+                            if fork_id and agent_sequence:
+                                seq = int(agent_sequence)
+                                kv_store.set(
+                                    f"session.{session_id}.agents.{seq}.fork_id",
+                                    fork_id,
+                                )
+                                if fork_parent_seq:
+                                    kv_store.set(
+                                        f"session.{session_id}.agents.{seq}.parent_seq",
+                                        fork_parent_seq,
+                                    )
+                                if fork_branch_index:
+                                    kv_store.set(
+                                        f"session.{session_id}.agents.{seq}.branch_index",
+                                        fork_branch_index,
+                                    )
+
                 try:
                     # This is an async generator
                     async for event in original_on_message_send_stream(
@@ -451,12 +664,31 @@ class A2AInstrumentor(BaseInstrumentor):
             with _global_tracer.start_as_current_span("slima2a.send_message"):
                 traceparent = get_current_traceparent()
                 session_id = None
+                last_agent_span_id = None
+                last_agent_trace_id = None
+                last_agent_name = None
+                agent_sequence = None
                 if traceparent:
                     session_id = kv_store.get(f"execution.{traceparent}")
                     if not session_id:
                         session_id = get_value("session.id")
                         if session_id:
                             kv_store.set(f"execution.{traceparent}", session_id)
+                    # Get agent linking info for cross-process propagation
+                    if session_id:
+                        with _kv_lock:
+                            last_agent_span_id = kv_store.get(
+                                f"session.{session_id}.last_agent_span_id"
+                            )
+                            last_agent_trace_id = kv_store.get(
+                                f"session.{session_id}.last_agent_trace_id"
+                            )
+                            last_agent_name = kv_store.get(
+                                f"session.{session_id}.last_agent_name"
+                            )
+                            agent_sequence = kv_store.get(
+                                f"session.{session_id}.agent_sequence"
+                            )
 
                 # Ensure metadata dict exists
                 try:
@@ -466,6 +698,28 @@ class A2AInstrumentor(BaseInstrumentor):
                 metadata = md if isinstance(md, dict) else {}
 
                 observe_meta = dict(metadata.get("observe", {}))
+
+                # Add agent linking info for cross-process span linking
+                if last_agent_span_id:
+                    observe_meta["last_agent_span_id"] = last_agent_span_id
+                if last_agent_trace_id:
+                    observe_meta["last_agent_trace_id"] = last_agent_trace_id
+                if last_agent_name:
+                    observe_meta["last_agent_name"] = last_agent_name
+                if agent_sequence:
+                    observe_meta["agent_sequence"] = agent_sequence
+
+                # Add fork context for cross-process fork detection
+                if session_id:
+                    fork_linking_info = _get_agent_linking_info(session_id)
+                    if fork_linking_info.get("fork_id"):
+                        observe_meta["fork_id"] = fork_linking_info["fork_id"]
+                    if fork_linking_info.get("fork_parent_seq"):
+                        observe_meta["fork_parent_seq"] = fork_linking_info["fork_parent_seq"]
+                    if fork_linking_info.get("fork_branch_index"):
+                        observe_meta["fork_branch_index"] = fork_linking_info["fork_branch_index"]
+
+                metadata["observe"] = observe_meta
 
                 # Inject W3C trace context + baggage into observe_meta
                 TraceContextTextMapPropagator().inject(carrier=observe_meta)
@@ -509,12 +763,31 @@ class A2AInstrumentor(BaseInstrumentor):
             with _global_tracer.start_as_current_span("slima2a.send_message_streaming"):
                 traceparent = get_current_traceparent()
                 session_id = None
+                last_agent_span_id = None
+                last_agent_trace_id = None
+                last_agent_name = None
+                agent_sequence = None
                 if traceparent:
                     session_id = kv_store.get(f"execution.{traceparent}")
                     if not session_id:
                         session_id = get_value("session.id")
                         if session_id:
                             kv_store.set(f"execution.{traceparent}", session_id)
+                    # Get agent linking info for cross-process propagation
+                    if session_id:
+                        with _kv_lock:
+                            last_agent_span_id = kv_store.get(
+                                f"session.{session_id}.last_agent_span_id"
+                            )
+                            last_agent_trace_id = kv_store.get(
+                                f"session.{session_id}.last_agent_trace_id"
+                            )
+                            last_agent_name = kv_store.get(
+                                f"session.{session_id}.last_agent_name"
+                            )
+                            agent_sequence = kv_store.get(
+                                f"session.{session_id}.agent_sequence"
+                            )
 
                 # Ensure metadata dict exists
                 try:
@@ -522,8 +795,29 @@ class A2AInstrumentor(BaseInstrumentor):
                 except AttributeError:
                     md = None
                 metadata = md if isinstance(md, dict) else {}
-
                 observe_meta = dict(metadata.get("observe", {}))
+
+                # Add agent linking info for cross-process span linking
+                if last_agent_span_id:
+                    observe_meta["last_agent_span_id"] = last_agent_span_id
+                if last_agent_trace_id:
+                    observe_meta["last_agent_trace_id"] = last_agent_trace_id
+                if last_agent_name:
+                    observe_meta["last_agent_name"] = last_agent_name
+                if agent_sequence:
+                    observe_meta["agent_sequence"] = agent_sequence
+
+                # Add fork context for cross-process fork detection
+                if session_id:
+                    fork_linking_info = _get_agent_linking_info(session_id)
+                    if fork_linking_info.get("fork_id"):
+                        observe_meta["fork_id"] = fork_linking_info["fork_id"]
+                    if fork_linking_info.get("fork_parent_seq"):
+                        observe_meta["fork_parent_seq"] = fork_linking_info["fork_parent_seq"]
+                    if fork_linking_info.get("fork_branch_index"):
+                        observe_meta["fork_branch_index"] = fork_linking_info["fork_branch_index"]
+
+                metadata["observe"] = observe_meta
 
                 # Inject W3C trace context + baggage into observe_meta
                 TraceContextTextMapPropagator().inject(carrier=observe_meta)
