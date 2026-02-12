@@ -360,6 +360,23 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             App.listen_for_session = wrapped_listen_for_session
 
+        # listen_for_session_async
+        if hasattr(App, "listen_for_session_async"):
+            original_listen_for_session_async = App.listen_for_session_async
+
+            @functools.wraps(original_listen_for_session_async)
+            async def wrapped_listen_for_session_async(self, *args, **kwargs):
+                if _global_tracer:
+                    with _global_tracer.start_as_current_span(
+                        "slim.app.listen_for_session"
+                    ):
+                        return await original_listen_for_session_async(
+                            self, *args, **kwargs
+                        )
+                return await original_listen_for_session_async(self, *args, **kwargs)
+
+            App.listen_for_session_async = wrapped_listen_for_session_async
+
     def _instrument_sessions(self, slim_bindings):
         """Instrument session classes for v1.x."""
         session_classes = set()
@@ -386,6 +403,13 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             if hasattr(session_class, "publish_to_async"):
                 self._wrap_publish(session_class, "publish_to_async", msg_idx=1)
+
+            # Also instrument the _and_wait variants
+            if hasattr(session_class, "publish_and_wait_async"):
+                self._wrap_publish(session_class, "publish_and_wait_async")
+
+            if hasattr(session_class, "publish_to_and_wait_async"):
+                self._wrap_publish(session_class, "publish_to_and_wait_async", msg_idx=1)
 
     def _wrap_get_message(self, session_class):
         """Wrap get_message_async to extract tracing context."""
@@ -576,11 +600,18 @@ class SLIMInstrumentor(BaseInstrumentor):
                     "subscribe_async",
                     "set_route_async",
                     "listen_for_session",
+                    "listen_for_session_async",
                 ],
             )
 
         # Restore session methods
-        session_methods = ["publish_async", "publish_to_async", "get_message_async"]
+        session_methods = [
+            "publish_async",
+            "publish_to_async",
+            "publish_and_wait_async",
+            "publish_to_and_wait_async",
+            "get_message_async",
+        ]
         for name in dir(slim_bindings):
             cls = getattr(slim_bindings, name)
             if isinstance(cls, type):
