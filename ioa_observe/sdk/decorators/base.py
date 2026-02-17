@@ -20,7 +20,6 @@ from langgraph.graph.state import CompiledStateGraph
 from opentelemetry import trace
 from opentelemetry import context as context_api
 from opentelemetry.context import get_value, attach, set_value
-from opentelemetry.trace import Link, SpanContext, TraceFlags
 from pydantic_core import PydanticSerializationError
 from typing_extensions import ParamSpec
 

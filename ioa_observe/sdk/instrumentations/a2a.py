@@ -296,9 +296,13 @@ class A2AInstrumentor(BaseInstrumentor):
                     if fork_linking_info.get("fork_id"):
                         observe_meta["fork_id"] = fork_linking_info["fork_id"]
                     if fork_linking_info.get("fork_parent_seq"):
-                        observe_meta["fork_parent_seq"] = fork_linking_info["fork_parent_seq"]
+                        observe_meta["fork_parent_seq"] = fork_linking_info[
+                            "fork_parent_seq"
+                        ]
                     if fork_linking_info.get("fork_branch_index"):
-                        observe_meta["fork_branch_index"] = fork_linking_info["fork_branch_index"]
+                        observe_meta["fork_branch_index"] = fork_linking_info[
+                            "fork_branch_index"
+                        ]
 
                 metadata["observe"] = observe_meta
 
@@ -393,9 +397,13 @@ class A2AInstrumentor(BaseInstrumentor):
                         if fork_linking_info.get("fork_id"):
                             observe_meta["fork_id"] = fork_linking_info["fork_id"]
                         if fork_linking_info.get("fork_parent_seq"):
-                            observe_meta["fork_parent_seq"] = fork_linking_info["fork_parent_seq"]
+                            observe_meta["fork_parent_seq"] = fork_linking_info[
+                                "fork_parent_seq"
+                            ]
                         if fork_linking_info.get("fork_branch_index"):
-                            observe_meta["fork_branch_index"] = fork_linking_info["fork_branch_index"]
+                            observe_meta["fork_branch_index"] = fork_linking_info[
+                                "fork_branch_index"
+                            ]
 
                     # Inject W3C trace context + baggage into observe_meta
                     TraceContextTextMapPropagator().inject(carrier=observe_meta)
@@ -715,9 +723,13 @@ class A2AInstrumentor(BaseInstrumentor):
                     if fork_linking_info.get("fork_id"):
                         observe_meta["fork_id"] = fork_linking_info["fork_id"]
                     if fork_linking_info.get("fork_parent_seq"):
-                        observe_meta["fork_parent_seq"] = fork_linking_info["fork_parent_seq"]
+                        observe_meta["fork_parent_seq"] = fork_linking_info[
+                            "fork_parent_seq"
+                        ]
                     if fork_linking_info.get("fork_branch_index"):
-                        observe_meta["fork_branch_index"] = fork_linking_info["fork_branch_index"]
+                        observe_meta["fork_branch_index"] = fork_linking_info[
+                            "fork_branch_index"
+                        ]
 
                 metadata["observe"] = observe_meta
 
@@ -813,9 +825,13 @@ class A2AInstrumentor(BaseInstrumentor):
                     if fork_linking_info.get("fork_id"):
                         observe_meta["fork_id"] = fork_linking_info["fork_id"]
                     if fork_linking_info.get("fork_parent_seq"):
-                        observe_meta["fork_parent_seq"] = fork_linking_info["fork_parent_seq"]
+                        observe_meta["fork_parent_seq"] = fork_linking_info[
+                            "fork_parent_seq"
+                        ]
                     if fork_linking_info.get("fork_branch_index"):
-                        observe_meta["fork_branch_index"] = fork_linking_info["fork_branch_index"]
+                        observe_meta["fork_branch_index"] = fork_linking_info[
+                            "fork_branch_index"
+                        ]
 
                 metadata["observe"] = observe_meta
 
