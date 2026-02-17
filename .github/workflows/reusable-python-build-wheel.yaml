@@ -33,7 +33,7 @@ jobs:
             target: aarch64
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
       - name: Setup Python
         uses: ./.github/actions/setup-python
         with:
