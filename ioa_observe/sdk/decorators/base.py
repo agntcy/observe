@@ -20,11 +20,24 @@ from langgraph.graph.state import CompiledStateGraph
 from opentelemetry import trace
 from opentelemetry import context as context_api
 from opentelemetry.context import get_value, attach, set_value
-from opentelemetry.trace import Link, SpanContext, TraceFlags
 from pydantic_core import PydanticSerializationError
 from typing_extensions import ParamSpec
 
 from ioa_observe.sdk.client import kv_store
+from ioa_observe.sdk.decorators.fork_join import (
+    detect_fork_on_agent_start,
+    detect_join_and_build_links,
+    detect_tool_fork_on_start,
+    find_parent_agent_seq,
+    get_agent_record,
+    make_single_link,
+    mark_agent_ended,
+    mark_tool_ended_for_fork,
+    register_active_span,
+    unregister_active_span,
+    annotate_fork_branch,
+    annotate_join,
+)
 from ioa_observe.sdk.decorators.util import determine_workflow_type, _serialize_object
 from ioa_observe.sdk.metrics.agents.availability import agent_availability
 from ioa_observe.sdk.metrics.agents.recovery_tracker import agent_recovery_tracker
@@ -94,21 +107,37 @@ def _get_session_span_key(session_id: str, key_type: str) -> str:
     return f"session.{session_id}.{key_type}"
 
 
-def _store_agent_span_info(session_id: str, span, entity_name: str) -> None:
-    """Store current agent's span info in kv_store for next agent to link to."""
+def _store_agent_span_info(
+    session_id: str, span, entity_name: str, parent_seq: int = 0
+) -> tuple:
+    """Store current agent's span info in kv_store for next agent to link to.
+
+    Also writes a per-sequence agent record and runs implicit fork detection.
+
+    Args:
+        session_id: Current session ID.
+        span: The agent's OTel span.
+        entity_name: Agent entity name.
+        parent_seq: Sequence number of the agent that preceded this one (0 if first).
+
+    Returns:
+        (new_seq, fork_id, branch_index) — fork_id is "" if no fork detected.
+    """
     if not session_id:
-        return
+        return 0, "", -1
 
     span_context = span.get_span_context()
+    span_id_hex = format(span_context.span_id, "016x")
+    trace_id_hex = format(span_context.trace_id, "032x")
 
-    # Store span info for linking
+    # Update the global "last agent" cursor (backwards compat)
     kv_store.set(
         _get_session_span_key(session_id, "last_agent_span_id"),
-        format(span_context.span_id, "016x"),
+        span_id_hex,
     )
     kv_store.set(
         _get_session_span_key(session_id, "last_agent_trace_id"),
-        format(span_context.trace_id, "032x"),
+        trace_id_hex,
     )
     kv_store.set(_get_session_span_key(session_id, "last_agent_name"), entity_name)
 
@@ -118,43 +147,82 @@ def _store_agent_span_info(session_id: str, span, entity_name: str) -> None:
     new_seq = (int(current_seq) + 1) if current_seq else 1
     kv_store.set(sequence_key, str(new_seq))
 
+    # Run implicit fork detection and write per-sequence record
+    fork_id, branch_index = detect_fork_on_agent_start(
+        session_id=session_id,
+        new_sequence=new_seq,
+        parent_seq=parent_seq,
+        span_id=span_id_hex,
+        trace_id=trace_id_hex,
+        entity_name=entity_name,
+    )
+
+    return new_seq, fork_id, branch_index
+
 
 def _get_previous_agent_link(session_id: str) -> tuple:
-    """Get link to previous agent's span from kv_store.
+    """Get link(s) to previous agent span(s) from kv_store.
+
+    Uses the OTel span hierarchy to find the true parent agent for fork/join
+    detection.  When parallel agents (fan-out) are spawned inside a parent
+    agent's scope, they all share the same OTel parent span.  By looking up
+    which agent record owns that span ID we get the correct parent_seq,
+    enabling fork sibling detection.
 
     Returns:
-        tuple: (Link object or None, previous_agent_name or None, sequence_number or 0)
+        tuple: (links_list, previous_agent_name, sequence, join_fork_id, true_parent_seq)
     """
     if not session_id:
-        return None, None, 0
+        return [], None, 0, None, 0
 
-    prev_span_id = kv_store.get(_get_session_span_key(session_id, "last_agent_span_id"))
-    prev_trace_id = kv_store.get(
-        _get_session_span_key(session_id, "last_agent_trace_id")
+    sequence_str = kv_store.get(_get_session_span_key(session_id, "agent_sequence"))
+    sequence = int(sequence_str) if sequence_str else 0
+
+    # -----------------------------------------------------------------
+    # Step 1: Check if the current OTel context has a parent span that
+    # belongs to a known agent.  This correctly identifies the
+    # dispatching agent in fan-out scenarios.
+    # -----------------------------------------------------------------
+    true_parent_seq = 0
+    current_span = trace.get_current_span()
+    if current_span and hasattr(current_span, "get_span_context"):
+        span_ctx = current_span.get_span_context()
+        if span_ctx and span_ctx.is_valid:
+            parent_span_id_hex = format(span_ctx.span_id, "016x")
+            true_parent_seq = find_parent_agent_seq(
+                session_id, parent_span_id_hex, sequence + 1
+            )
+
+    if true_parent_seq > 0:
+        # Found a registered agent as the OTel parent -> link to it.
+        parent_rec = get_agent_record(session_id, true_parent_seq)
+        if parent_rec and parent_rec["span_id"] and parent_rec["trace_id"]:
+            links = make_single_link(
+                parent_rec["span_id"],
+                parent_rec["trace_id"],
+                parent_rec["name"],
+                "agent_handoff",
+            )
+            return links, parent_rec["name"], sequence, None, true_parent_seq
+
+    # -----------------------------------------------------------------
+    # Step 2: No agent parent in OTel context (e.g., new trace, root
+    # agent, or join after fork completed).  Use join detection which
+    # reads the "last agent" cursor.
+    # -----------------------------------------------------------------
+    links, join_fork_id, prev_agent_name = detect_join_and_build_links(
+        session_id,
+        sequence + 1,  # +1 because we haven't incremented yet
     )
-    prev_agent_name = kv_store.get(_get_session_span_key(session_id, "last_agent_name"))
-    sequence = kv_store.get(_get_session_span_key(session_id, "agent_sequence"))
 
-    if prev_span_id and prev_trace_id:
-        try:
-            link_context = SpanContext(
-                trace_id=int(prev_trace_id, 16),
-                span_id=int(prev_span_id, 16),
-                is_remote=False,
-                trace_flags=TraceFlags(TraceFlags.SAMPLED),
-            )
-            link = Link(
-                context=link_context,
-                attributes={
-                    "link.type": "agent_handoff",
-                    "link.from_agent": prev_agent_name or "unknown",
-                },
-            )
-            return link, prev_agent_name, int(sequence) if sequence else 0
-        except (ValueError, TypeError):
-            pass
+    # If join detection didn't find a previous name, read from cursor
+    if prev_agent_name is None and not join_fork_id:
+        prev_agent_name = kv_store.get(
+            _get_session_span_key(session_id, "last_agent_name")
+        )
 
-    return None, prev_agent_name, int(sequence) if sequence else 0
+    # For sequential / join case, the "parent" is the last sequential agent
+    return links, prev_agent_name, sequence, join_fork_id, sequence
 
 
 def _setup_span(
@@ -188,13 +256,29 @@ def _setup_span(
     links = []
     previous_agent_name = None
     agent_sequence = 0
+    join_fork_id = None
+    true_parent_seq = 0
 
     if tlp_span_kind == ObserveSpanKindValues.AGENT and session_id:
-        prev_link, previous_agent_name, agent_sequence = _get_previous_agent_link(
-            session_id
-        )
-        if prev_link:
-            links.append(prev_link)
+        (
+            prev_links,
+            previous_agent_name,
+            agent_sequence,
+            join_fork_id,
+            true_parent_seq,
+        ) = _get_previous_agent_link(session_id)
+        links.extend(prev_links)
+
+    # Capture the current (parent) span BEFORE creating the new span.
+    # This is critical for tool-level fork detection: once we create and
+    # attach the new span, get_current_span() returns the NEW span.
+    _pre_parent_span_hex = ""
+    if tlp_span_kind == ObserveSpanKindValues.TOOL and session_id:
+        _pre_parent = trace.get_current_span()
+        if _pre_parent and hasattr(_pre_parent, "get_span_context"):
+            _p_ctx = _pre_parent.get_span_context()
+            if _p_ctx and _p_ctx.is_valid:
+                _pre_parent_span_hex = format(_p_ctx.span_id, "016x")
 
     with get_tracer() as tracer:
         # Create span with links to previous agent
@@ -261,9 +345,29 @@ def _setup_span(
             if previous_agent_name:
                 span.set_attribute("ioa_observe.agent.previous", previous_agent_name)
 
-            # Store this agent's span info for the next agent to link to
+            # Store this agent's span info and run implicit fork detection
+            fork_id = ""
+            branch_index = -1
             if session_id:
-                _store_agent_span_info(session_id, span, entity_name)
+                new_seq, fork_id, branch_index = _store_agent_span_info(
+                    session_id, span, entity_name, parent_seq=true_parent_seq
+                )
+                # Store sequence on span object for _cleanup_span to use
+                span._ioa_session_id = session_id
+                span._ioa_agent_sequence = new_seq
+                # Register live span ref for retroactive fork annotation
+                register_active_span(session_id, new_seq, span)
+
+            # Annotate fork attributes if this agent is a fork branch
+            if fork_id:
+                parent_name = previous_agent_name or "unknown"
+                annotate_fork_branch(
+                    span, fork_id, branch_index, true_parent_seq, parent_name
+                )
+
+            # Annotate join attributes if this agent is a join point
+            if join_fork_id:
+                annotate_join(span, join_fork_id, len(links))
 
         if tlp_span_kind in [
             ObserveSpanKindValues.TASK,
@@ -272,6 +376,40 @@ def _setup_span(
         ]:
             entity_path = get_chained_entity_path(entity_name)
             set_entity_path(entity_path)
+
+        # --- Tool-level fork detection (parallel tools within one agent) ---
+        if (
+            tlp_span_kind == ObserveSpanKindValues.TOOL
+            and session_id
+            and _pre_parent_span_hex
+        ):
+            parent_hex = _pre_parent_span_hex
+            # The workflow_name in context is the parent agent's name
+            _parent_agent_name = str(get_value("workflow_name") or "unknown")
+            s_ctx = span.get_span_context()
+            t_sid = format(s_ctx.span_id, "016x")
+            t_tid = format(s_ctx.trace_id, "032x")
+            tool_seq, tool_fork_id, tool_branch_idx = detect_tool_fork_on_start(
+                session_id,
+                parent_hex,
+                span,
+                entity_name,
+                t_sid,
+                t_tid,
+                parent_agent_name=_parent_agent_name,
+            )
+            # Stash metadata on span for cleanup
+            span._ioa_session_id = session_id
+            span._ioa_tool_parent_hex = parent_hex
+            span._ioa_tool_seq = tool_seq
+            if tool_fork_id:
+                annotate_fork_branch(
+                    span,
+                    tool_fork_id,
+                    tool_branch_idx,
+                    0,
+                    _parent_agent_name,
+                )
 
         if tlp_span_kind == "graph":
             span.set_attribute(OBSERVE_SPAN_KIND, tlp_span_kind)
@@ -404,19 +542,20 @@ def _handle_span_output(span, tlp_span_kind, res, cls=None):
 def _cleanup_span(span, ctx_token):
     """End the span process and detach the context token"""
 
-    # Calculate agent chain completion time before ending span
-    # span_kind = span.attributes.get(OBSERVE_SPAN_KIND)
-    # if span_kind == ObserveSpanKindValues.AGENT.value:
-    #     start_time = span.attributes.get("agent_chain_start_time")
-    #     if start_time is not None:
-    #         import time
-    #
-    #         # completion_time = time.time() - start_time
-    #
-    #         # Emit the metric
-    #         # TracerWrapper().agent_chain_completion_time_histogram.record(
-    #         #     completion_time, attributes=span.attributes
-    #         # )
+    # Mark agent as no longer in-flight in the per-sequence registry
+    # so that fork/join detection works correctly.
+    session_id = getattr(span, "_ioa_session_id", None)
+    agent_seq = getattr(span, "_ioa_agent_sequence", None)
+    if session_id and agent_seq:
+        mark_agent_ended(session_id, agent_seq)
+        unregister_active_span(session_id, agent_seq)
+
+    # Mark tool as no longer in-flight for tool-level fork detection
+    tool_parent_hex = getattr(span, "_ioa_tool_parent_hex", None)
+    tool_seq = getattr(span, "_ioa_tool_seq", None)
+    if session_id and tool_parent_hex and tool_seq:
+        mark_tool_ended_for_fork(session_id, tool_parent_hex, tool_seq)
+
     span.end()
     context_api.detach(ctx_token)
 
