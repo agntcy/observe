@@ -20,6 +20,7 @@ from langgraph.graph.state import CompiledStateGraph
 from opentelemetry import trace
 from opentelemetry import context as context_api
 from opentelemetry.context import get_value, attach, set_value
+from opentelemetry.trace import Link, SpanContext, TraceFlags
 from pydantic_core import PydanticSerializationError
 from typing_extensions import ParamSpec
 
@@ -534,9 +535,6 @@ def _handle_span_output(span, tlp_span_kind, res, cls=None):
                     OBSERVE_ENTITY_OUTPUT,
                     json_output,
                 )
-                TracerWrapper().span_processor_on_ending(
-                    span
-                )  # record the response latency
     except Exception as e:
         print(f"Warning: Failed to serialize output for span: {e}")
         Telemetry().log_exception(e)

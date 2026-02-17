@@ -207,6 +207,7 @@ class TracerWrapper(object):
 
             obj.__spans_processor.on_start = obj._span_processor_on_start
             obj.__spans_processor.on_end = obj.span_processor_on_ending
+            setattr(obj.__spans_processor, OBSERVE_PROCESSOR_MARKER, True)
             obj.__tracer_provider.add_span_processor(obj.__spans_processor)
             # Custom metric, for example
             meter = get_meter("observe")
@@ -321,10 +322,18 @@ class TracerWrapper(object):
                         expired[session_id] = (last_ts, trace_id)
                         del self._session_last_activity[session_id]
 
-            # Periodic cleanup of processed spans to prevent unbounded memory growth
+            # Periodic cleanup of processed spans to prevent unbounded memory growth.
+            # We evict the oldest half instead of clearing entirely so that
+            # recently-processed span IDs are still protected by the deduplication logic.
             with self._processed_spans_lock:
                 if len(self._processed_spans) > MAX_PROCESSED_SPANS_SIZE:
-                    self._processed_spans.clear()
+                    evict_count = len(self._processed_spans) // 2
+                    to_remove = set()
+                    for i, span_id in enumerate(self._processed_spans):
+                        if i >= evict_count:
+                            break
+                        to_remove.add(span_id)
+                    self._processed_spans -= to_remove
 
             # Periodic cleanup of ended sessions to prevent unbounded memory growth
             with self._ended_sessions_lock:
@@ -940,6 +949,24 @@ def init_spans_exporter(api_endpoint: str, headers: Dict[str, str]) -> SpanExpor
         )
 
 
+# Marker attribute set on span processors added by the Observe SDK so that
+# we can detect them when reusing an externally-created TracerProvider and
+# avoid registering a duplicate processor.
+OBSERVE_PROCESSOR_MARKER = "ioa_observe_processor"
+
+
+def _provider_has_observe_processor(provider: TracerProvider) -> bool:
+    """Return True if *provider* already has an Observe span processor."""
+    try:
+        multi = getattr(provider, "_active_span_processor", None)
+        if multi is None:
+            return False
+        processors = getattr(multi, "_span_processors", ())
+        return any(getattr(sp, OBSERVE_PROCESSOR_MARKER, False) for sp in processors)
+    except Exception:
+        return False
+
+
 def init_tracer_provider(resource: Resource) -> TracerProvider:
     provider: TracerProvider = None
     default_provider: TracerProvider = get_tracer_provider()
@@ -953,6 +980,14 @@ def init_tracer_provider(resource: Resource) -> TracerProvider:
         )
         return
     else:
+        # Reusing an externally-set provider.  Guard against adding a
+        # duplicate Observe processor.
+        if _provider_has_observe_processor(default_provider):
+            logging.warning(
+                "Observe span processor already registered on the active "
+                "TracerProvider — skipping duplicate registration."
+            )
+            return default_provider
         provider = default_provider
     return provider
 
