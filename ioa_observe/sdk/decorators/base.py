@@ -184,6 +184,9 @@ def _setup_span(
     session_id_value = get_value("session.id")
     session_id: Optional[str] = str(session_id_value) if session_id_value else None
 
+    if application_id:
+        set_application_id(application_id)
+
     # Get link to previous agent (for agent spans only)
     links = []
     previous_agent_name = None
@@ -284,7 +287,6 @@ def _setup_span(
         if tlp_span_kind == ObserveSpanKindValues.AGENT:
             span.set_attribute("agent_chain_start_time", time.time())
         if application_id:
-            set_application_id(application_id)
             span.set_attribute(
                 "application_id", application_id
             )  # set application id attribute
