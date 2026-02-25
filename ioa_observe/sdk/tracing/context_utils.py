@@ -26,7 +26,8 @@ def _get_agent_linking_info(session_id):
     """Get agent linking info for cross-process propagation.
 
     Returns:
-        dict: Agent linking info including span_id, trace_id, agent_name, and sequence.
+        dict: Agent linking info including span_id, trace_id, agent_name,
+              sequence, and fork context.
     """
     if not session_id:
         return {}
@@ -46,6 +47,23 @@ def _get_agent_linking_info(session_id):
             linking_info["last_agent_name"] = last_agent_name
         if agent_sequence:
             linking_info["agent_sequence"] = agent_sequence
+
+        # Include fork context if the last agent was part of a fork
+        if agent_sequence:
+            seq = int(agent_sequence)
+            fork_id = kv_store.get(f"session.{session_id}.agents.{seq}.fork_id")
+            if fork_id:
+                linking_info["fork_id"] = fork_id
+                parent_seq = kv_store.get(
+                    f"session.{session_id}.agents.{seq}.parent_seq"
+                )
+                if parent_seq:
+                    linking_info["fork_parent_seq"] = parent_seq
+                branch_index = kv_store.get(
+                    f"session.{session_id}.agents.{seq}.branch_index"
+                )
+                if branch_index:
+                    linking_info["fork_branch_index"] = branch_index
 
     return linking_info
 

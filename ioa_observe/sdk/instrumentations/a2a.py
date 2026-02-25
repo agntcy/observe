@@ -14,6 +14,7 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
+from ioa_observe.sdk.tracing.context_utils import _get_agent_linking_info
 
 _instruments = ("a2a-sdk >= 0.3.0",)
 _global_tracer = None
@@ -37,6 +38,9 @@ def _inject_observe_metadata(request, span_name: str):
             if session_id:
                 kv_store.set(f"execution.{traceparent}", session_id)
 
+    # Get agent linking info for cross-process propagation (agent handoff event)
+    agent_linking_info = _get_agent_linking_info(session_id) if session_id else {}
+
     # Ensure metadata dict exists - handle both request.params.metadata and request.metadata
     try:
         if hasattr(request, "params") and hasattr(request.params, "metadata"):
@@ -58,6 +62,24 @@ def _inject_observe_metadata(request, span_name: str):
     if session_id:
         observe_meta["session_id"] = session_id
         baggage.set_baggage(f"execution.{traceparent}", session_id)
+
+    # Add agent linking info for cross-process span linking
+    if agent_linking_info.get("last_agent_span_id"):
+        observe_meta["last_agent_span_id"] = agent_linking_info["last_agent_span_id"]
+    if agent_linking_info.get("last_agent_trace_id"):
+        observe_meta["last_agent_trace_id"] = agent_linking_info["last_agent_trace_id"]
+    if agent_linking_info.get("last_agent_name"):
+        observe_meta["last_agent_name"] = agent_linking_info["last_agent_name"]
+    if agent_linking_info.get("agent_sequence"):
+        observe_meta["agent_sequence"] = agent_linking_info["agent_sequence"]
+
+    # Add fork context for cross-process fork detection
+    if agent_linking_info.get("fork_id"):
+        observe_meta["fork_id"] = agent_linking_info["fork_id"]
+    if agent_linking_info.get("fork_parent_seq"):
+        observe_meta["fork_parent_seq"] = agent_linking_info["fork_parent_seq"]
+    if agent_linking_info.get("fork_branch_index"):
+        observe_meta["fork_branch_index"] = agent_linking_info["fork_branch_index"]
 
     metadata["observe"] = observe_meta
 
@@ -268,6 +290,20 @@ class A2AInstrumentor(BaseInstrumentor):
                 if agent_sequence:
                     observe_meta["agent_sequence"] = agent_sequence
 
+                # Add fork context for cross-process fork detection
+                if session_id:
+                    fork_linking_info = _get_agent_linking_info(session_id)
+                    if fork_linking_info.get("fork_id"):
+                        observe_meta["fork_id"] = fork_linking_info["fork_id"]
+                    if fork_linking_info.get("fork_parent_seq"):
+                        observe_meta["fork_parent_seq"] = fork_linking_info[
+                            "fork_parent_seq"
+                        ]
+                    if fork_linking_info.get("fork_branch_index"):
+                        observe_meta["fork_branch_index"] = fork_linking_info[
+                            "fork_branch_index"
+                        ]
+
                 metadata["observe"] = observe_meta
 
                 # Write back metadata (pydantic models are mutable by default in v2)
@@ -354,6 +390,20 @@ class A2AInstrumentor(BaseInstrumentor):
                         observe_meta["last_agent_name"] = last_agent_name
                     if agent_sequence:
                         observe_meta["agent_sequence"] = agent_sequence
+
+                    # Add fork context for cross-process fork detection
+                    if session_id:
+                        fork_linking_info = _get_agent_linking_info(session_id)
+                        if fork_linking_info.get("fork_id"):
+                            observe_meta["fork_id"] = fork_linking_info["fork_id"]
+                        if fork_linking_info.get("fork_parent_seq"):
+                            observe_meta["fork_parent_seq"] = fork_linking_info[
+                                "fork_parent_seq"
+                            ]
+                        if fork_linking_info.get("fork_branch_index"):
+                            observe_meta["fork_branch_index"] = fork_linking_info[
+                                "fork_branch_index"
+                            ]
 
                     # Inject W3C trace context + baggage into observe_meta
                     TraceContextTextMapPropagator().inject(carrier=observe_meta)
@@ -452,6 +502,27 @@ class A2AInstrumentor(BaseInstrumentor):
                                 f"session.{session_id}.agent_sequence", agent_sequence
                             )
 
+                        # Restore fork context for cross-process fork detection
+                        fork_id = observe_meta.get("fork_id")
+                        fork_parent_seq = observe_meta.get("fork_parent_seq")
+                        fork_branch_index = observe_meta.get("fork_branch_index")
+                        if fork_id and agent_sequence:
+                            seq = int(agent_sequence)
+                            kv_store.set(
+                                f"session.{session_id}.agents.{seq}.fork_id",
+                                fork_id,
+                            )
+                            if fork_parent_seq:
+                                kv_store.set(
+                                    f"session.{session_id}.agents.{seq}.parent_seq",
+                                    fork_parent_seq,
+                                )
+                            if fork_branch_index:
+                                kv_store.set(
+                                    f"session.{session_id}.agents.{seq}.branch_index",
+                                    fork_branch_index,
+                                )
+
             try:
                 return await original_server_on_message_send(self, params, context)
             finally:
@@ -537,6 +608,27 @@ class A2AInstrumentor(BaseInstrumentor):
                                     f"session.{session_id}.agent_sequence",
                                     agent_sequence,
                                 )
+
+                            # Restore fork context for cross-process fork detection
+                            fork_id = observe_meta.get("fork_id")
+                            fork_parent_seq = observe_meta.get("fork_parent_seq")
+                            fork_branch_index = observe_meta.get("fork_branch_index")
+                            if fork_id and agent_sequence:
+                                seq = int(agent_sequence)
+                                kv_store.set(
+                                    f"session.{session_id}.agents.{seq}.fork_id",
+                                    fork_id,
+                                )
+                                if fork_parent_seq:
+                                    kv_store.set(
+                                        f"session.{session_id}.agents.{seq}.parent_seq",
+                                        fork_parent_seq,
+                                    )
+                                if fork_branch_index:
+                                    kv_store.set(
+                                        f"session.{session_id}.agents.{seq}.branch_index",
+                                        fork_branch_index,
+                                    )
 
                 try:
                     # This is an async generator
@@ -625,6 +717,20 @@ class A2AInstrumentor(BaseInstrumentor):
                 if agent_sequence:
                     observe_meta["agent_sequence"] = agent_sequence
 
+                # Add fork context for cross-process fork detection
+                if session_id:
+                    fork_linking_info = _get_agent_linking_info(session_id)
+                    if fork_linking_info.get("fork_id"):
+                        observe_meta["fork_id"] = fork_linking_info["fork_id"]
+                    if fork_linking_info.get("fork_parent_seq"):
+                        observe_meta["fork_parent_seq"] = fork_linking_info[
+                            "fork_parent_seq"
+                        ]
+                    if fork_linking_info.get("fork_branch_index"):
+                        observe_meta["fork_branch_index"] = fork_linking_info[
+                            "fork_branch_index"
+                        ]
+
                 metadata["observe"] = observe_meta
 
                 # Inject W3C trace context + baggage into observe_meta
@@ -712,6 +818,20 @@ class A2AInstrumentor(BaseInstrumentor):
                     observe_meta["last_agent_name"] = last_agent_name
                 if agent_sequence:
                     observe_meta["agent_sequence"] = agent_sequence
+
+                # Add fork context for cross-process fork detection
+                if session_id:
+                    fork_linking_info = _get_agent_linking_info(session_id)
+                    if fork_linking_info.get("fork_id"):
+                        observe_meta["fork_id"] = fork_linking_info["fork_id"]
+                    if fork_linking_info.get("fork_parent_seq"):
+                        observe_meta["fork_parent_seq"] = fork_linking_info[
+                            "fork_parent_seq"
+                        ]
+                    if fork_linking_info.get("fork_branch_index"):
+                        observe_meta["fork_branch_index"] = fork_linking_info[
+                            "fork_branch_index"
+                        ]
 
                 metadata["observe"] = observe_meta
 
