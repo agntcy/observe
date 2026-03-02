@@ -25,7 +25,17 @@ The Observe SDK provides comprehensive observability through decorators to track
    - [Publishing Messages](#publishing-messages)
 8. [A2A Protocol support](#a2a-protocol-support)
    - [Initializing the A2A Instrumentor (Agent-to-Agent Communication)](#initializing-the-a2a-instrumentor)
-9. [What's the difference between `@graph` and `@agent` decorators?](#whats-the-difference-between-graph-and-agent-decorators)
+9. [MCP Protocol support](#mcp-protocol-support)
+10. [Agent Handoff Tracking via Span Links](#agent-handoff-tracking-via-span-links)
+    - [How It Works](#how-it-works)
+    - [Cross-Process Agent Linking](#cross-process-agent-linking)
+11. [Parallel Agent & Tool Invocation (Fork/Join)](#parallel-agent--tool-invocation-forkjoin)
+    - [Parallel Agents (Fan-Out / Fan-In)](#parallel-agents-fan-out--fan-in)
+    - [Parallel Tools (Fan-Out Within a Single Agent)](#parallel-tools-fan-out-within-a-single-agent)
+    - [Fork/Join Span Attributes Reference](#forkjoin-span-attributes-reference)
+    - [Fork/Join Events](#forkjoin-events)
+12. [Automatic Session End Detection](#automatic-session-end-detection)
+13. [What's the difference between `@graph` and `@agent` decorators?](#whats-the-difference-between-graph-and-agent-decorators)
 
 ## Prerequisites
 
@@ -515,6 +525,189 @@ from ioa_observe.sdk.instrumentations.mcp import McpInstrumentor
 # Initialize the MCP instrumentor
 McpInstrumentor().instrument()
 ```
+## Agent Handoff Tracking via Span Links
+
+The SDK automatically tracks **agent handoffs** using OpenTelemetry Span Links. When one agent invokes another within the same session, the SDK creates a link from the new agent's span back to the previous agent's span, enabling full traceability of the agent execution chain.
+
+### How It Works
+
+- Each agent span is automatically annotated with:
+  - `ioa_observe.agent.sequence` — the agent's position in the execution chain
+  - `ioa_observe.agent.previous` — the name of the previously executing agent
+  - A **span link** with `link.type = "agent_handoff"` pointing to the previous agent's span
+
+No code changes are needed — the `@agent` decorator handles this automatically as long as a session is active:
+
+```python
+from ioa_observe.sdk.decorators import agent
+from ioa_observe.sdk.tracing import session_start
+
+@agent(name="planner", description="Plans tasks")
+async def planner(state: dict) -> dict:
+    return {"plan": "Step 1, Step 2, Step 3"}
+
+@agent(name="executor", description="Executes tasks")
+async def executor(state: dict) -> dict:
+    # This span will have a link back to the planner's span
+    return {"result": "done"}
+
+async def main():
+    session_start()
+    plan = await planner({"query": "build something"})
+    result = await executor(plan)
+```
+
+### Cross-Process Agent Linking
+
+For distributed multi-agent systems where agents communicate over HTTP, SLIM, or A2A, the SDK propagates agent linking context in message headers via `get_current_context_headers()`. The receiving agent uses `set_context_from_headers()` to restore context, and span links are created automatically:
+
+```python
+from ioa_observe.sdk.tracing.context_utils import (
+    get_current_context_headers,
+    set_context_from_headers,
+)
+
+# Sender side: headers now include agent linking info (span_id, trace_id, agent_name, sequence)
+headers = get_current_context_headers()
+# ... send headers with your HTTP/SLIM/A2A request ...
+
+# Receiver side: restores trace context + agent linking
+set_context_from_headers(headers)
+```
+
+The headers automatically include `last_agent_span_id`, `last_agent_trace_id`, `last_agent_name`, and `agent_sequence` so that the receiving agent can create proper span links.
+
+---
+
+## Parallel Agent & Tool Invocation (Fork/Join)
+
+The SDK provides **implicit fork/join detection** for fan-out / fan-in patterns. When multiple agents or tools execute in parallel (e.g., via `asyncio.gather`), the SDK automatically detects this and annotates spans with fork/join metadata — no manual annotation required.
+
+### Parallel Agents (Fan-Out / Fan-In)
+
+When a coordinator agent dispatches multiple agents in parallel, the SDK detects that they share the same parent agent and marks them as **fork branches**:
+
+```python
+from ioa_observe.sdk.decorators import agent, tool
+from ioa_observe.sdk.tracing import session_start
+import asyncio
+
+@agent(name="researcher", description="Performs web research")
+async def researcher(state: dict) -> dict:
+    return {"research_results": "...", "agent": "researcher"}
+
+@agent(name="coder", description="Writes and runs code")
+async def coder(state: dict) -> dict:
+    return {"code_output": "...", "agent": "coder"}
+
+@agent(name="analyst", description="Analyzes data")
+async def analyst(state: dict) -> dict:
+    return {"analysis": "...", "agent": "analyst"}
+
+@agent(name="coordinator", description="Dispatches work to specialist agents")
+async def coordinator(state: dict) -> dict:
+    # These three agents run in parallel — the SDK detects the fork automatically
+    results = await asyncio.gather(
+        researcher(state),
+        coder(state),
+        analyst(state),
+    )
+    return {"branch_results": list(results)}
+
+@agent(name="aggregator", description="Collects and summarizes parallel results")
+async def aggregator(state: dict) -> dict:
+    # This agent runs after all branches complete — the SDK detects the join
+    return {"summary": "aggregated"}
+
+async def main():
+    session_start()
+    coord_result = await coordinator({"query": "analyze AI trends"})
+    final = await aggregator(coord_result)
+```
+
+**What the SDK emits:**
+
+| Span | Attributes |
+|------|------------|
+| `coordinator.agent` | Parent agent |
+| `researcher.agent` | `ioa_observe.fork.id`, `ioa_observe.fork.branch_index=0` |
+| `coder.agent` | `ioa_observe.fork.id`, `ioa_observe.fork.branch_index=1` |
+| `analyst.agent` | `ioa_observe.fork.id`, `ioa_observe.fork.branch_index=2` |
+| `aggregator.agent` | `ioa_observe.join.fork_id`, `ioa_observe.join.branch_count=3`, span links to all branches |
+
+### Parallel Tools (Fan-Out Within a Single Agent)
+
+The SDK also detects when a single agent calls multiple tools in parallel:
+
+```python
+@tool(name="web_search")
+async def web_search(query: str) -> str:
+    return f"results for '{query}'"
+
+@tool(name="run_code")
+async def run_code(code: str) -> str:
+    return f"output of '{code}'"
+
+@tool(name="analyze_data")
+async def analyze_data(dataset: str) -> str:
+    return f"analysis of '{dataset}'"
+
+@agent(name="multi_tool_agent", description="Calls multiple tools in parallel")
+async def multi_tool_agent(state: dict) -> dict:
+    # Parallel tool calls — fork detected automatically
+    search, code, analysis = await asyncio.gather(
+        web_search("AI agents"),
+        run_code("fibonacci(10)"),
+        analyze_data("quarterly_sales"),
+    )
+    return {"search": search, "code": code, "analysis": analysis}
+```
+
+Each parallel tool span is annotated with `ioa_observe.fork.id` and `ioa_observe.fork.branch_index`, scoped to the parent agent.
+
+### Fork/Join Span Attributes Reference
+
+| Attribute | Set On | Description |
+|-----------|--------|-------------|
+| `ioa_observe.fork.id` | Branch spans | Unique ID for the fork group |
+| `ioa_observe.fork.branch_index` | Branch spans | 0-based index of this branch |
+| `ioa_observe.fork.parent_sequence` | Branch spans | Sequence number of the dispatching agent |
+| `ioa_observe.fork.parent_name` | Branch spans | Name of the dispatching agent |
+| `ioa_observe.join.fork_id` | Join span | Fork ID being joined |
+| `ioa_observe.join.branch_count` | Join span | Number of branches that were joined |
+
+### Fork/Join Events
+
+| Event | Description |
+|-------|-------------|
+| `agent.join` | Emitted on the joining span with `ioa_observe.join.fork_id` and `ioa_observe.join.branch_count` |
+
+---
+
+## Automatic Session End Detection
+
+The SDK automatically detects when a session has become idle and emits a `session.end` span. This is useful for tracking session lifecycles without requiring explicit teardown logic.
+
+### How It Works
+
+- A background watcher thread monitors session activity every 30 seconds
+- When a session has been idle for **5 minutes** (no new spans emitted), the SDK emits a `session.end` span
+- The `session.end` span is placed under the same trace as the session's last activity
+- At process exit, any remaining active sessions also receive a `session.end` span
+- Duplicate `session.end` spans are prevented automatically
+
+### Session End Span Attributes
+
+| Attribute | Description |
+|-----------|-------------|
+| `session.id` | The session that ended |
+| `session.ended_at` | Timestamp of the last activity before the session went idle |
+| `observe.workflow.name` | The workflow name associated with the session |
+
+No code changes are needed — session end detection is fully automatic once you call `session_start()`.
+
+---
+
 ## What's the difference between `@graph` and `@agent` decorators?
 
 ### Different Observability Purposes
