@@ -136,7 +136,10 @@ class McpInstrumentor(BaseInstrumentor):
                 pass
         if importlib.util.find_spec("mcp.server.streamable_http"):
             try:
-                unwrap("mcp.server.streamable_http", "StreamableHTTPServerTransport.connect")
+                unwrap(
+                    "mcp.server.streamable_http",
+                    "StreamableHTTPServerTransport.connect",
+                )
             except Exception:
                 pass
 
@@ -247,20 +250,32 @@ class McpInstrumentor(BaseInstrumentor):
                 if session_id:
                     agent_linking_info = _get_agent_linking_info(session_id)
                     if agent_linking_info.get("last_agent_span_id"):
-                        observe_meta["last_agent_span_id"] = agent_linking_info["last_agent_span_id"]
+                        observe_meta["last_agent_span_id"] = agent_linking_info[
+                            "last_agent_span_id"
+                        ]
                     if agent_linking_info.get("last_agent_trace_id"):
-                        observe_meta["last_agent_trace_id"] = agent_linking_info["last_agent_trace_id"]
+                        observe_meta["last_agent_trace_id"] = agent_linking_info[
+                            "last_agent_trace_id"
+                        ]
                     if agent_linking_info.get("last_agent_name"):
-                        observe_meta["last_agent_name"] = agent_linking_info["last_agent_name"]
+                        observe_meta["last_agent_name"] = agent_linking_info[
+                            "last_agent_name"
+                        ]
                     if agent_linking_info.get("agent_sequence"):
-                        observe_meta["agent_sequence"] = agent_linking_info["agent_sequence"]
+                        observe_meta["agent_sequence"] = agent_linking_info[
+                            "agent_sequence"
+                        ]
                     # Add fork context for cross-process fork detection
                     if agent_linking_info.get("fork_id"):
                         observe_meta["fork_id"] = agent_linking_info["fork_id"]
                     if agent_linking_info.get("fork_parent_seq"):
-                        observe_meta["fork_parent_seq"] = agent_linking_info["fork_parent_seq"]
+                        observe_meta["fork_parent_seq"] = agent_linking_info[
+                            "fork_parent_seq"
+                        ]
                     if agent_linking_info.get("fork_branch_index"):
-                        observe_meta["fork_branch_index"] = agent_linking_info["fork_branch_index"]
+                        observe_meta["fork_branch_index"] = agent_linking_info[
+                            "fork_branch_index"
+                        ]
 
                 # Inject observe metadata into request params._meta
                 if observe_meta and params and len(args) > 0:
@@ -274,6 +289,7 @@ class McpInstrumentor(BaseInstrumentor):
                             meta_kwargs = dict(existing_meta)
                         meta_kwargs.update(observe_meta)
                         from mcp.types import RequestParams as McpRequestParams
+
                         args[0].root.params.meta = McpRequestParams.Meta(**meta_kwargs)
                     except Exception:
                         # Fallback: set as dict (may trigger Pydantic warning)
@@ -419,7 +435,9 @@ class InstrumentedStreamReader(ObjectProxy):  # type: ignore
                     if carrier and traceparent:
                         # Extract W3C trace context + baggage
                         ctx = TraceContextTextMapPropagator().extract(carrier=carrier)
-                        ctx = W3CBaggagePropagator().extract(carrier=carrier, context=ctx)
+                        ctx = W3CBaggagePropagator().extract(
+                            carrier=carrier, context=ctx
+                        )
 
                         # Restore session_id and agent linking info (matching A2A server handler)
                         if session_id and session_id != "None":
@@ -431,9 +449,15 @@ class InstrumentedStreamReader(ObjectProxy):  # type: ignore
                                 kv_store.set(f"execution.{traceparent}", session_id)
 
                                 # Restore agent linking info for cross-process span linking
-                                observe_meta = carrier if isinstance(carrier, dict) else {}
-                                last_agent_span_id = observe_meta.get("last_agent_span_id")
-                                last_agent_trace_id = observe_meta.get("last_agent_trace_id")
+                                observe_meta = (
+                                    carrier if isinstance(carrier, dict) else {}
+                                )
+                                last_agent_span_id = observe_meta.get(
+                                    "last_agent_span_id"
+                                )
+                                last_agent_trace_id = observe_meta.get(
+                                    "last_agent_trace_id"
+                                )
                                 last_agent_name = observe_meta.get("last_agent_name")
                                 agent_sequence = observe_meta.get("agent_sequence")
 
@@ -461,7 +485,9 @@ class InstrumentedStreamReader(ObjectProxy):  # type: ignore
                                 # Restore fork context for cross-process fork detection
                                 fork_id = observe_meta.get("fork_id")
                                 fork_parent_seq = observe_meta.get("fork_parent_seq")
-                                fork_branch_index = observe_meta.get("fork_branch_index")
+                                fork_branch_index = observe_meta.get(
+                                    "fork_branch_index"
+                                )
                                 if fork_id and agent_sequence:
                                     seq = int(agent_sequence)
                                     kv_store.set(
@@ -514,7 +540,9 @@ class InstrumentedStreamWriter(ObjectProxy):  # type: ignore
         try:
             with self._tracer.start_as_current_span("ResponseStreamWriter") as span:
                 if hasattr(request, "result"):
-                    span.set_attribute(MCP_RESPONSE_VALUE, f"{serialize(request.result)}")
+                    span.set_attribute(
+                        MCP_RESPONSE_VALUE, f"{serialize(request.result)}"
+                    )
                     if isinstance(request.result, dict) and "isError" in request.result:
                         if request.result["isError"] is True:
                             span.set_status(
