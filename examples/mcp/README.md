@@ -73,4 +73,3 @@ The `McpInstrumentor` automatically instruments all MCP transports (stdio, SSE, 
 | `server.py` | MCP server using FastMCP with `add` and `multiply` tools |
 | `client_native.py` | Native MCP SDK client using `ClientSession` directly |
 | `client.py` | LangChain MCP adapter client with a ReAct agent |
-

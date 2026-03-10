@@ -145,4 +145,3 @@ Demonstrates MCP (Model Context Protocol) server and client instrumentation with
 - Both native MCP SDK and LangChain adapter client patterns
 
 </details>
-
