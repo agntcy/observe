@@ -6,18 +6,19 @@ from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Callable, Collection, Tuple, cast, Union
 import json
 import logging
-import traceback
 import re
+import threading
 from http import HTTPStatus
 
 from opentelemetry.context import get_value
-from opentelemetry import context, propagate
+from opentelemetry import baggage, context, propagate
 from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
 from opentelemetry.instrumentation.utils import unwrap
 from opentelemetry.trace import get_tracer, Tracer
 from wrapt import ObjectProxy, register_post_import_hook, wrap_function_wrapper
 from opentelemetry.trace.status import Status, StatusCode
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.semconv.attributes.error_attributes import ERROR_TYPE
 
 from ..utils.const import (
@@ -31,35 +32,7 @@ from ..utils.const import (
 from ..version import __version__
 
 _instruments = ("mcp >= 1.6.0",)
-
-
-class Config:
-    exception_logger = None
-
-
-def dont_throw(func):
-    """
-    A decorator that wraps the passed in function and logs exceptions instead of throwing them.
-
-    @param func: The function to wrap
-    @return: The wrapper function
-    """
-    # Obtain a logger specific to the function's module
-    logger = logging.getLogger(func.__module__)
-
-    def wrapper(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except Exception as e:
-            logger.debug(
-                "failed to trace in %s, error: %s",
-                func.__name__,
-                traceback.format_exc(),
-            )
-            if Config.exception_logger:
-                Config.exception_logger(e)
-
-    return wrapper
+_kv_lock = threading.RLock()  # Thread-safety for kv_store operations
 
 
 class McpInstrumentor(BaseInstrumentor):
@@ -114,6 +87,14 @@ class McpInstrumentor(BaseInstrumentor):
         )
         register_post_import_hook(
             lambda _: wrap_function_wrapper(
+                "mcp.client.streamable_http",
+                "streamable_http_client",
+                self._transport_wrapper(tracer),
+            ),
+            "mcp.client.streamable_http",
+        )
+        register_post_import_hook(
+            lambda _: wrap_function_wrapper(
                 "mcp.server.streamable_http",
                 "StreamableHTTPServerTransport.connect",
                 self._transport_wrapper(tracer),
@@ -127,8 +108,40 @@ class McpInstrumentor(BaseInstrumentor):
         )
 
     def _uninstrument(self, **kwargs):
+        import importlib
+
+        unwrap("mcp.shared.session", "BaseSession.send_request")
+
         unwrap("mcp.client.stdio", "stdio_client")
         unwrap("mcp.server.stdio", "stdio_server")
+
+        if importlib.util.find_spec("mcp.client.sse"):
+            try:
+                unwrap("mcp.client.sse", "sse_client")
+            except Exception:
+                pass
+        if importlib.util.find_spec("mcp.server.sse"):
+            try:
+                unwrap("mcp.server.sse", "SseServerTransport.connect_sse")
+            except Exception:
+                pass
+        if importlib.util.find_spec("mcp.client.streamable_http"):
+            try:
+                unwrap("mcp.client.streamable_http", "streamablehttp_client")
+            except Exception:
+                pass
+            try:
+                unwrap("mcp.client.streamable_http", "streamable_http_client")
+            except Exception:
+                pass
+        if importlib.util.find_spec("mcp.server.streamable_http"):
+            try:
+                unwrap(
+                    "mcp.server.streamable_http",
+                    "StreamableHTTPServerTransport.connect",
+                )
+            except Exception:
+                pass
 
     def _transport_wrapper(self, tracer):
         @asynccontextmanager
@@ -191,56 +204,109 @@ class McpInstrumentor(BaseInstrumentor):
         return traced_method
 
     def patch_mcp_client(self, tracer: Tracer):
-        @dont_throw
         async def traced_method(wrapped, instance, args, kwargs):
-            meta = None
+            from ioa_observe.sdk.client import kv_store
+            from ioa_observe.sdk.tracing import get_current_traceparent
+            from ioa_observe.sdk.tracing.context_utils import _get_agent_linking_info
+
             method = None
             params = None
             if len(args) > 0 and hasattr(args[0].root, "method"):
                 method = args[0].root.method
             if len(args) > 0 and hasattr(args[0].root, "params"):
                 params = args[0].root.params
-            if params:
-                if hasattr(args[0].root.params, "meta"):
-                    meta = args[0].root.params.meta
 
             with tracer.start_as_current_span(f"{method}.mcp") as span:
-                span.set_attribute(OBSERVE_ENTITY_INPUT, f"{serialize(args[0])}")
-                from ioa_observe.sdk.client import kv_store
-                from ioa_observe.sdk.tracing import get_current_traceparent
+                try:
+                    span.set_attribute(OBSERVE_ENTITY_INPUT, f"{serialize(args[0])}")
+                except Exception:
+                    pass
 
                 traceparent = get_current_traceparent()
                 session_id = None
                 if traceparent:
-                    session_id = kv_store.get(f"execution.{traceparent}")
+                    with _kv_lock:
+                        session_id = kv_store.get(f"execution.{traceparent}")
                     if not session_id:
                         session_id = get_value("session.id")
                         if session_id:
-                            kv_store.set(f"execution.{traceparent}", session_id)
+                            with _kv_lock:
+                                kv_store.set(f"execution.{traceparent}", session_id)
 
-                        meta = meta or {}
-                        if isinstance(meta, dict):
-                            meta["session.id"] = session_id
-                            meta["traceparent"] = traceparent
-                        else:
-                            # If meta is an object, convert it to a dict
-                            meta = {
-                                "session.id": session_id,
-                                "traceparent": traceparent,
-                            }
+                # Build observe metadata dict (matching A2A pattern)
+                observe_meta = {}
 
-                if meta and len(args) > 0:
-                    carrier = {}
-                    TraceContextTextMapPropagator().inject(carrier)
+                # Inject W3C trace context + baggage
+                TraceContextTextMapPropagator().inject(carrier=observe_meta)
+                W3CBaggagePropagator().inject(carrier=observe_meta)
 
-                    args[0].root.params.meta = meta
+                if traceparent:
+                    observe_meta["traceparent"] = traceparent
+                if session_id:
+                    observe_meta["session.id"] = session_id
+                    baggage.set_baggage(f"execution.{traceparent}", session_id)
+
+                # Add agent linking info for cross-process propagation
+                if session_id:
+                    agent_linking_info = _get_agent_linking_info(session_id)
+                    if agent_linking_info.get("last_agent_span_id"):
+                        observe_meta["last_agent_span_id"] = agent_linking_info[
+                            "last_agent_span_id"
+                        ]
+                    if agent_linking_info.get("last_agent_trace_id"):
+                        observe_meta["last_agent_trace_id"] = agent_linking_info[
+                            "last_agent_trace_id"
+                        ]
+                    if agent_linking_info.get("last_agent_name"):
+                        observe_meta["last_agent_name"] = agent_linking_info[
+                            "last_agent_name"
+                        ]
+                    if agent_linking_info.get("agent_sequence"):
+                        observe_meta["agent_sequence"] = agent_linking_info[
+                            "agent_sequence"
+                        ]
+                    # Add fork context for cross-process fork detection
+                    if agent_linking_info.get("fork_id"):
+                        observe_meta["fork_id"] = agent_linking_info["fork_id"]
+                    if agent_linking_info.get("fork_parent_seq"):
+                        observe_meta["fork_parent_seq"] = agent_linking_info[
+                            "fork_parent_seq"
+                        ]
+                    if agent_linking_info.get("fork_branch_index"):
+                        observe_meta["fork_branch_index"] = agent_linking_info[
+                            "fork_branch_index"
+                        ]
+
+                # Inject observe metadata into request params._meta
+                if observe_meta and params and len(args) > 0:
+                    try:
+                        # Get existing meta or create new one
+                        existing_meta = getattr(params, "meta", None)
+                        meta_kwargs = {}
+                        if existing_meta and hasattr(existing_meta, "model_dump"):
+                            meta_kwargs = existing_meta.model_dump(exclude_none=True)
+                        elif isinstance(existing_meta, dict):
+                            meta_kwargs = dict(existing_meta)
+                        meta_kwargs.update(observe_meta)
+                        from mcp.types import RequestParams as McpRequestParams
+
+                        args[0].root.params.meta = McpRequestParams.Meta(**meta_kwargs)
+                    except Exception:
+                        # Fallback: set as dict (may trigger Pydantic warning)
+                        try:
+                            args[0].root.params.meta = observe_meta
+                        except Exception:
+                            pass
 
                 try:
                     result = await wrapped(*args, **kwargs)
-                    span.set_attribute(
-                        OBSERVE_ENTITY_OUTPUT,
-                        serialize(result),
-                    )
+                    try:
+                        span.set_attribute(
+                            OBSERVE_ENTITY_OUTPUT,
+                            serialize(result),
+                        )
+                    except Exception:
+                        pass
                     if hasattr(result, "isError") and result.isError:
                         if len(result.content) > 0:
                             span.set_status(
@@ -328,7 +394,6 @@ class InstrumentedStreamReader(ObjectProxy):  # type: ignore
     async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> Any:
         return await self.__wrapped__.__aexit__(exc_type, exc_value, traceback)
 
-    @dont_throw
     async def __aiter__(self) -> AsyncGenerator[Any, None]:
         from mcp.types import JSONRPCMessage, JSONRPCRequest
         from mcp.shared.message import SessionMessage
@@ -362,19 +427,83 @@ class InstrumentedStreamReader(ObjectProxy):  # type: ignore
                         traceparent = getattr(meta, "traceparent", None)
                         # Convert object to dict for propagate.extract
                         carrier = {}
-                        if session_id:
+                        if hasattr(meta, "model_dump"):
+                            carrier = meta.model_dump(exclude_none=True)
+                        elif session_id:
                             carrier["session.id"] = session_id
 
                     if carrier and traceparent:
-                        ctx = propagate.extract(carrier)
+                        # Extract W3C trace context + baggage
+                        ctx = TraceContextTextMapPropagator().extract(carrier=carrier)
+                        ctx = W3CBaggagePropagator().extract(
+                            carrier=carrier, context=ctx
+                        )
 
-                        # Add session_id extraction and storage like in a2a.py
+                        # Restore session_id and agent linking info (matching A2A server handler)
                         if session_id and session_id != "None":
                             from ioa_observe.sdk.client import kv_store
                             from ioa_observe.sdk.tracing import set_session_id
 
                             set_session_id(session_id, traceparent=traceparent)
-                            kv_store.set(f"execution.{traceparent}", session_id)
+                            with _kv_lock:
+                                kv_store.set(f"execution.{traceparent}", session_id)
+
+                                # Restore agent linking info for cross-process span linking
+                                observe_meta = (
+                                    carrier if isinstance(carrier, dict) else {}
+                                )
+                                last_agent_span_id = observe_meta.get(
+                                    "last_agent_span_id"
+                                )
+                                last_agent_trace_id = observe_meta.get(
+                                    "last_agent_trace_id"
+                                )
+                                last_agent_name = observe_meta.get("last_agent_name")
+                                agent_sequence = observe_meta.get("agent_sequence")
+
+                                if last_agent_span_id:
+                                    kv_store.set(
+                                        f"session.{session_id}.last_agent_span_id",
+                                        last_agent_span_id,
+                                    )
+                                if last_agent_trace_id:
+                                    kv_store.set(
+                                        f"session.{session_id}.last_agent_trace_id",
+                                        last_agent_trace_id,
+                                    )
+                                if last_agent_name:
+                                    kv_store.set(
+                                        f"session.{session_id}.last_agent_name",
+                                        last_agent_name,
+                                    )
+                                if agent_sequence:
+                                    kv_store.set(
+                                        f"session.{session_id}.agent_sequence",
+                                        agent_sequence,
+                                    )
+
+                                # Restore fork context for cross-process fork detection
+                                fork_id = observe_meta.get("fork_id")
+                                fork_parent_seq = observe_meta.get("fork_parent_seq")
+                                fork_branch_index = observe_meta.get(
+                                    "fork_branch_index"
+                                )
+                                if fork_id and agent_sequence:
+                                    seq = int(agent_sequence)
+                                    kv_store.set(
+                                        f"session.{session_id}.agents.{seq}.fork_id",
+                                        fork_id,
+                                    )
+                                    if fork_parent_seq:
+                                        kv_store.set(
+                                            f"session.{session_id}.agents.{seq}.parent_seq",
+                                            fork_parent_seq,
+                                        )
+                                    if fork_branch_index:
+                                        kv_store.set(
+                                            f"session.{session_id}.agents.{seq}.branch_index",
+                                            fork_branch_index,
+                                        )
 
                         restore = context.attach(ctx)
                         try:
@@ -396,7 +525,6 @@ class InstrumentedStreamWriter(ObjectProxy):  # type: ignore
     async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> Any:
         return await self.__wrapped__.__aexit__(exc_type, exc_value, traceback)
 
-    @dont_throw
     async def send(self, item: Any) -> Any:
         from mcp.types import JSONRPCMessage, JSONRPCRequest
         from mcp.shared.message import SessionMessage
@@ -406,35 +534,42 @@ class InstrumentedStreamWriter(ObjectProxy):  # type: ignore
         elif type(item) is JSONRPCMessage:
             request = cast(JSONRPCMessage, item).root
         else:
-            return
+            # Always forward unrecognized message types
+            return await self.__wrapped__.send(item)
 
-        with self._tracer.start_as_current_span("ResponseStreamWriter") as span:
-            if hasattr(request, "result"):
-                span.set_attribute(MCP_RESPONSE_VALUE, f"{serialize(request.result)}")
-                if "isError" in request.result:
-                    if request.result["isError"] is True:
-                        span.set_status(
-                            Status(
-                                StatusCode.ERROR,
-                                f"{request.result['content'][0]['text']}",
+        try:
+            with self._tracer.start_as_current_span("ResponseStreamWriter") as span:
+                if hasattr(request, "result"):
+                    span.set_attribute(
+                        MCP_RESPONSE_VALUE, f"{serialize(request.result)}"
+                    )
+                    if isinstance(request.result, dict) and "isError" in request.result:
+                        if request.result["isError"] is True:
+                            span.set_status(
+                                Status(
+                                    StatusCode.ERROR,
+                                    f"{request.result['content'][0]['text']}",
+                                )
                             )
-                        )
-                        error_type = get_error_type(
-                            request.result["content"][0]["text"]
-                        )
-                        if error_type is not None:
-                            span.set_attribute(ERROR_TYPE, error_type)
-            if hasattr(request, "id"):
-                span.set_attribute(MCP_REQUEST_ID, f"{request.id}")
+                            error_type = get_error_type(
+                                request.result["content"][0]["text"]
+                            )
+                            if error_type is not None:
+                                span.set_attribute(ERROR_TYPE, error_type)
+                if hasattr(request, "id"):
+                    span.set_attribute(MCP_REQUEST_ID, f"{request.id}")
 
-            if not isinstance(request, JSONRPCRequest):
+                if not isinstance(request, JSONRPCRequest):
+                    return await self.__wrapped__.send(item)
+                if not request.params:
+                    request.params = {}
+                meta = request.params.setdefault("_meta", {})
+
+                propagate.get_global_textmap().inject(meta)
                 return await self.__wrapped__.send(item)
-            meta = None
-            if not request.params:
-                request.params = {}
-            meta = request.params.setdefault("_meta", {})
-
-            propagate.get_global_textmap().inject(meta)
+        except Exception as e:
+            logging.warning(f"mcp instrumentation ResponseStreamWriter exception: {e}")
+            # Ensure message is always delivered even if tracing fails
             return await self.__wrapped__.send(item)
 
 
@@ -455,23 +590,27 @@ class ContextSavingStreamWriter(ObjectProxy):  # type: ignore
     async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> Any:
         return await self.__wrapped__.__aexit__(exc_type, exc_value, traceback)
 
-    @dont_throw
     async def send(self, item: Any) -> Any:
-        with self._tracer.start_as_current_span("RequestStreamWriter") as span:
-            if hasattr(item, "request_id"):
-                span.set_attribute(MCP_REQUEST_ID, f"{item.request_id}")
-            if hasattr(item, "request"):
-                if hasattr(item.request, "root"):
-                    if hasattr(item.request.root, "method"):
-                        span.set_attribute(
-                            MCP_METHOD_NAME,
-                            f"{item.request.root.method}",
-                        )
-                    if hasattr(item.request.root, "params"):
-                        span.set_attribute(
-                            MCP_REQUEST_ARGUMENT,
-                            f"{serialize(item.request.root.params)}",
-                        )
+        try:
+            with self._tracer.start_as_current_span("RequestStreamWriter") as span:
+                if hasattr(item, "request_id"):
+                    span.set_attribute(MCP_REQUEST_ID, f"{item.request_id}")
+                if hasattr(item, "request"):
+                    if hasattr(item.request, "root"):
+                        if hasattr(item.request.root, "method"):
+                            span.set_attribute(
+                                MCP_METHOD_NAME,
+                                f"{item.request.root.method}",
+                            )
+                        if hasattr(item.request.root, "params"):
+                            span.set_attribute(
+                                MCP_REQUEST_ARGUMENT,
+                                f"{serialize(item.request.root.params)}",
+                            )
+                ctx = context.get_current()
+                return await self.__wrapped__.send(ItemWithContext(item, ctx))
+        except Exception as e:
+            logging.warning(f"mcp instrumentation RequestStreamWriter exception: {e}")
             ctx = context.get_current()
             return await self.__wrapped__.send(ItemWithContext(item, ctx))
 
