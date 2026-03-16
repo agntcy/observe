@@ -1,3 +1,14 @@
+"""
+MCP Client example using LangChain MCP adapters with Observe SDK instrumentation.
+
+Prerequisites:
+    1. Start the MCP server: python server.py
+    2. Set environment variables (see .env.example)
+
+Usage:
+    python client.py
+"""
+
 import os
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -23,16 +34,15 @@ McpInstrumentor().instrument()
     name="math_agent",
     description="An agent that can perform mathematical operations using MCP tools.",
 )
-async def agent(tools, messages):
-    agent = create_react_agent("gpt-4o", tools)
-    return await agent.ainvoke(messages)
+async def math_agent_fn(tools, messages):
+    react_agent = create_react_agent("gpt-4o", tools)
+    return await react_agent.ainvoke(messages)
 
 
 async def main():
     client = MultiServerMCPClient(
         {
             "math": {
-                # Ensure you start your weather server on port 8000
                 "url": "http://localhost:8000/mcp",
                 "transport": "streamable_http",
             }
@@ -40,7 +50,7 @@ async def main():
     )
     tools = await client.get_tools()
     session_start()
-    math_response = await agent(
+    math_response = await math_agent_fn(
         tools, {"messages": [{"role": "user", "content": "what's (3 + 5) x 12?"}]}
     )
     print(math_response)

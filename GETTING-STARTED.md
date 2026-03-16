@@ -517,13 +517,90 @@ A2AInstrumentor().instrument()
 
 ModelContextProtocol (MCP) is an open protocol designed to standardize how large language models (LLMs) and other AI agents interact with external tools, memory, and context.
 
-Observe SDK provides built-in support for MCP, allowing you to instrument your servers/clients for MCP.
+Observe SDK provides built-in support for MCP, allowing you to instrument your servers/clients for MCP. The MCP instrumentation automatically handles:
+
+- **Trace context propagation** via W3C `traceparent` and `baggage` headers through `_meta` fields
+- **Session tracking** across MCP client/server boundaries
+- **Agent linking** for cross-process span links (agent handoff events)
+- **Fork/join context** for parallel agent detection across MCP boundaries
+- **All MCP transports**: stdio, SSE, and Streamable HTTP (both client and server)
 
 ### Initializing the MCP Instrumentor
 ```python
 from ioa_observe.sdk.instrumentations.mcp import McpInstrumentor
 # Initialize the MCP instrumentor
 McpInstrumentor().instrument()
+```
+
+### What Gets Instrumented
+
+| Target | Description |
+|--------|-------------|
+| `BaseSession.send_request` | Client-side request tracing with input/output capture and observe metadata injection |
+| `stdio_client` / `stdio_server` | Stdio transport stream wrapping for context propagation |
+| `sse_client` / `SseServerTransport.connect_sse` | SSE transport stream wrapping for context propagation |
+| `streamablehttp_client` / `StreamableHTTPServerTransport.connect` | Streamable HTTP transport stream wrapping for context propagation |
+| `ServerSession.__init__` | Server-side request context attachment for incoming messages |
+
+### Cross-Process Context Propagation
+
+The MCP instrumentor propagates the following metadata through the `_meta` field of MCP requests, matching the A2A instrumentation pattern:
+
+| Metadata Key | Description |
+|--------------|-------------|
+| `traceparent` | W3C trace context for distributed tracing |
+| `baggage` | W3C baggage for cross-process context |
+| `session.id` | Session identifier for execution tracking |
+| `last_agent_span_id` | Span ID of the previously executing agent (for span links) |
+| `last_agent_trace_id` | Trace ID of the previously executing agent |
+| `last_agent_name` | Name of the previously executing agent |
+| `agent_sequence` | Position in the agent execution chain |
+| `fork_id` | Fork group identifier for parallel execution detection |
+| `fork_parent_seq` | Sequence number of the dispatching agent in a fork |
+| `fork_branch_index` | Branch index within a fork group |
+
+### Server Example
+```python
+import os
+from mcp.server.fastmcp import FastMCP
+from ioa_observe.sdk import Observe
+from ioa_observe.sdk.instrumentations.mcp import McpInstrumentor
+
+Observe.init("mcp_server", api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
+McpInstrumentor().instrument()
+
+mcp = FastMCP("Demo")
+
+@mcp.tool()
+def add(a: int, b: int) -> int:
+    """Add two numbers"""
+    return a + b
+
+if __name__ == "__main__":
+    mcp.run(transport="streamable-http")
+```
+
+### Client Example
+```python
+import os
+from langchain_mcp_adapters.client import MultiServerMCPClient
+from ioa_observe.sdk import Observe
+from ioa_observe.sdk.instrumentations.mcp import McpInstrumentor
+from ioa_observe.sdk.tracing import session_start
+
+Observe.init("mcp_client", api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
+McpInstrumentor().instrument()
+
+async def main():
+    client = MultiServerMCPClient({
+        "math": {
+            "url": "http://localhost:8000/mcp",
+            "transport": "streamable_http",
+        }
+    })
+    tools = await client.get_tools()
+    session_start()
+    # Use tools with your agent framework...
 ```
 ## Agent Handoff Tracking via Span Links
 
@@ -559,7 +636,7 @@ async def main():
 
 ### Cross-Process Agent Linking
 
-For distributed multi-agent systems where agents communicate over HTTP, SLIM, or A2A, the SDK propagates agent linking context in message headers via `get_current_context_headers()`. The receiving agent uses `set_context_from_headers()` to restore context, and span links are created automatically:
+For distributed multi-agent systems where agents communicate over HTTP, SLIM, A2A, or MCP, the SDK propagates agent linking context in message metadata. For MCP and A2A, this is handled automatically by their respective instrumentors. For HTTP and SLIM, use `get_current_context_headers()` on the sender side and `set_context_from_headers()` on the receiver side to propagate context manually:
 
 ```python
 from ioa_observe.sdk.tracing.context_utils import (

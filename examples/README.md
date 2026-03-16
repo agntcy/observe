@@ -124,4 +124,24 @@ Shows a simple workflow using LlamaIndex to generate and critique a joke.
 
 Check out the `remote_agent_slim` and `remote_agent_http` directories for examples of remote agents using SLIM and HTTP protocols, respectively.
 
-The `a2a_random_number_generator` directory showcases examples that uses A2A protocol to facilitate communication between agents.
+The `a2a_examples` directory showcases examples that use the A2A protocol to facilitate communication between agents.
+
+---
+
+<details>
+<summary><strong>mcp/</strong></summary>
+
+**Highlight:**
+Demonstrates MCP (Model Context Protocol) server and client instrumentation with full cross-process context propagation.
+
+**Files:**
+- `server.py` — MCP server using FastMCP with `add` and `multiply` tools
+- `client_native.py` — Native MCP SDK client using `ClientSession` and `streamablehttp_client` directly
+- `client.py` — LangChain MCP adapter client with a ReAct agent
+
+**Speciality:**
+- Full Observe SDK instrumentation across all MCP transports (stdio, SSE, Streamable HTTP)
+- Cross-process trace context, session tracking, agent linking, and fork/join propagation via `_meta`
+- Both native MCP SDK and LangChain adapter client patterns
+
+</details>
