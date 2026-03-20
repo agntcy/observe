@@ -55,6 +55,7 @@ class ForkJoinEvents:
     AGENT_FORK = "agent.fork"
     AGENT_JOIN = "agent.join"
 
+
 # Module-level lock for fork detection state.
 # This serializes the read-check-write cycle that detects siblings.
 _fork_lock = threading.Lock()
