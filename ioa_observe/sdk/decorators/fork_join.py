@@ -27,12 +27,34 @@ from typing import List, Optional, Tuple
 from opentelemetry.trace import Link, SpanContext, TraceFlags
 
 from ioa_observe.sdk.client import kv_store
-from ioa_observe.sdk.semantic_conventions.agent_communication import (
-    ForkJoinAttributes,
-    ForkJoinEvents,
-)
 
 logger = logging.getLogger(__name__)
+
+
+class ForkJoinAttributes:
+    """Attribute names for fan-out / fan-in (fork/join) spans."""
+
+    FORK_ID = "ioa_observe.fork.id"
+    FORK_PARENT_SEQUENCE = "ioa_observe.fork.parent_sequence"
+    FORK_PARENT_NAME = "ioa_observe.fork.parent_name"
+    FORK_BRANCH_INDEX = "ioa_observe.fork.branch_index"
+    FORK_BRANCH_COUNT = "ioa_observe.fork.branch_count"
+    FORK_STRATEGY = "ioa_observe.fork.strategy"
+    FORK_BRANCHES = "ioa_observe.fork.branches"
+
+    JOIN_FORK_ID = "ioa_observe.join.fork_id"
+    JOIN_BRANCH_COUNT = "ioa_observe.join.branch_count"
+    JOIN_COMPLETED_BRANCHES = "ioa_observe.join.completed_branches"
+    JOIN_STRATEGY = "ioa_observe.join.strategy"
+    JOIN_WAIT_TIME_MS = "ioa_observe.join.wait_time_ms"
+
+
+class ForkJoinEvents:
+    """Event names for fork/join lifecycle."""
+
+    AGENT_FORK = "agent.fork"
+    AGENT_JOIN = "agent.join"
+
 
 # Module-level lock for fork detection state.
 # This serializes the read-check-write cycle that detects siblings.
