@@ -8,6 +8,13 @@ from ioa_observe.sdk.tracing.tracing import (
     get_current_traceparent,
     session_start,
 )
+from ioa_observe.sdk.tracing.topology import (
+    emit_topology_event,
+    get_current_topology_context,
+    get_live_topology_snapshot,
+    register_topology_listener,
+    unregister_topology_listener,
+)
 
 __all__ = [
     "get_tracer",
@@ -15,4 +22,9 @@ __all__ = [
     "set_session_id",
     "get_current_traceparent",
     "session_start",
+    "emit_topology_event",
+    "get_current_topology_context",
+    "get_live_topology_snapshot",
+    "register_topology_listener",
+    "unregister_topology_listener",
 ]

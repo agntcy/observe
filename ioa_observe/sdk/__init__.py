@@ -31,6 +31,10 @@ from ioa_observe.sdk.tracing.tracing import (
     set_external_prompt_tracing_context,
     #    init_spans_exporter,
 )
+from ioa_observe.sdk.tracing.topology import (
+    register_topology_listener as _register_topology_listener,
+    unregister_topology_listener as _unregister_topology_listener,
+)
 from typing import Dict
 from ioa_observe.sdk.client.client import Client
 import logging
@@ -66,6 +70,7 @@ class Observe:
         instruments: Optional[Set[Instruments]] = None,
         block_instruments: Optional[Set[Instruments]] = None,
         image_uploader=None,
+        topology_listener=None,
     ) -> Optional[Client]:
         if not enabled:
             TracerWrapper.set_disabled(True)
@@ -168,6 +173,9 @@ class Observe:
             block_instruments=block_instruments,
         )
 
+        if topology_listener is not None:
+            _register_topology_listener(topology_listener)
+
         if not is_metrics_enabled() or not metrics_exporter and exporter:
             print(Fore.YELLOW + "Metrics are disabled" + Fore.RESET)
         else:
@@ -214,6 +222,14 @@ class Observe:
 
     def set_prompt(template: str, variables: dict, version: int):
         set_external_prompt_tracing_context(template, variables, version)
+
+    @staticmethod
+    def register_topology_listener(listener) -> None:
+        _register_topology_listener(listener)
+
+    @staticmethod
+    def unregister_topology_listener(listener) -> None:
+        _unregister_topology_listener(listener)
 
     @staticmethod
     def get():

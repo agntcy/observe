@@ -108,6 +108,23 @@ Implements a multi-agent workflow using LangGraph, with a supervisor agent manag
 ---
 
 <details>
+<summary><strong>live_topology_listener.py</strong></summary>
+
+**Highlight:**
+Shows how to register a live topology listener and inspect the runtime graph snapshot while a tiny two-agent handoff runs.
+
+**Speciality:**
+- Demonstrates `Observe.init(..., topology_listener=...)`
+- Prints incremental topology events as they are emitted
+- Uses `get_live_topology_snapshot(...)` to inspect the runtime graph state
+- Uses a real Tavily-backed research agent plus an LLM briefing agent
+- Still works without a full remote A2A setup; if A2A is enabled in your app, the same listener will also receive A2A send/receive events
+
+</details>
+
+---
+
+<details>
 <summary><strong>test.py</strong></summary>
 
 **Highlight:**

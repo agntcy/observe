@@ -512,6 +512,56 @@ from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
 A2AInstrumentor().instrument()
 ```
 
+### Live topology callbacks for near-real-time UIs
+
+If you want to drive a live communication graph, you can register a topology listener with `Observe.init(...)` or at runtime. The SDK will emit incremental session, node, edge, fork/join, and A2A send/receive events as execution proceeds.
+
+```python
+from ioa_observe.sdk import Observe
+from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
+from ioa_observe.sdk.tracing import (
+    get_current_topology_context,
+    get_live_topology_snapshot,
+    session_start,
+)
+
+
+def on_topology_event(event: dict) -> None:
+    # Forward to a websocket, SSE stream, or your UI event bus
+    print("topology event:", event["type"], event)
+
+
+Observe.init(
+    "a2a-topology-demo",
+    api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"),
+    topology_listener=on_topology_event,
+)
+
+A2AInstrumentor().instrument()
+
+with session_start() as session_meta:
+    ctx = get_current_topology_context(actor="planner")
+    print("current topology context:", ctx)
+
+    # ... perform A2A send / receive work ...
+
+    snapshot = get_live_topology_snapshot(session_meta["executionID"])
+    print("runtime graph snapshot:", snapshot)
+```
+
+Useful emitted event types include:
+
+- `topology.session.started`
+- `topology.node.started`
+- `topology.node.completed`
+- `topology.edge.updated`
+- `a2a.message.sent`
+- `a2a.message.received`
+- `topology.fork.detected`
+- `topology.join.detected`
+
+This live stream complements `@graph`: `@graph` still captures the static or compiled workflow structure, while topology listeners provide runtime updates you can surface immediately in a UI.
+
 
 ## MCP Protocol support
 

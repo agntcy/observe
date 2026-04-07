@@ -46,6 +46,7 @@ from opentelemetry.semconv_ai import SpanAttributes
 from ioa_observe.sdk import Telemetry
 from ioa_observe.sdk.instruments import Instruments
 from ioa_observe.sdk.tracing.content_allow_list import ContentAllowList
+from ioa_observe.sdk.tracing.topology import record_session_event
 from ioa_observe.sdk.tracing.transform_span import (
     transform_json_object_configurable,
     validate_transformer_rules,
@@ -371,6 +372,12 @@ class TracerWrapper(object):
                     if workflow_name:
                         span.set_attribute(OBSERVE_WORKFLOW_NAME, workflow_name)
                     span.set_attribute("session.ended_at", last_ts)
+                record_session_event(
+                    session_id,
+                    "ended",
+                    ended_at=last_ts,
+                    trigger="idle_timeout",
+                )
 
             # ensure end spans are exported reasonably fast
             self.flush()
@@ -409,6 +416,12 @@ class TracerWrapper(object):
                 if workflow_name:
                     span.set_attribute(OBSERVE_WORKFLOW_NAME, workflow_name)
                 span.set_attribute("session.ended_at", now)
+            record_session_event(
+                session_id,
+                "ended",
+                ended_at=now,
+                trigger="process_exit",
+            )
 
         self.flush()
 
@@ -784,6 +797,7 @@ def session_start(apply_transform: bool = False):
         "executionID": get_value("session.id") or session_id,
         "traceparentID": get_current_traceparent(),
     }
+    record_session_event(metadata["executionID"], "started")
     import inspect
 
     frame = inspect.currentframe().f_back

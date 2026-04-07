@@ -15,6 +15,7 @@ from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
 from ioa_observe.sdk.tracing.context_utils import _get_agent_linking_info
+from ioa_observe.sdk.tracing.topology import emit_topology_event, upsert_topology_edge
 
 _instruments = ("a2a-sdk >= 0.3.0",)
 _global_tracer = None
@@ -22,6 +23,131 @@ _kv_lock = threading.RLock()  # Add thread-safety for kv_store operations
 
 # Track original methods for uninstrumentation
 _original_methods = {}
+
+
+def _safe_get_metadata(container):
+    try:
+        if hasattr(container, "params") and hasattr(container.params, "metadata"):
+            md = getattr(container.params, "metadata", None)
+        else:
+            md = getattr(container, "metadata", None)
+    except AttributeError:
+        md = None
+    return md if isinstance(md, dict) else {}
+
+
+def _safe_get_observe_meta(container) -> dict:
+    return dict(_safe_get_metadata(container).get("observe", {}))
+
+
+def _safe_get_message_id(container) -> str | None:
+    try:
+        message = getattr(getattr(container, "params", container), "message", None)
+        if message is not None:
+            return (
+                getattr(message, "messageId", None)
+                or getattr(message, "message_id", None)
+                or getattr(message, "id", None)
+            )
+    except Exception:
+        pass
+    return None
+
+
+def _safe_get_target_name(container=None, fallback=None) -> str | None:
+    candidates = [container, fallback]
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        for attr in ("agent_card", "agent", "target_agent", "target"):
+            nested = getattr(candidate, attr, None)
+            if nested is not None:
+                candidates.append(nested)
+        for attr in ("name", "id", "agent_id", "agent_name"):
+            value = getattr(candidate, attr, None)
+            if value:
+                return str(value)
+    return None
+
+
+def _safe_get_current_actor_name() -> str:
+    return str(get_value("workflow_name") or TracerWrapper.app_name or "unknown")
+
+
+def _emit_a2a_send_topology_event(request, client_instance, operation: str) -> None:
+    observe_meta = _safe_get_observe_meta(request)
+    session_id = observe_meta.get("session_id")
+    if not session_id:
+        return
+
+    sender = observe_meta.get("last_agent_name") or _safe_get_current_actor_name()
+    target = _safe_get_target_name(request, client_instance) or "unknown"
+    message_id = _safe_get_message_id(request)
+    agent_sequence = observe_meta.get("agent_sequence")
+    fork_id = observe_meta.get("fork_id")
+
+    upsert_topology_edge(
+        session_id,
+        sender,
+        target,
+        transport="a2a",
+        status="sent",
+        operation=operation,
+        message_id=message_id,
+        sequence=int(agent_sequence) if str(agent_sequence).isdigit() else None,
+        fork_id=fork_id,
+        kind="a2a_message",
+    )
+    emit_topology_event(
+        "a2a.message.sent",
+        session_id=session_id,
+        include_snapshot=True,
+        source=sender,
+        target=target,
+        operation=operation,
+        message_id=message_id,
+        sequence=int(agent_sequence) if str(agent_sequence).isdigit() else None,
+        fork_id=fork_id,
+        protocol="a2a",
+    )
+
+
+def _emit_a2a_receive_topology_event(params, handler_instance, operation: str) -> None:
+    observe_meta = _safe_get_observe_meta(params)
+    session_id = observe_meta.get("session_id")
+    if not session_id:
+        return
+
+    source = observe_meta.get("last_agent_name") or "unknown"
+    target = _safe_get_target_name(handler_instance) or _safe_get_current_actor_name()
+    message_id = _safe_get_message_id(params)
+    agent_sequence = observe_meta.get("agent_sequence")
+    fork_id = observe_meta.get("fork_id")
+
+    upsert_topology_edge(
+        session_id,
+        source,
+        target,
+        transport="a2a",
+        status="received",
+        operation=operation,
+        message_id=message_id,
+        sequence=int(agent_sequence) if str(agent_sequence).isdigit() else None,
+        fork_id=fork_id,
+        kind="a2a_message",
+    )
+    emit_topology_event(
+        "a2a.message.received",
+        session_id=session_id,
+        include_snapshot=True,
+        source=source,
+        target=target,
+        operation=operation,
+        message_id=message_id,
+        sequence=int(agent_sequence) if str(agent_sequence).isdigit() else None,
+        fork_id=fork_id,
+        protocol="a2a",
+    )
 
 
 def _inject_observe_metadata(request, span_name: str):
@@ -160,6 +286,9 @@ class A2AInstrumentor(BaseInstrumentor):
                     request = _inject_observe_metadata(
                         request, "a2a.client.send_message"
                     )
+                    _emit_a2a_send_topology_event(
+                        request, self, "send_message"
+                    )
                 return await original_send_message(self, request, *args, **kwargs)
 
             BaseA2AClient.send_message = instrumented_send_message
@@ -181,6 +310,9 @@ class A2AInstrumentor(BaseInstrumentor):
                 ):
                     request = _inject_observe_metadata(
                         request, "a2a.client.send_message_streaming"
+                    )
+                    _emit_a2a_send_topology_event(
+                        request, self, "send_message_streaming"
                     )
                 # This is an async generator, so we need to yield from it
                 async for response in original_send_message_streaming(
@@ -319,6 +451,8 @@ class A2AInstrumentor(BaseInstrumentor):
                         }
                     )
 
+                _emit_a2a_send_topology_event(request, self, "send_message")
+
             # Call through without transport-specific kwargs
             return await original_send_message(self, request, *args, **kwargs)
 
@@ -430,6 +564,8 @@ class A2AInstrumentor(BaseInstrumentor):
                             }
                         )
 
+                    _emit_a2a_send_topology_event(request, self, "broadcast_message")
+
                 # Call through without transport-specific kwargs
                 return await original_broadcast_message(self, request, *args, **kwargs)
 
@@ -522,6 +658,9 @@ class A2AInstrumentor(BaseInstrumentor):
                                     f"session.{session_id}.agents.{seq}.branch_index",
                                     fork_branch_index,
                                 )
+                    _emit_a2a_receive_topology_event(
+                        params, self, "on_message_send"
+                    )
 
             try:
                 return await original_server_on_message_send(self, params, context)
@@ -629,6 +768,9 @@ class A2AInstrumentor(BaseInstrumentor):
                                         f"session.{session_id}.agents.{seq}.branch_index",
                                         fork_branch_index,
                                     )
+                        _emit_a2a_receive_topology_event(
+                            params, self, "on_message_send_stream"
+                        )
 
                 try:
                     # This is an async generator
@@ -752,6 +894,8 @@ class A2AInstrumentor(BaseInstrumentor):
                     # Fallback
                     request = request.model_copy(update={"metadata": metadata})
 
+                _emit_a2a_send_topology_event(request, self, "slima2a.send_message")
+
             # Call through without transport-specific kwargs
             return await original_srpc_transport_send_message(
                 self, request, *args, **kwargs
@@ -853,6 +997,10 @@ class A2AInstrumentor(BaseInstrumentor):
                 except Exception:
                     # Fallback
                     request = request.model_copy(update={"metadata": metadata})
+
+                _emit_a2a_send_topology_event(
+                    request, self, "slima2a.send_message_streaming"
+                )
 
             # Call through without transport-specific kwargs
             return await original_srpc_transport_send_message_streaming(

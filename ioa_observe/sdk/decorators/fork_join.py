@@ -27,6 +27,7 @@ from typing import List, Optional, Tuple
 from opentelemetry.trace import Link, SpanContext, TraceFlags
 
 from ioa_observe.sdk.client import kv_store
+from ioa_observe.sdk.tracing.topology import emit_topology_event
 
 logger = logging.getLogger(__name__)
 
@@ -469,6 +470,16 @@ def annotate_fork_branch(
     span.set_attribute(ForkJoinAttributes.FORK_BRANCH_INDEX, branch_index)
     span.set_attribute(ForkJoinAttributes.FORK_PARENT_SEQUENCE, parent_seq)
     span.set_attribute(ForkJoinAttributes.FORK_PARENT_NAME, parent_name)
+    emit_topology_event(
+        "topology.fork.detected",
+        session_id=span.attributes.get("session.id"),
+        include_snapshot=True,
+        fork_id=fork_id,
+        parent_name=parent_name,
+        parent_sequence=parent_seq,
+        branch_index=branch_index,
+        branch_name=span.attributes.get("observe.entity.name"),
+    )
 
 
 def annotate_join(span, fork_id: str, branch_count: int) -> None:
@@ -481,6 +492,14 @@ def annotate_join(span, fork_id: str, branch_count: int) -> None:
             ForkJoinAttributes.JOIN_FORK_ID: fork_id,
             ForkJoinAttributes.JOIN_BRANCH_COUNT: branch_count,
         },
+    )
+    emit_topology_event(
+        "topology.join.detected",
+        session_id=span.attributes.get("session.id"),
+        include_snapshot=True,
+        fork_id=fork_id,
+        branch_count=branch_count,
+        join_node=span.attributes.get("observe.entity.name"),
     )
 
 

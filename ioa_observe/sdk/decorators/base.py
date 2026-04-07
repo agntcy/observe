@@ -46,6 +46,7 @@ from ioa_observe.sdk.metrics.agents.tracker import connection_tracker
 from ioa_observe.sdk.metrics.agents.heuristics import compute_agent_interpretation_score
 from ioa_observe.sdk.telemetry import Telemetry
 from ioa_observe.sdk.tracing import get_tracer, set_workflow_name
+from ioa_observe.sdk.tracing.topology import upsert_topology_edge, upsert_topology_node
 from ioa_observe.sdk.tracing.tracing import (
     TracerWrapper,
     set_entity_path,
@@ -360,6 +361,31 @@ def _setup_span(
                 span._ioa_agent_sequence = new_seq
                 # Register live span ref for retroactive fork annotation
                 register_active_span(session_id, new_seq, span)
+                upsert_topology_node(
+                    session_id,
+                    entity_name,
+                    status="started",
+                    kind="agent",
+                    sequence=new_seq,
+                    previous_agent=previous_agent_name,
+                    join_fork_id=join_fork_id,
+                    fork_id=fork_id or None,
+                    branch_index=branch_index if branch_index >= 0 else None,
+                    span_id=format(span.get_span_context().span_id, "016x"),
+                    trace_id=format(span.get_span_context().trace_id, "032x"),
+                )
+                if previous_agent_name:
+                    upsert_topology_edge(
+                        session_id,
+                        previous_agent_name,
+                        entity_name,
+                        transport="agent_handoff",
+                        status="observed",
+                        sequence=new_seq,
+                        kind="agent_handoff",
+                        fork_id=fork_id or None,
+                        join_fork_id=join_fork_id,
+                    )
 
             # Annotate fork attributes if this agent is a fork branch
             if fork_id:
@@ -551,6 +577,17 @@ def _cleanup_span(span, ctx_token):
     if session_id and agent_seq:
         mark_agent_ended(session_id, agent_seq)
         unregister_active_span(session_id, agent_seq)
+        entity_name = span.attributes.get(OBSERVE_ENTITY_NAME)
+        if entity_name:
+            upsert_topology_node(
+                session_id,
+                entity_name,
+                status="completed",
+                kind="agent",
+                sequence=agent_seq,
+                span_id=format(span.get_span_context().span_id, "016x"),
+                trace_id=format(span.get_span_context().trace_id, "032x"),
+            )
 
     # Mark tool as no longer in-flight for tool-level fork detection
     tool_parent_hex = getattr(span, "_ioa_tool_parent_hex", None)
