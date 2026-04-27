@@ -997,15 +997,10 @@ class A2AInstrumentor(BaseInstrumentor):
                 except Exception:
                     # Fallback
                     request = request.model_copy(update={"metadata": metadata})
-
-                _emit_a2a_send_topology_event(
-                    request, self, "slima2a.send_message_streaming"
-                )
-
-            # Call through without transport-specific kwargs
-            return await original_srpc_transport_send_message_streaming(
+            async for response in original_srpc_transport_send_message_streaming(
                 self, request, *args, **kwargs
-            )
+            ):
+                yield response
 
         SRPCTransport.send_message_streaming = (
             instrumented_srpc_transport_send_message_streaming
