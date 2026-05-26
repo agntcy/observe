@@ -10,6 +10,7 @@ import pytest
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.semconv._incubating.attributes import gen_ai_attributes as GenAIAttributes
 from opentelemetry.semconv_ai import SpanAttributes
 from opentelemetry.trace import Status, StatusCode, Tracer, TracerProvider
 
@@ -259,7 +260,7 @@ def test_manual_report(exporter_with_custom_span_processor, openai_client):
     assert open_ai_span.attributes[SpanAttributes.LLM_USAGE_TOTAL_TOKENS] is not None
 
     assert (
-        open_ai_span.attributes[SpanAttributes.LLM_USAGE_COMPLETION_TOKENS] is not None
+        open_ai_span.attributes[GenAIAttributes.GEN_AI_USAGE_OUTPUT_TOKENS] is not None
     )
     assert open_ai_span.end_time > open_ai_span.start_time
 
