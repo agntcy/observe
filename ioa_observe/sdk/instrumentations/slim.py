@@ -276,14 +276,14 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             @functools.wraps(original_create_session_async)
             async def wrapped_create_session_async(
-                self, config, dest=None, *args, **kwargs
+                self, config, destination=None, *args, **kwargs
             ):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span(
                         "slim.app.create_session"
                     ) as span:
                         ctx = await original_create_session_async(
-                            self, config, dest, *args, **kwargs
+                            self, config, destination, *args, **kwargs
                         )
                         if hasattr(ctx, "session"):
                             sid = _get_session_id(ctx.session)
@@ -291,7 +291,7 @@ class SLIMInstrumentor(BaseInstrumentor):
                                 span.set_attribute("slim.session.id", sid)
                         return ctx
                 return await original_create_session_async(
-                    self, config, dest, *args, **kwargs
+                    self, config, destination, *args, **kwargs
                 )
 
             App.create_session_async = wrapped_create_session_async
@@ -302,21 +302,21 @@ class SLIMInstrumentor(BaseInstrumentor):
 
             @functools.wraps(original_create_session_and_wait_async)
             async def wrapped_create_session_and_wait_async(
-                self, config, dest=None, *args, **kwargs
+                self, config, destination=None, *args, **kwargs
             ):
                 if _global_tracer:
                     with _global_tracer.start_as_current_span(
                         "slim.app.create_session"
                     ) as span:
                         session = await original_create_session_and_wait_async(
-                            self, config, dest, *args, **kwargs
+                            self, config, destination, *args, **kwargs
                         )
                         sid = _get_session_id(session)
                         if sid:
                             span.set_attribute("slim.session.id", sid)
                         return session
                 return await original_create_session_and_wait_async(
-                    self, config, dest, *args, **kwargs
+                    self, config, destination, *args, **kwargs
                 )
 
             App.create_session_and_wait_async = wrapped_create_session_and_wait_async
