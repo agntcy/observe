@@ -29,7 +29,9 @@ def test_create_session_and_wait_async_accepts_destination_kwarg():
     captured = {}
 
     class App:
-        async def create_session_and_wait_async(self, config, destination=None, *args, **kwargs):
+        async def create_session_and_wait_async(
+            self, config, destination=None, *args, **kwargs
+        ):
             captured["destination"] = destination
 
     fake_bindings = types.SimpleNamespace(App=App)
@@ -38,5 +40,7 @@ def test_create_session_and_wait_async_accepts_destination_kwarg():
         tw.return_value.get_tracer.return_value = None
         SLIMInstrumentor()._instrument_app(fake_bindings)
 
-    asyncio.run(App.create_session_and_wait_async(App(), "config", destination="dest_name"))
+    asyncio.run(
+        App.create_session_and_wait_async(App(), "config", destination="dest_name")
+    )
     assert captured["destination"] == "dest_name"
