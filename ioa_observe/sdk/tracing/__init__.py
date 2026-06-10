@@ -8,6 +8,13 @@ from ioa_observe.sdk.tracing.tracing import (
     get_current_traceparent,
     session_start,
 )
+from ioa_observe.sdk.tracing.runtime_events import (
+    RuntimeEvent,
+    RuntimeEventAttribute,
+    RuntimeEventName,
+    build_runtime_event_attributes,
+    validate_runtime_event_attributes,
+)
 
 __all__ = [
     "get_tracer",
@@ -15,4 +22,9 @@ __all__ = [
     "set_session_id",
     "get_current_traceparent",
     "session_start",
+    "RuntimeEvent",
+    "RuntimeEventAttribute",
+    "RuntimeEventName",
+    "build_runtime_event_attributes",
+    "validate_runtime_event_attributes",
 ]
