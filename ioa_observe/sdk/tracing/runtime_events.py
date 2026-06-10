@@ -77,7 +77,9 @@ class RuntimeEvent:
     attributes: Mapping[str, Any] = field(default_factory=dict)
 
     def to_otel_attributes(self) -> dict[str, str | bool | int | float]:
-        event_name = self.name.value if isinstance(self.name, RuntimeEventName) else self.name
+        event_name = (
+            self.name.value if isinstance(self.name, RuntimeEventName) else self.name
+        )
         attributes: dict[str, str | bool | int | float] = {
             RuntimeEventAttribute.EVENT_NAME.value: event_name,
             RuntimeEventAttribute.EVENT_TIME.value: self.event_time.isoformat(),
