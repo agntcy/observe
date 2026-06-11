@@ -15,6 +15,12 @@ from ioa_observe.sdk.tracing.runtime_events import (
     build_runtime_event_attributes,
     validate_runtime_event_attributes,
 )
+from ioa_observe.sdk.tracing.runtime_event_emitter import (
+    clear_runtime_event_listeners,
+    register_runtime_event_listener,
+    unregister_runtime_event_listener,
+)
+from ioa_observe.sdk.tracing.topology import get_live_topology_snapshot
 
 __all__ = [
     "get_tracer",
@@ -27,4 +33,8 @@ __all__ = [
     "RuntimeEventName",
     "build_runtime_event_attributes",
     "validate_runtime_event_attributes",
+    "register_runtime_event_listener",
+    "unregister_runtime_event_listener",
+    "clear_runtime_event_listeners",
+    "get_live_topology_snapshot",
 ]

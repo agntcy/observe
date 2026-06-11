@@ -31,6 +31,10 @@ from ioa_observe.sdk.tracing.tracing import (
     set_external_prompt_tracing_context,
     #    init_spans_exporter,
 )
+from ioa_observe.sdk.tracing.topology import (
+    register_topology_listener,
+    unregister_topology_listener,
+)
 from typing import Dict
 from ioa_observe.sdk.client.client import Client
 import logging
@@ -214,6 +218,14 @@ class Observe:
 
     def set_prompt(template: str, variables: dict, version: int):
         set_external_prompt_tracing_context(template, variables, version)
+
+    @staticmethod
+    def register_topology_listener(callback) -> None:
+        register_topology_listener(callback)
+
+    @staticmethod
+    def unregister_topology_listener(callback) -> None:
+        unregister_topology_listener(callback)
 
     @staticmethod
     def get():

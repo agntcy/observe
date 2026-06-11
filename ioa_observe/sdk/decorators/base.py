@@ -53,6 +53,11 @@ from ioa_observe.sdk.tracing.tracing import (
     set_agent_id_event,
     set_application_id,
 )
+from ioa_observe.sdk.tracing.topology import (
+    record_node_completed,
+    record_node_started,
+    upsert_topology_edge,
+)
 from ioa_observe.sdk.metrics.agents.agent_connections import connection_reliability
 from ioa_observe.sdk.utils import camel_to_snake
 from ioa_observe.sdk.utils.const import (
@@ -358,8 +363,22 @@ def _setup_span(
                 # Store sequence on span object for _cleanup_span to use
                 span._ioa_session_id = session_id
                 span._ioa_agent_sequence = new_seq
+                span._ioa_agent_name = entity_name
                 # Register live span ref for retroactive fork annotation
                 register_active_span(session_id, new_seq, span)
+                record_node_started(session_id, entity_name)
+                if previous_agent_name:
+                    upsert_topology_edge(
+                        session_id,
+                        previous_agent_name,
+                        entity_name,
+                        transport="agent_handoff",
+                        status="observed",
+                        operation="agent_handoff",
+                        sequence=new_seq,
+                        fork_id=fork_id or join_fork_id,
+                        kind="agent_handoff",
+                    )
 
             # Annotate fork attributes if this agent is a fork branch
             if fork_id:
@@ -551,6 +570,9 @@ def _cleanup_span(span, ctx_token):
     if session_id and agent_seq:
         mark_agent_ended(session_id, agent_seq)
         unregister_active_span(session_id, agent_seq)
+        agent_name = getattr(span, "_ioa_agent_name", None)
+        if agent_name:
+            record_node_completed(session_id, agent_name)
 
     # Mark tool as no longer in-flight for tool-level fork detection
     tool_parent_hex = getattr(span, "_ioa_tool_parent_hex", None)
