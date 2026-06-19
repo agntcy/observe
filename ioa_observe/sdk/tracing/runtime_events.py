@@ -14,6 +14,8 @@ class RuntimeEventName(str, Enum):
     TOPOLOGY_NODE_STARTED = "topology.node.started"
     TOPOLOGY_NODE_COMPLETED = "topology.node.completed"
     TOPOLOGY_EDGE_UPDATED = "topology.edge.updated"
+    TOOL_STARTED = "tool.started"
+    TOOL_COMPLETED = "tool.completed"
     A2A_MESSAGE_SENT = "a2a.message.sent"
     A2A_MESSAGE_RECEIVED = "a2a.message.received"
 
@@ -24,6 +26,7 @@ class RuntimeEventAttribute(str, Enum):
     SESSION_ID = "session.id"
     SNAPSHOT_VERSION = "snapshot.version"
     AGENT_NAME = "agent.name"
+    TOOL_NAME = "tool.name"
     SOURCE_AGENT = "source.agent"
     TARGET_AGENT = "target.agent"
     MESSAGE_ID = "message.id"
@@ -52,6 +55,10 @@ EVENT_REQUIRED_ATTRIBUTES = {
         RuntimeEventAttribute.SOURCE_AGENT.value,
         RuntimeEventAttribute.TARGET_AGENT.value,
     },
+    RuntimeEventName.TOOL_STARTED.value: COMMON_REQUIRED_ATTRIBUTES
+    | {RuntimeEventAttribute.TOOL_NAME.value},
+    RuntimeEventName.TOOL_COMPLETED.value: COMMON_REQUIRED_ATTRIBUTES
+    | {RuntimeEventAttribute.TOOL_NAME.value},
     RuntimeEventName.A2A_MESSAGE_SENT.value: COMMON_REQUIRED_ATTRIBUTES
     | {
         RuntimeEventAttribute.SOURCE_AGENT.value,

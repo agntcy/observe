@@ -46,6 +46,12 @@ from ioa_observe.sdk.metrics.agents.tracker import connection_tracker
 from ioa_observe.sdk.metrics.agents.heuristics import compute_agent_interpretation_score
 from ioa_observe.sdk.telemetry import Telemetry
 from ioa_observe.sdk.tracing import get_tracer, set_workflow_name
+from ioa_observe.sdk.tracing.runtime_event_emitter import emit_runtime_event
+from ioa_observe.sdk.tracing.runtime_events import (
+    RuntimeEventAttribute,
+    RuntimeEventName,
+    build_runtime_event_attributes,
+)
 from ioa_observe.sdk.tracing.tracing import (
     TracerWrapper,
     set_entity_path,
@@ -391,6 +397,18 @@ def _setup_span(
             if join_fork_id:
                 annotate_join(span, join_fork_id, len(links))
 
+        if tlp_span_kind == ObserveSpanKindValues.TOOL and session_id:
+            span._ioa_session_id = session_id
+            span._ioa_tool_name = entity_name
+            emit_runtime_event(
+                build_runtime_event_attributes(
+                    RuntimeEventName.TOOL_STARTED,
+                    session_id=session_id,
+                    snapshot_version=0,
+                    **{RuntimeEventAttribute.TOOL_NAME.value: entity_name},
+                )
+            )
+
         if tlp_span_kind in [
             ObserveSpanKindValues.TASK,
             ObserveSpanKindValues.TOOL,
@@ -579,6 +597,17 @@ def _cleanup_span(span, ctx_token):
     tool_seq = getattr(span, "_ioa_tool_seq", None)
     if session_id and tool_parent_hex and tool_seq:
         mark_tool_ended_for_fork(session_id, tool_parent_hex, tool_seq)
+
+    tool_name = getattr(span, "_ioa_tool_name", None)
+    if session_id and tool_name:
+        emit_runtime_event(
+            build_runtime_event_attributes(
+                RuntimeEventName.TOOL_COMPLETED,
+                session_id=session_id,
+                snapshot_version=0,
+                **{RuntimeEventAttribute.TOOL_NAME.value: tool_name},
+            )
+        )
 
     span.end()
     context_api.detach(ctx_token)

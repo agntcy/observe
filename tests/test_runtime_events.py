@@ -7,11 +7,12 @@ from types import SimpleNamespace
 import pytest
 
 from ioa_observe.sdk.client import kv_store
-from ioa_observe.sdk.decorators import agent
+from ioa_observe.sdk.decorators import agent, tool
 from ioa_observe.sdk.instrumentations.a2a import (
     _emit_a2a_receive_topology_event,
     _emit_a2a_send_topology_event,
 )
+from ioa_observe.sdk import Observe
 from ioa_observe.sdk.tracing import (
     RuntimeEvent,
     RuntimeEventAttribute,
@@ -55,6 +56,11 @@ def runtime_planner(payload: dict) -> dict:
 @agent(name="runtime_executor", description="Executes tasks")
 def runtime_executor(payload: dict) -> dict:
     return {"result": payload["planned"]}
+
+
+@tool(name="runtime_tool", description="Runs a tool")
+def runtime_tool(payload: dict) -> dict:
+    return {"tool_result": payload["task"]}
 
 
 def test_builds_session_started_runtime_event_attributes():
@@ -152,6 +158,16 @@ def test_validation_rejects_unknown_runtime_event_name():
         )
 
 
+def test_runtime_event_logger_bootstraps_without_app_logging_enabled():
+    from opentelemetry._logs import get_logger
+
+    Observe.init(app_name="runtime-events-test", api_endpoint="http://localhost:4318", api_key="x")
+    with session_start():
+        pass
+
+    assert type(get_logger("ioa_observe.runtime_events")).__name__ == "Logger"
+
+
 def test_session_start_pushes_runtime_event(runtime_events):
     with session_start() as metadata:
         session_id = metadata["executionID"]
@@ -233,3 +249,27 @@ def test_a2a_helpers_push_runtime_events(runtime_events):
     assert sent[RuntimeEventAttribute.SEQUENCE.value] == 2
     assert received[RuntimeEventAttribute.SOURCE_AGENT.value] == "planner"
     assert received[RuntimeEventAttribute.TARGET_AGENT.value] == "executor"
+
+
+def test_tool_lifecycle_pushes_runtime_events(runtime_events):
+    with session_start():
+        result = runtime_tool({"task": "lookup"})
+
+    assert result == {"tool_result": "lookup"}
+
+    event_names = [
+        event[RuntimeEventAttribute.EVENT_NAME.value] for event in runtime_events
+    ]
+    assert RuntimeEventName.TOOL_STARTED.value in event_names
+    assert RuntimeEventName.TOOL_COMPLETED.value in event_names
+
+    tool_names = {
+        event.get(RuntimeEventAttribute.TOOL_NAME.value)
+        for event in runtime_events
+        if event[RuntimeEventAttribute.EVENT_NAME.value]
+        in {
+            RuntimeEventName.TOOL_STARTED.value,
+            RuntimeEventName.TOOL_COMPLETED.value,
+        }
+    }
+    assert "runtime_tool" in tool_names

@@ -15,6 +15,8 @@ RuntimeEventListener = Callable[[dict[str, Any]], None]
 _logger = logging.getLogger(__name__)
 _listeners: list[RuntimeEventListener] = []
 _listeners_lock = threading.RLock()
+_runtime_logger_lock = threading.RLock()
+_runtime_logger_ready = False
 
 
 def register_runtime_event_listener(listener: RuntimeEventListener) -> None:
@@ -53,6 +55,7 @@ def _emit_to_listeners(event: dict[str, Any]) -> None:
 
 def _emit_to_otel_logs(event: dict[str, Any]) -> None:
     try:
+        _ensure_runtime_event_logger()
         from opentelemetry._logs import LogRecord, SeverityNumber, get_logger
 
         logger = get_logger("ioa_observe.runtime_events")
@@ -69,3 +72,38 @@ def _emit_to_otel_logs(event: dict[str, Any]) -> None:
         logger.emit(record)
     except Exception:  # pragma: no cover - depends on installed OTel log API
         _logger.debug("Unable to emit runtime event through OTel logs", exc_info=True)
+
+
+def _ensure_runtime_event_logger() -> None:
+    global _runtime_logger_ready
+
+    if _runtime_logger_ready:
+        return
+
+    with _runtime_logger_lock:
+        if _runtime_logger_ready:
+            return
+
+        from opentelemetry._logs import get_logger_provider
+
+        current_provider = get_logger_provider()
+        if type(current_provider).__name__ != "ProxyLoggerProvider":
+            _runtime_logger_ready = True
+            return
+
+        from ioa_observe.sdk.logging.logging import (
+            init_logging_exporter,
+            init_logging_provider,
+        )
+        from ioa_observe.sdk.tracing.tracing import TracerWrapper
+
+        if not TracerWrapper.endpoint:
+            return
+
+        exporter = init_logging_exporter(TracerWrapper.endpoint, TracerWrapper.headers)
+        init_logging_provider(
+            exporter,
+            TracerWrapper.resource_attributes,
+            install_logging_handler=False,
+        )
+        _runtime_logger_ready = True
