@@ -161,7 +161,11 @@ def test_validation_rejects_unknown_runtime_event_name():
 def test_runtime_event_logger_bootstraps_without_app_logging_enabled():
     from opentelemetry._logs import get_logger
 
-    Observe.init(app_name="runtime-events-test", api_endpoint="http://localhost:4318", api_key="x")
+    Observe.init(
+        app_name="runtime-events-test",
+        api_endpoint="http://localhost:4318",
+        api_key="x",
+    )
     with session_start():
         pass
 

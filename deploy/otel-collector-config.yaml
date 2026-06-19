@@ -29,7 +29,7 @@ service:
     traces:
       receivers: [otlp]
       exporters: [clickhouse]
-    
+
     logs:
       receivers: [otlp]
       exporters: [clickhouse]
