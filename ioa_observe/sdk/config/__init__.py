@@ -43,12 +43,9 @@ def is_realtime_observability_enabled() -> bool:
     if override is not None:
         return override
     return (
-        (os.getenv("OBSERVE_REALTIME_OBSERVABILITY_ENABLED") or "true").lower()
-        == "true"
-    )
+        os.getenv("OBSERVE_REALTIME_OBSERVABILITY_ENABLED") or "true"
+    ).lower() == "true"
 
 
 def set_realtime_observability_enabled(enabled: bool | None) -> None:
     _realtime_observability_config.set_override(enabled)
-
-

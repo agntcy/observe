@@ -163,9 +163,7 @@ def test_slim_send_and_receive_emit_live_edge_events(topology_events):
         event for event in topology_events if event["type"] == "slim.message.sent"
     )
     received = next(
-        event
-        for event in topology_events
-        if event["type"] == "slim.message.received"
+        event for event in topology_events if event["type"] == "slim.message.received"
     )
 
     assert sent["source"] == "planner"
@@ -259,5 +257,3 @@ def test_observe_init_can_disable_realtime_topology_events(topology_events):
     assert node_ids["planner"]["status"] == "completed"
     assert node_ids["executor"]["status"] == "completed"
     assert edge_ids["agent_handoff:planner->executor"]["status"] == "observed"
-
-

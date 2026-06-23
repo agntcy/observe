@@ -376,4 +376,3 @@ def test_observe_init_can_disable_realtime_runtime_events(runtime_events):
         runtime_tool({"task": "lookup"})
 
     assert runtime_events == []
-

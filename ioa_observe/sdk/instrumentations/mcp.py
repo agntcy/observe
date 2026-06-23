@@ -99,13 +99,19 @@ def _extract_mcp_peer_name(instance) -> str | None:
     return None
 
 
-def _emit_mcp_send_topology_event(observe_meta, operation: str, message_id=None) -> None:
+def _emit_mcp_send_topology_event(
+    observe_meta, operation: str, message_id=None
+) -> None:
     session_id = observe_meta.get("session.id")
     target = observe_meta.get("target_agent")
     if not session_id or not target:
         return
 
-    source = observe_meta.get("source_agent") or observe_meta.get("last_agent_name") or _safe_get_current_actor_name()
+    source = (
+        observe_meta.get("source_agent")
+        or observe_meta.get("last_agent_name")
+        or _safe_get_current_actor_name()
+    )
     sequence = _safe_int(observe_meta.get("agent_sequence"))
     fork_id = observe_meta.get("fork_id")
 
@@ -135,12 +141,18 @@ def _emit_mcp_send_topology_event(observe_meta, operation: str, message_id=None)
     )
 
 
-def _emit_mcp_receive_topology_event(observe_meta, operation: str, message_id=None) -> None:
+def _emit_mcp_receive_topology_event(
+    observe_meta, operation: str, message_id=None
+) -> None:
     session_id = observe_meta.get("session.id")
     if not session_id:
         return
 
-    source = observe_meta.get("source_agent") or observe_meta.get("last_agent_name") or "unknown"
+    source = (
+        observe_meta.get("source_agent")
+        or observe_meta.get("last_agent_name")
+        or "unknown"
+    )
     target = observe_meta.get("target_agent") or _safe_get_current_actor_name()
     sequence = _safe_int(observe_meta.get("agent_sequence"))
     fork_id = observe_meta.get("fork_id")
@@ -293,15 +305,23 @@ class McpInstrumentor(BaseInstrumentor):
                 try:
                     read_stream, write_stream = result
                     yield (
-                        InstrumentedStreamReader(read_stream, tracer, peer_name=peer_name),
-                        InstrumentedStreamWriter(write_stream, tracer, peer_name=peer_name),
+                        InstrumentedStreamReader(
+                            read_stream, tracer, peer_name=peer_name
+                        ),
+                        InstrumentedStreamWriter(
+                            write_stream, tracer, peer_name=peer_name
+                        ),
                     )
                 except ValueError:
                     try:
                         read_stream, write_stream, get_session_id_callback = result
                         yield (
-                            InstrumentedStreamReader(read_stream, tracer, peer_name=peer_name),
-                            InstrumentedStreamWriter(write_stream, tracer, peer_name=peer_name),
+                            InstrumentedStreamReader(
+                                read_stream, tracer, peer_name=peer_name
+                            ),
+                            InstrumentedStreamWriter(
+                                write_stream, tracer, peer_name=peer_name
+                            ),
                             get_session_id_callback,
                         )
                     except Exception as e:
@@ -324,7 +344,9 @@ class McpInstrumentor(BaseInstrumentor):
             wrapped(*args, **kwargs)
             reader = getattr(instance, "_incoming_message_stream_reader", None)
             writer = getattr(instance, "_incoming_message_stream_writer", None)
-            peer_name = _safe_stringify_mcp_peer(reader) or _safe_stringify_mcp_peer(writer)
+            peer_name = _safe_stringify_mcp_peer(reader) or _safe_stringify_mcp_peer(
+                writer
+            )
             if reader and writer:
                 setattr(
                     instance,
@@ -416,7 +438,10 @@ class McpInstrumentor(BaseInstrumentor):
                             "fork_branch_index"
                         ]
 
-                source_agent = observe_meta.get("last_agent_name") or _safe_get_current_actor_name()
+                source_agent = (
+                    observe_meta.get("last_agent_name")
+                    or _safe_get_current_actor_name()
+                )
                 if source_agent:
                     observe_meta["source_agent"] = source_agent
                 target_agent = _extract_mcp_peer_name(instance)
@@ -436,7 +461,9 @@ class McpInstrumentor(BaseInstrumentor):
                         meta_kwargs.update(observe_meta)
                         from mcp.types import RequestParams as McpRequestParamsType
 
-                        args[0].root.params.meta = McpRequestParamsType.Meta(**meta_kwargs)
+                        args[0].root.params.meta = McpRequestParamsType.Meta(
+                            **meta_kwargs
+                        )
                     except Exception:
                         # Fallback: set as dict (may trigger Pydantic warning)
                         try:

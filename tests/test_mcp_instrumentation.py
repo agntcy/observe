@@ -69,12 +69,15 @@ def test_patch_mcp_client_injects_realtime_protocol_metadata_and_events():
     instrumented = McpInstrumentor().patch_mcp_client(get_tracer(__name__))
 
     try:
-        with patch(
-            "ioa_observe.sdk.instrumentations.mcp.get_value",
-            side_effect=context_value,
-        ), patch(
-            "ioa_observe.sdk.tracing.get_current_traceparent",
-            return_value=traceparent,
+        with (
+            patch(
+                "ioa_observe.sdk.instrumentations.mcp.get_value",
+                side_effect=context_value,
+            ),
+            patch(
+                "ioa_observe.sdk.tracing.get_current_traceparent",
+                return_value=traceparent,
+            ),
         ):
             result = asyncio.run(instrumented(wrapped, session, (request,), {}))
     finally:
@@ -101,6 +104,3 @@ def test_patch_mcp_client_injects_realtime_protocol_metadata_and_events():
     snapshot = get_live_topology_snapshot(session_id)
     assert snapshot["edges"][0]["id"] == "mcp:planner->mcp://math-server"
     assert snapshot["edges"][0]["status"] == "sent"
-
-
-

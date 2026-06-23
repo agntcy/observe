@@ -44,8 +44,10 @@ def _safe_stringify_slim_name(candidate):
         return None
     if isinstance(candidate, str):
         return candidate
-    if hasattr(candidate, "organization") and hasattr(candidate, "namespace") and hasattr(
-        candidate, "app"
+    if (
+        hasattr(candidate, "organization")
+        and hasattr(candidate, "namespace")
+        and hasattr(candidate, "app")
     ):
         return f"{candidate.organization}/{candidate.namespace}/{candidate.app}"
     for attr in ("name", "app", "destination", "route", "target", "id"):
@@ -126,11 +128,7 @@ def _emit_slim_receive_topology_event(headers, operation):
     if not session_id:
         return
 
-    source = (
-        headers.get("source_agent")
-        or headers.get("last_agent_name")
-        or "unknown"
-    )
+    source = headers.get("source_agent") or headers.get("last_agent_name") or "unknown"
     target = (
         headers.get("target_agent")
         or _slim_session_target(headers.get("slim_session_id"))

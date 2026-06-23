@@ -83,9 +83,7 @@ def test_publish_to_async_injects_realtime_protocol_metadata_and_events():
             captured["payload"] = payload
             return "ok"
 
-    traceparent = (
-        "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
-    )
+    traceparent = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
     session_id = "session-123"
     kv_store.set(f"execution.{traceparent}", session_id)
     kv_store.set(f"session.{session_id}.last_agent_name", "planner")
@@ -98,12 +96,15 @@ def test_publish_to_async_injects_realtime_protocol_metadata_and_events():
     SLIMInstrumentor()._wrap_publish(Session, "publish_to_async", msg_idx=1)
 
     try:
-        with patch(
-            "ioa_observe.sdk.instrumentations.slim.get_current_traceparent",
-            return_value=traceparent,
-        ), patch(
-            "ioa_observe.sdk.instrumentations.slim.get_value",
-            side_effect=context_value,
+        with (
+            patch(
+                "ioa_observe.sdk.instrumentations.slim.get_current_traceparent",
+                return_value=traceparent,
+            ),
+            patch(
+                "ioa_observe.sdk.instrumentations.slim.get_value",
+                side_effect=context_value,
+            ),
         ):
             result = asyncio.run(
                 Session.publish_to_async(
@@ -136,5 +137,3 @@ def test_publish_to_async_injects_realtime_protocol_metadata_and_events():
     snapshot = get_live_topology_snapshot(session_id)
     assert snapshot["edges"][0]["id"] == "slim:planner->slim://executor"
     assert snapshot["edges"][0]["status"] == "sent"
-
-
