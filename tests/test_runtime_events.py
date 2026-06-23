@@ -12,6 +12,14 @@ from ioa_observe.sdk.instrumentations.a2a import (
     _emit_a2a_receive_topology_event,
     _emit_a2a_send_topology_event,
 )
+from ioa_observe.sdk.instrumentations.mcp import (
+    _emit_mcp_receive_topology_event,
+    _emit_mcp_send_topology_event,
+)
+from ioa_observe.sdk.instrumentations.slim import (
+    _emit_slim_receive_topology_event,
+    _emit_slim_send_topology_event,
+)
 from ioa_observe.sdk import Observe
 from ioa_observe.sdk.tracing import (
     RuntimeEvent,
@@ -253,6 +261,79 @@ def test_a2a_helpers_push_runtime_events(runtime_events):
     assert sent[RuntimeEventAttribute.SEQUENCE.value] == 2
     assert received[RuntimeEventAttribute.SOURCE_AGENT.value] == "planner"
     assert received[RuntimeEventAttribute.TARGET_AGENT.value] == "executor"
+
+
+def test_slim_helpers_push_runtime_events(runtime_events):
+    headers = {
+        "session_id": "session-123",
+        "source_agent": "planner",
+        "target_agent": "slim://executor",
+        "agent_sequence": "2",
+        "fork_id": "fork-1",
+    }
+
+    _emit_slim_send_topology_event(headers, "publish_to_async")
+    _emit_slim_receive_topology_event(headers, "get_message_async")
+
+    sent = next(
+        event
+        for event in runtime_events
+        if event[RuntimeEventAttribute.EVENT_NAME.value]
+        == RuntimeEventName.SLIM_MESSAGE_SENT.value
+    )
+    received = next(
+        event
+        for event in runtime_events
+        if event[RuntimeEventAttribute.EVENT_NAME.value]
+        == RuntimeEventName.SLIM_MESSAGE_RECEIVED.value
+    )
+
+    assert sent[RuntimeEventAttribute.SOURCE_AGENT.value] == "planner"
+    assert sent[RuntimeEventAttribute.TARGET_AGENT.value] == "slim://executor"
+    assert sent[RuntimeEventAttribute.FORK_ID.value] == "fork-1"
+    assert sent[RuntimeEventAttribute.SEQUENCE.value] == 2
+    assert sent["network.protocol.name"] == "slim"
+    assert received[RuntimeEventAttribute.SOURCE_AGENT.value] == "planner"
+    assert received[RuntimeEventAttribute.TARGET_AGENT.value] == "slim://executor"
+    assert received["operation.name"] == "get_message_async"
+
+
+def test_mcp_helpers_push_runtime_events(runtime_events):
+    observe_meta = {
+        "session.id": "session-123",
+        "source_agent": "planner",
+        "target_agent": "mcp://math-server",
+        "agent_sequence": "2",
+        "fork_id": "fork-1",
+    }
+
+    _emit_mcp_send_topology_event(observe_meta, "tools/call", message_id="req-1")
+    _emit_mcp_receive_topology_event(
+        observe_meta,
+        "tools/call",
+        message_id="req-1",
+    )
+
+    sent = next(
+        event
+        for event in runtime_events
+        if event[RuntimeEventAttribute.EVENT_NAME.value]
+        == RuntimeEventName.MCP_MESSAGE_SENT.value
+    )
+    received = next(
+        event
+        for event in runtime_events
+        if event[RuntimeEventAttribute.EVENT_NAME.value]
+        == RuntimeEventName.MCP_MESSAGE_RECEIVED.value
+    )
+
+    assert sent[RuntimeEventAttribute.SOURCE_AGENT.value] == "planner"
+    assert sent[RuntimeEventAttribute.TARGET_AGENT.value] == "mcp://math-server"
+    assert sent[RuntimeEventAttribute.MESSAGE_ID.value] == "req-1"
+    assert sent["network.protocol.name"] == "mcp"
+    assert received[RuntimeEventAttribute.SOURCE_AGENT.value] == "planner"
+    assert received[RuntimeEventAttribute.TARGET_AGENT.value] == "mcp://math-server"
+    assert received[RuntimeEventAttribute.MESSAGE_ID.value] == "req-1"
 
 
 def test_tool_lifecycle_pushes_runtime_events(runtime_events):

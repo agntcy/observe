@@ -12,6 +12,14 @@ from ioa_observe.sdk.instrumentations.a2a import (
     _emit_a2a_receive_topology_event,
     _emit_a2a_send_topology_event,
 )
+from ioa_observe.sdk.instrumentations.mcp import (
+    _emit_mcp_receive_topology_event,
+    _emit_mcp_send_topology_event,
+)
+from ioa_observe.sdk.instrumentations.slim import (
+    _emit_slim_receive_topology_event,
+    _emit_slim_send_topology_event,
+)
 from ioa_observe.sdk.tracing import get_live_topology_snapshot, session_start
 from ioa_observe.sdk.tracing.topology import clear_topology_listeners
 
@@ -134,3 +142,94 @@ def test_a2a_send_and_receive_emit_live_edge_events(topology_events):
     assert edge["transport"] == "a2a"
     assert edge["updated_at_ms"] > 0
     assert snapshot["version"] >= 2
+
+
+def test_slim_send_and_receive_emit_live_edge_events(topology_events):
+    headers = {
+        "session_id": "session-123",
+        "source_agent": "planner",
+        "target_agent": "slim://executor",
+        "agent_sequence": "2",
+        "fork_id": "fork-1",
+    }
+
+    _emit_slim_send_topology_event(headers, "publish_to_async")
+    _emit_slim_receive_topology_event(headers, "get_message_async")
+
+    sent = next(
+        event for event in topology_events if event["type"] == "slim.message.sent"
+    )
+    received = next(
+        event
+        for event in topology_events
+        if event["type"] == "slim.message.received"
+    )
+
+    assert sent["source"] == "planner"
+    assert sent["target"] == "slim://executor"
+    assert sent["fork_id"] == "fork-1"
+    assert received["source"] == "planner"
+    assert received["target"] == "slim://executor"
+
+    snapshot = get_live_topology_snapshot("session-123")
+    assert len(snapshot["edges"]) == 1
+    edge = snapshot["edges"][0]
+    assert edge["id"] == "slim:planner->slim://executor"
+    assert edge["kind"] == "slim_message"
+    assert edge["fork_id"] == "fork-1"
+    assert edge["operation"] == "get_message_async"
+    assert edge["sequence"] == 2
+    assert edge["source"] == "planner"
+    assert edge["status"] == "received"
+    assert edge["target"] == "slim://executor"
+    assert edge["transport"] == "slim"
+    assert edge["updated_at_ms"] > 0
+    assert snapshot["version"] >= 2
+
+
+def test_mcp_send_and_receive_emit_live_edge_events(topology_events):
+    observe_meta = {
+        "session.id": "session-123",
+        "source_agent": "planner",
+        "target_agent": "mcp://math-server",
+        "agent_sequence": "2",
+        "fork_id": "fork-1",
+    }
+
+    _emit_mcp_send_topology_event(observe_meta, "tools/call", message_id="req-1")
+    _emit_mcp_receive_topology_event(
+        observe_meta,
+        "tools/call",
+        message_id="req-1",
+    )
+
+    sent = next(
+        event for event in topology_events if event["type"] == "mcp.message.sent"
+    )
+    received = next(
+        event for event in topology_events if event["type"] == "mcp.message.received"
+    )
+
+    assert sent["source"] == "planner"
+    assert sent["target"] == "mcp://math-server"
+    assert sent["message_id"] == "req-1"
+    assert received["source"] == "planner"
+    assert received["target"] == "mcp://math-server"
+    assert received["message_id"] == "req-1"
+
+    snapshot = get_live_topology_snapshot("session-123")
+    assert len(snapshot["edges"]) == 1
+    edge = snapshot["edges"][0]
+    assert edge["id"] == "mcp:planner->mcp://math-server"
+    assert edge["kind"] == "mcp_message"
+    assert edge["fork_id"] == "fork-1"
+    assert edge["message_id"] == "req-1"
+    assert edge["operation"] == "tools/call"
+    assert edge["sequence"] == 2
+    assert edge["source"] == "planner"
+    assert edge["status"] == "received"
+    assert edge["target"] == "mcp://math-server"
+    assert edge["transport"] == "mcp"
+    assert edge["updated_at_ms"] > 0
+    assert snapshot["version"] >= 2
+

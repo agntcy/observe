@@ -3,6 +3,7 @@
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from importlib.util import find_spec
 from typing import Any, AsyncGenerator, Callable, Collection, Tuple, cast, Union
 import json
 import logging
@@ -21,6 +22,7 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.semconv.attributes.error_attributes import ERROR_TYPE
 
+from ioa_observe.sdk import TracerWrapper
 from ..utils.const import (
     MCP_REQUEST_ID,
     MCP_METHOD_NAME,
@@ -29,10 +31,144 @@ from ..utils.const import (
     OBSERVE_ENTITY_OUTPUT,
     OBSERVE_ENTITY_INPUT,
 )
+from ..tracing.runtime_events import RuntimeEventName
+from ..tracing.topology import emit_topology_event, upsert_topology_edge
 from ..version import __version__
 
 _instruments = ("mcp >= 1.6.0",)
 _kv_lock = threading.RLock()  # Thread-safety for kv_store operations
+
+
+def _safe_get_current_actor_name() -> str:
+    return str(get_value("workflow_name") or TracerWrapper.app_name or "unknown")
+
+
+def _safe_int(value):
+    return int(value) if str(value).isdigit() else None
+
+
+def _safe_stringify_mcp_peer(candidate) -> str | None:
+    if candidate is None:
+        return None
+    if isinstance(candidate, str):
+        return candidate
+    if isinstance(candidate, dict):
+        for key in ("observe_peer_name", "url", "endpoint", "command", "name", "id"):
+            value = candidate.get(key)
+            if value:
+                return str(value)
+        return None
+
+    for attr in (
+        "observe_peer_name",
+        "_self_observe_peer_name",
+        "url",
+        "endpoint",
+        "server_url",
+        "name",
+        "id",
+    ):
+        value = getattr(candidate, attr, None)
+        if value:
+            return str(value)
+
+    command = getattr(candidate, "command", None)
+    if command:
+        return f"stdio:{command}"
+    return None
+
+
+def _infer_mcp_peer_name(args, kwargs) -> str | None:
+    for candidate in list(args) + list(kwargs.values()):
+        peer_name = _safe_stringify_mcp_peer(candidate)
+        if peer_name:
+            return peer_name
+    return None
+
+
+def _extract_mcp_peer_name(instance) -> str | None:
+    for attr in ("_write_stream", "write_stream", "_read_stream", "read_stream"):
+        peer_name = _safe_stringify_mcp_peer(getattr(instance, attr, None))
+        if peer_name:
+            return peer_name
+
+    for value in getattr(instance, "__dict__", {}).values():
+        peer_name = _safe_stringify_mcp_peer(value)
+        if peer_name:
+            return peer_name
+    return None
+
+
+def _emit_mcp_send_topology_event(observe_meta, operation: str, message_id=None) -> None:
+    session_id = observe_meta.get("session.id")
+    target = observe_meta.get("target_agent")
+    if not session_id or not target:
+        return
+
+    source = observe_meta.get("source_agent") or observe_meta.get("last_agent_name") or _safe_get_current_actor_name()
+    sequence = _safe_int(observe_meta.get("agent_sequence"))
+    fork_id = observe_meta.get("fork_id")
+
+    upsert_topology_edge(
+        session_id,
+        source,
+        target,
+        transport="mcp",
+        status="sent",
+        operation=operation,
+        message_id=message_id,
+        sequence=sequence,
+        fork_id=fork_id,
+        kind="mcp_message",
+    )
+    emit_topology_event(
+        RuntimeEventName.MCP_MESSAGE_SENT.value,
+        session_id=session_id,
+        include_snapshot=True,
+        source=source,
+        target=target,
+        operation=operation,
+        message_id=message_id,
+        sequence=sequence,
+        fork_id=fork_id,
+        protocol="mcp",
+    )
+
+
+def _emit_mcp_receive_topology_event(observe_meta, operation: str, message_id=None) -> None:
+    session_id = observe_meta.get("session.id")
+    if not session_id:
+        return
+
+    source = observe_meta.get("source_agent") or observe_meta.get("last_agent_name") or "unknown"
+    target = observe_meta.get("target_agent") or _safe_get_current_actor_name()
+    sequence = _safe_int(observe_meta.get("agent_sequence"))
+    fork_id = observe_meta.get("fork_id")
+
+    upsert_topology_edge(
+        session_id,
+        source,
+        target,
+        transport="mcp",
+        status="received",
+        operation=operation,
+        message_id=message_id,
+        sequence=sequence,
+        fork_id=fork_id,
+        kind="mcp_message",
+    )
+    emit_topology_event(
+        RuntimeEventName.MCP_MESSAGE_RECEIVED.value,
+        session_id=session_id,
+        include_snapshot=True,
+        source=source,
+        target=target,
+        operation=operation,
+        message_id=message_id,
+        sequence=sequence,
+        fork_id=fork_id,
+        protocol="mcp",
+    )
 
 
 class McpInstrumentor(BaseInstrumentor):
@@ -108,24 +244,22 @@ class McpInstrumentor(BaseInstrumentor):
         )
 
     def _uninstrument(self, **kwargs):
-        import importlib
-
         unwrap("mcp.shared.session", "BaseSession.send_request")
 
         unwrap("mcp.client.stdio", "stdio_client")
         unwrap("mcp.server.stdio", "stdio_server")
 
-        if importlib.util.find_spec("mcp.client.sse"):
+        if find_spec("mcp.client.sse"):
             try:
                 unwrap("mcp.client.sse", "sse_client")
             except Exception:
                 pass
-        if importlib.util.find_spec("mcp.server.sse"):
+        if find_spec("mcp.server.sse"):
             try:
                 unwrap("mcp.server.sse", "SseServerTransport.connect_sse")
             except Exception:
                 pass
-        if importlib.util.find_spec("mcp.client.streamable_http"):
+        if find_spec("mcp.client.streamable_http"):
             try:
                 unwrap("mcp.client.streamable_http", "streamablehttp_client")
             except Exception:
@@ -134,7 +268,7 @@ class McpInstrumentor(BaseInstrumentor):
                 unwrap("mcp.client.streamable_http", "streamable_http_client")
             except Exception:
                 pass
-        if importlib.util.find_spec("mcp.server.streamable_http"):
+        if find_spec("mcp.server.streamable_http"):
             try:
                 unwrap(
                     "mcp.server.streamable_http",
@@ -155,18 +289,19 @@ class McpInstrumentor(BaseInstrumentor):
             None,
         ]:
             async with wrapped(*args, **kwargs) as result:
+                peer_name = _infer_mcp_peer_name(args, kwargs)
                 try:
                     read_stream, write_stream = result
                     yield (
-                        InstrumentedStreamReader(read_stream, tracer),
-                        InstrumentedStreamWriter(write_stream, tracer),
+                        InstrumentedStreamReader(read_stream, tracer, peer_name=peer_name),
+                        InstrumentedStreamWriter(write_stream, tracer, peer_name=peer_name),
                     )
                 except ValueError:
                     try:
                         read_stream, write_stream, get_session_id_callback = result
                         yield (
-                            InstrumentedStreamReader(read_stream, tracer),
-                            InstrumentedStreamWriter(write_stream, tracer),
+                            InstrumentedStreamReader(read_stream, tracer, peer_name=peer_name),
+                            InstrumentedStreamWriter(write_stream, tracer, peer_name=peer_name),
                             get_session_id_callback,
                         )
                     except Exception as e:
@@ -189,16 +324,17 @@ class McpInstrumentor(BaseInstrumentor):
             wrapped(*args, **kwargs)
             reader = getattr(instance, "_incoming_message_stream_reader", None)
             writer = getattr(instance, "_incoming_message_stream_writer", None)
+            peer_name = _safe_stringify_mcp_peer(reader) or _safe_stringify_mcp_peer(writer)
             if reader and writer:
                 setattr(
                     instance,
                     "_incoming_message_stream_reader",
-                    ContextAttachingStreamReader(reader, tracer),
+                    ContextAttachingStreamReader(reader, tracer, peer_name=peer_name),
                 )
                 setattr(
                     instance,
                     "_incoming_message_stream_writer",
-                    ContextSavingStreamWriter(writer, tracer),
+                    ContextSavingStreamWriter(writer, tracer, peer_name=peer_name),
                 )
 
         return traced_method
@@ -211,10 +347,13 @@ class McpInstrumentor(BaseInstrumentor):
 
             method = None
             params = None
+            request_id = None
             if len(args) > 0 and hasattr(args[0].root, "method"):
                 method = args[0].root.method
             if len(args) > 0 and hasattr(args[0].root, "params"):
                 params = args[0].root.params
+            if len(args) > 0 and hasattr(args[0].root, "id"):
+                request_id = args[0].root.id
 
             with tracer.start_as_current_span(f"{method}.mcp") as span:
                 try:
@@ -277,6 +416,13 @@ class McpInstrumentor(BaseInstrumentor):
                             "fork_branch_index"
                         ]
 
+                source_agent = observe_meta.get("last_agent_name") or _safe_get_current_actor_name()
+                if source_agent:
+                    observe_meta["source_agent"] = source_agent
+                target_agent = _extract_mcp_peer_name(instance)
+                if target_agent:
+                    observe_meta["target_agent"] = target_agent
+
                 # Inject observe metadata into request params._meta
                 if observe_meta and params and len(args) > 0:
                     try:
@@ -288,15 +434,21 @@ class McpInstrumentor(BaseInstrumentor):
                         elif isinstance(existing_meta, dict):
                             meta_kwargs = dict(existing_meta)
                         meta_kwargs.update(observe_meta)
-                        from mcp.types import RequestParams as McpRequestParams
+                        from mcp.types import RequestParams as McpRequestParamsType
 
-                        args[0].root.params.meta = McpRequestParams.Meta(**meta_kwargs)
+                        args[0].root.params.meta = McpRequestParamsType.Meta(**meta_kwargs)
                     except Exception:
                         # Fallback: set as dict (may trigger Pydantic warning)
                         try:
                             args[0].root.params.meta = observe_meta
                         except Exception:
                             pass
+
+                _emit_mcp_send_topology_event(
+                    observe_meta,
+                    str(method or "send_request"),
+                    message_id=str(request_id) if request_id is not None else None,
+                )
 
                 try:
                     result = await wrapped(*args, **kwargs)
@@ -384,9 +536,10 @@ def serialize(request, depth=0, max_depth=4):
 
 
 class InstrumentedStreamReader(ObjectProxy):  # type: ignore
-    def __init__(self, wrapped, tracer):
+    def __init__(self, wrapped, tracer, peer_name=None):
         super().__init__(wrapped)
         self._tracer = tracer
+        self._self_observe_peer_name = peer_name
 
     async def __aenter__(self) -> Any:
         return await self.__wrapped__.__aenter__()
@@ -395,19 +548,20 @@ class InstrumentedStreamReader(ObjectProxy):  # type: ignore
         return await self.__wrapped__.__aexit__(exc_type, exc_value, traceback)
 
     async def __aiter__(self) -> AsyncGenerator[Any, None]:
-        from mcp.types import JSONRPCMessage, JSONRPCRequest
-        from mcp.shared.message import SessionMessage
+        from mcp.shared.message import SessionMessage as McpSessionMessage
+        from mcp.types import JSONRPCMessage as McpJSONRPCMessage
+        from mcp.types import JSONRPCRequest as McpJSONRPCRequest
 
         async for item in self.__wrapped__:
-            if isinstance(item, SessionMessage):
-                request = cast(JSONRPCMessage, item.message).root
-            elif type(item) is JSONRPCMessage:
-                request = cast(JSONRPCMessage, item).root
+            if isinstance(item, McpSessionMessage):
+                request = cast(McpJSONRPCMessage, item.message).root
+            elif type(item) is McpJSONRPCMessage:
+                request = cast(McpJSONRPCMessage, item).root
             else:
                 yield item
                 continue
 
-            if not isinstance(request, JSONRPCRequest):
+            if not isinstance(request, McpJSONRPCRequest):
                 yield item
                 continue
 
@@ -431,6 +585,15 @@ class InstrumentedStreamReader(ObjectProxy):  # type: ignore
                             carrier = meta.model_dump(exclude_none=True)
                         elif session_id:
                             carrier["session.id"] = session_id
+
+                    observe_meta = carrier if isinstance(carrier, dict) else {}
+                    _emit_mcp_receive_topology_event(
+                        observe_meta,
+                        str(getattr(request, "method", None) or "mcp.request"),
+                        message_id=str(getattr(request, "id", None))
+                        if getattr(request, "id", None) is not None
+                        else None,
+                    )
 
                     if carrier and traceparent:
                         # Extract W3C trace context + baggage
@@ -515,9 +678,10 @@ class InstrumentedStreamReader(ObjectProxy):  # type: ignore
 
 
 class InstrumentedStreamWriter(ObjectProxy):  # type: ignore
-    def __init__(self, wrapped, tracer):
+    def __init__(self, wrapped, tracer, peer_name=None):
         super().__init__(wrapped)
         self._tracer = tracer
+        self._self_observe_peer_name = peer_name
 
     async def __aenter__(self) -> Any:
         return await self.__wrapped__.__aenter__()
@@ -526,13 +690,14 @@ class InstrumentedStreamWriter(ObjectProxy):  # type: ignore
         return await self.__wrapped__.__aexit__(exc_type, exc_value, traceback)
 
     async def send(self, item: Any) -> Any:
-        from mcp.types import JSONRPCMessage, JSONRPCRequest
-        from mcp.shared.message import SessionMessage
+        from mcp.shared.message import SessionMessage as McpSessionMessage
+        from mcp.types import JSONRPCMessage as McpJSONRPCMessage
+        from mcp.types import JSONRPCRequest as McpJSONRPCRequest
 
-        if isinstance(item, SessionMessage):
-            request = cast(JSONRPCMessage, item.message).root
-        elif type(item) is JSONRPCMessage:
-            request = cast(JSONRPCMessage, item).root
+        if isinstance(item, McpSessionMessage):
+            request = cast(McpJSONRPCMessage, item.message).root
+        elif type(item) is McpJSONRPCMessage:
+            request = cast(McpJSONRPCMessage, item).root
         else:
             # Always forward unrecognized message types
             return await self.__wrapped__.send(item)
@@ -559,7 +724,7 @@ class InstrumentedStreamWriter(ObjectProxy):  # type: ignore
                 if hasattr(request, "id"):
                     span.set_attribute(MCP_REQUEST_ID, f"{request.id}")
 
-                if not isinstance(request, JSONRPCRequest):
+                if not isinstance(request, McpJSONRPCRequest):
                     return await self.__wrapped__.send(item)
                 if not request.params:
                     request.params = {}
@@ -580,9 +745,10 @@ class ItemWithContext:
 
 
 class ContextSavingStreamWriter(ObjectProxy):  # type: ignore
-    def __init__(self, wrapped, tracer):
+    def __init__(self, wrapped, tracer, peer_name=None):
         super().__init__(wrapped)
         self._tracer = tracer
+        self._self_observe_peer_name = peer_name
 
     async def __aenter__(self) -> Any:
         return await self.__wrapped__.__aenter__()
@@ -616,9 +782,10 @@ class ContextSavingStreamWriter(ObjectProxy):  # type: ignore
 
 
 class ContextAttachingStreamReader(ObjectProxy):  # type: ignore
-    def __init__(self, wrapped, tracer):
+    def __init__(self, wrapped, tracer, peer_name=None):
         super().__init__(wrapped)
         self._tracer = tracer
+        self._self_observe_peer_name = peer_name
 
     async def __aenter__(self) -> Any:
         return await self.__wrapped__.__aenter__()

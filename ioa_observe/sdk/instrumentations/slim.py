@@ -19,10 +19,151 @@ from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
 from ioa_observe.sdk.tracing.context_utils import _get_agent_linking_info
+from ioa_observe.sdk.tracing.runtime_events import RuntimeEventName
+from ioa_observe.sdk.tracing.topology import emit_topology_event, upsert_topology_edge
 
 _instruments = ("slim-bindings >= 1.0.0",)
 _global_tracer = None
 _kv_lock = threading.RLock()
+
+
+def _safe_get_current_actor_name() -> str:
+    return str(get_value("workflow_name") or TracerWrapper.app_name or "unknown")
+
+
+def _safe_int(value):
+    return int(value) if str(value).isdigit() else None
+
+
+def _slim_session_target(slim_session_id):
+    return f"slim.session:{slim_session_id}" if slim_session_id else None
+
+
+def _safe_stringify_slim_name(candidate):
+    if candidate is None:
+        return None
+    if isinstance(candidate, str):
+        return candidate
+    if hasattr(candidate, "organization") and hasattr(candidate, "namespace") and hasattr(
+        candidate, "app"
+    ):
+        return f"{candidate.organization}/{candidate.namespace}/{candidate.app}"
+    for attr in ("name", "app", "destination", "route", "target", "id"):
+        value = getattr(candidate, attr, None)
+        if value:
+            return str(value)
+    if isinstance(candidate, dict):
+        for key in ("name", "app", "destination", "route", "target", "id"):
+            value = candidate.get(key)
+            if value:
+                return str(value)
+    return None
+
+
+def _infer_slim_target_name(session, args, kwargs, method_name, slim_session_id):
+    candidates = []
+    if "publish_to" in method_name and args:
+        candidates.append(args[0])
+    for key in ("destination", "name", "target", "route"):
+        if key in kwargs:
+            candidates.append(kwargs[key])
+    for attr in ("destination", "route", "target", "name", "app"):
+        value = getattr(session, attr, None)
+        if value:
+            candidates.append(value)
+
+    for candidate in candidates:
+        name = _safe_stringify_slim_name(candidate)
+        if name:
+            return name
+
+    return _slim_session_target(slim_session_id)
+
+
+def _emit_slim_send_topology_event(headers, operation):
+    session_id = headers.get("session_id")
+    target = headers.get("target_agent")
+    if not session_id or not target:
+        return
+
+    source = (
+        headers.get("source_agent")
+        or headers.get("last_agent_name")
+        or _safe_get_current_actor_name()
+    )
+    message_id = headers.get("message_id")
+    sequence = _safe_int(headers.get("agent_sequence"))
+    fork_id = headers.get("fork_id")
+
+    upsert_topology_edge(
+        session_id,
+        source,
+        target,
+        transport="slim",
+        status="sent",
+        operation=operation,
+        message_id=message_id,
+        sequence=sequence,
+        fork_id=fork_id,
+        kind="slim_message",
+    )
+    emit_topology_event(
+        RuntimeEventName.SLIM_MESSAGE_SENT.value,
+        session_id=session_id,
+        include_snapshot=True,
+        source=source,
+        target=target,
+        operation=operation,
+        message_id=message_id,
+        sequence=sequence,
+        fork_id=fork_id,
+        protocol="slim",
+    )
+
+
+def _emit_slim_receive_topology_event(headers, operation):
+    session_id = headers.get("session_id")
+    if not session_id:
+        return
+
+    source = (
+        headers.get("source_agent")
+        or headers.get("last_agent_name")
+        or "unknown"
+    )
+    target = (
+        headers.get("target_agent")
+        or _slim_session_target(headers.get("slim_session_id"))
+        or _safe_get_current_actor_name()
+    )
+    message_id = headers.get("message_id")
+    sequence = _safe_int(headers.get("agent_sequence"))
+    fork_id = headers.get("fork_id")
+
+    upsert_topology_edge(
+        session_id,
+        source,
+        target,
+        transport="slim",
+        status="received",
+        operation=operation,
+        message_id=message_id,
+        sequence=sequence,
+        fork_id=fork_id,
+        kind="slim_message",
+    )
+    emit_topology_event(
+        RuntimeEventName.SLIM_MESSAGE_RECEIVED.value,
+        session_id=session_id,
+        include_snapshot=True,
+        source=source,
+        target=target,
+        operation=operation,
+        message_id=message_id,
+        sequence=sequence,
+        fork_id=fork_id,
+        protocol="slim",
+    )
 
 
 def _get_session_id(session):
@@ -117,6 +258,8 @@ def _process_received_message(raw_message):
                                 fork_branch_index,
                             )
 
+                _emit_slim_receive_topology_event(headers, "get_message_async")
+
         # Clean headers
         cleaned = message_dict.copy()
         if "headers" in cleaned:
@@ -132,6 +275,8 @@ def _process_received_message(raw_message):
                 "fork_id",
                 "fork_parent_seq",
                 "fork_branch_index",
+                "source_agent",
+                "target_agent",
             ]:
                 h.pop(k, None)
             if h:
@@ -521,11 +666,25 @@ class SLIMInstrumentor(BaseInstrumentor):
                         and len(args) > msg_idx
                         and (current_traceparent or session_id)
                     ):
+                        source_agent = (
+                            agent_linking_info.get("last_agent_name")
+                            or _safe_get_current_actor_name()
+                        )
+                        target_agent = _infer_slim_target_name(
+                            self,
+                            args,
+                            kwargs,
+                            method_name,
+                            slim_session_id,
+                        )
                         headers = {
                             "session_id": session_id,
                             "traceparent": current_traceparent,
                             "slim_session_id": slim_session_id,
+                            "source_agent": source_agent,
                         }
+                        if target_agent:
+                            headers["target_agent"] = target_agent
 
                         # Add agent linking info for cross-process span linking
                         if agent_linking_info.get("last_agent_span_id"):
@@ -572,15 +731,30 @@ class SLIMInstrumentor(BaseInstrumentor):
                             else wrapped_msg
                         )
                         args = tuple(args_list)
+                        _emit_slim_send_topology_event(headers, method_name)
 
                     return await orig(self, *args, **kwargs)
             else:
                 if args and len(args) > msg_idx and (traceparent or session_id):
+                    source_agent = (
+                        agent_linking_info.get("last_agent_name")
+                        or _safe_get_current_actor_name()
+                    )
+                    target_agent = _infer_slim_target_name(
+                        self,
+                        args,
+                        kwargs,
+                        method_name,
+                        slim_session_id,
+                    )
                     headers = {
                         "session_id": session_id,
                         "traceparent": traceparent,
                         "slim_session_id": slim_session_id,
+                        "source_agent": source_agent,
                     }
+                    if target_agent:
+                        headers["target_agent"] = target_agent
 
                     # Add agent linking info for cross-process span linking
                     if agent_linking_info.get("last_agent_span_id"):
@@ -620,6 +794,7 @@ class SLIMInstrumentor(BaseInstrumentor):
                         else wrapped_msg
                     )
                     args = tuple(args_list)
+                    _emit_slim_send_topology_event(headers, method_name)
 
                 return await orig(self, *args, **kwargs)
 
