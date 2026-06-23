@@ -53,6 +53,37 @@ Before getting started:
    Observe.init("your_service_name", api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
    ```
 
+### Optional: Control Real-Time Observability
+
+By default, real-time observability is enabled. This means the SDK emits live runtime events and topology updates while your workflow is still running.
+
+If you want to disable live updates during initialization, pass `realtime_observability_enabled=False`:
+
+```python
+from ioa_observe.sdk import Observe
+import os
+
+Observe.init(
+    "your_service_name",
+    api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"),
+    realtime_observability_enabled=False,
+)
+```
+
+You can also control the same behavior with an environment variable:
+
+```bash
+OBSERVE_REALTIME_OBSERVABILITY_ENABLED=false
+```
+
+When real-time observability is disabled:
+
+- live runtime events are not emitted
+- topology listener callbacks are not triggered
+- internal topology/session state can still be built and queried through the SDK
+
+This is useful when you want trace/span instrumentation, but do not want live event streaming behavior for a given deployment.
+
 ## Core SDK Components
 ### Key Decorators
 ```
