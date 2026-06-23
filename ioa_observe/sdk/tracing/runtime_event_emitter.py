@@ -9,6 +9,8 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from ioa_observe.sdk.config import is_realtime_observability_enabled
+
 
 RuntimeEventListener = Callable[[dict[str, Any]], None]
 
@@ -37,6 +39,8 @@ def clear_runtime_event_listeners() -> None:
 
 
 def emit_runtime_event(attributes: Mapping[str, str | bool | int | float]) -> None:
+    if not is_realtime_observability_enabled():
+        return
     event = dict(attributes)
     _emit_to_listeners(event)
     _emit_to_otel_logs(event)

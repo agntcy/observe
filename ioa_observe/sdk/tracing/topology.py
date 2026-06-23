@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from ioa_observe.sdk.config import is_realtime_observability_enabled
 from ioa_observe.sdk.tracing.runtime_event_emitter import emit_runtime_event
 from ioa_observe.sdk.tracing.runtime_events import (
     RuntimeEventAttribute,
@@ -305,6 +306,8 @@ def _publish(
     event: dict[str, Any],
     runtime_attributes: dict[str, str | bool | int | float],
 ) -> None:
+    if not is_realtime_observability_enabled():
+        return
     emit_runtime_event(runtime_attributes)
     _notify_listeners(event)
 

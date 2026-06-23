@@ -18,6 +18,10 @@ class RuntimeEventName(str, Enum):
     TOOL_COMPLETED = "tool.completed"
     A2A_MESSAGE_SENT = "a2a.message.sent"
     A2A_MESSAGE_RECEIVED = "a2a.message.received"
+    SLIM_MESSAGE_SENT = "slim.message.sent"
+    SLIM_MESSAGE_RECEIVED = "slim.message.received"
+    MCP_MESSAGE_SENT = "mcp.message.sent"
+    MCP_MESSAGE_RECEIVED = "mcp.message.received"
 
 
 class RuntimeEventAttribute(str, Enum):
@@ -65,6 +69,26 @@ EVENT_REQUIRED_ATTRIBUTES = {
         RuntimeEventAttribute.TARGET_AGENT.value,
     },
     RuntimeEventName.A2A_MESSAGE_RECEIVED.value: COMMON_REQUIRED_ATTRIBUTES
+    | {
+        RuntimeEventAttribute.SOURCE_AGENT.value,
+        RuntimeEventAttribute.TARGET_AGENT.value,
+    },
+    RuntimeEventName.SLIM_MESSAGE_SENT.value: COMMON_REQUIRED_ATTRIBUTES
+    | {
+        RuntimeEventAttribute.SOURCE_AGENT.value,
+        RuntimeEventAttribute.TARGET_AGENT.value,
+    },
+    RuntimeEventName.SLIM_MESSAGE_RECEIVED.value: COMMON_REQUIRED_ATTRIBUTES
+    | {
+        RuntimeEventAttribute.SOURCE_AGENT.value,
+        RuntimeEventAttribute.TARGET_AGENT.value,
+    },
+    RuntimeEventName.MCP_MESSAGE_SENT.value: COMMON_REQUIRED_ATTRIBUTES
+    | {
+        RuntimeEventAttribute.SOURCE_AGENT.value,
+        RuntimeEventAttribute.TARGET_AGENT.value,
+    },
+    RuntimeEventName.MCP_MESSAGE_RECEIVED.value: COMMON_REQUIRED_ATTRIBUTES
     | {
         RuntimeEventAttribute.SOURCE_AGENT.value,
         RuntimeEventAttribute.TARGET_AGENT.value,

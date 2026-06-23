@@ -31,6 +31,7 @@ from ioa_observe.sdk.tracing import (
     session_start,
     unregister_runtime_event_listener,
 )
+from ioa_observe.sdk.config import set_realtime_observability_enabled
 from ioa_observe.sdk.tracing.runtime_events import validate_runtime_event_attributes
 from ioa_observe.sdk.tracing.topology import clear_topology_listeners
 
@@ -39,11 +40,13 @@ from ioa_observe.sdk.tracing.topology import clear_topology_listeners
 def reset_runtime_event_state():
     clear_runtime_event_listeners()
     clear_topology_listeners()
+    set_realtime_observability_enabled(None)
     with kv_store._lock:
         kv_store.store.clear()
     yield
     clear_runtime_event_listeners()
     clear_topology_listeners()
+    set_realtime_observability_enabled(None)
     with kv_store._lock:
         kv_store.store.clear()
 
@@ -358,3 +361,19 @@ def test_tool_lifecycle_pushes_runtime_events(runtime_events):
         }
     }
     assert "runtime_tool" in tool_names
+
+
+def test_observe_init_can_disable_realtime_runtime_events(runtime_events):
+    Observe.init(
+        app_name="realtime-disabled-runtime-events",
+        exporter=None,
+        api_endpoint="http://localhost:4318",
+        api_key="x",
+        realtime_observability_enabled=False,
+    )
+
+    with session_start():
+        runtime_tool({"task": "lookup"})
+
+    assert runtime_events == []
+

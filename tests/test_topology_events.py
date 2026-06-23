@@ -7,6 +7,7 @@ import pytest
 
 from ioa_observe.sdk import Observe
 from ioa_observe.sdk.client import kv_store
+from ioa_observe.sdk.config import set_realtime_observability_enabled
 from ioa_observe.sdk.decorators import agent
 from ioa_observe.sdk.instrumentations.a2a import (
     _emit_a2a_receive_topology_event,
@@ -27,10 +28,12 @@ from ioa_observe.sdk.tracing.topology import clear_topology_listeners
 @pytest.fixture(autouse=True)
 def reset_topology_state():
     clear_topology_listeners()
+    set_realtime_observability_enabled(None)
     with kv_store._lock:
         kv_store.store.clear()
     yield
     clear_topology_listeners()
+    set_realtime_observability_enabled(None)
     with kv_store._lock:
         kv_store.store.clear()
 
@@ -232,4 +235,29 @@ def test_mcp_send_and_receive_emit_live_edge_events(topology_events):
     assert edge["transport"] == "mcp"
     assert edge["updated_at_ms"] > 0
     assert snapshot["version"] >= 2
+
+
+def test_observe_init_can_disable_realtime_topology_events(topology_events):
+    Observe.init(
+        app_name="realtime-disabled-topology",
+        exporter=None,
+        api_endpoint="http://localhost:4318",
+        api_key="x",
+        realtime_observability_enabled=False,
+    )
+
+    with session_start() as metadata:
+        plan = planner({"task": "draft"})
+        result = executor(plan)
+
+    assert result == {"result": "draft"}
+    assert topology_events == []
+
+    snapshot = get_live_topology_snapshot(metadata["executionID"])
+    node_ids = {node["id"]: node for node in snapshot["nodes"]}
+    edge_ids = {edge["id"]: edge for edge in snapshot["edges"]}
+    assert node_ids["planner"]["status"] == "completed"
+    assert node_ids["executor"]["status"] == "completed"
+    assert edge_ids["agent_handoff:planner->executor"]["status"] == "observed"
+
 

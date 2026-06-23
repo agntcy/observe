@@ -24,6 +24,7 @@ from ioa_observe.sdk.config import (
     is_tracing_enabled,
     is_metrics_enabled,
     is_logging_enabled,
+    set_realtime_observability_enabled,
 )
 from ioa_observe.sdk.tracing.tracing import (
     TracerWrapper,
@@ -66,11 +67,13 @@ class Observe:
         propagator: TextMapPropagator = None,
         observe_sync_enabled: bool = False,
         should_enrich_metrics: bool = True,
+        realtime_observability_enabled: Optional[bool] = None,
         resource_attributes: dict = {},
         instruments: Optional[Set[Instruments]] = None,
         block_instruments: Optional[Set[Instruments]] = None,
         image_uploader=None,
     ) -> Optional[Client]:
+        set_realtime_observability_enabled(realtime_observability_enabled)
         if not enabled:
             TracerWrapper.set_disabled(True)
             print(
