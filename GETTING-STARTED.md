@@ -84,6 +84,91 @@ When real-time observability is disabled:
 
 This is useful when you want trace/span instrumentation, but do not want live event streaming behavior for a given deployment.
 
+### Consuming Live Runtime Events (Materializer)
+
+When real-time observability is enabled, the SDK pushes fine-grained **runtime
+events** (as OTel logs/events) as execution progresses — `topology.session.started`,
+`topology.node.started/completed`, `topology.edge.updated`, `tool.started/completed`,
+and `a2a/mcp/slim.message.sent/received`. These are emitted immediately, before the
+corresponding spans flush, so a downstream consumer can answer *"what is this session
+doing right now?"* in real time.
+
+The SDK ships a small **materializer** that reduces those events into a live
+`SessionState` (status, agent nodes, topology edges, and tool activity).
+
+#### Reading from ClickHouse
+
+If your OTel Collector routes logs into ClickHouse (`otel_logs`), use the
+ClickHouse consumer to poll runtime events and build live state:
+
+```python
+import time
+
+from ioa_observe.materializer import (
+    ClickHouseRuntimeEventSource,
+    ClickHouseRuntimeEventConsumer,
+    SessionStateMaterializer,
+)
+
+source = ClickHouseRuntimeEventSource(
+    "http://localhost:8123",
+    username="admin",
+    password="admin",
+)
+materializer = SessionStateMaterializer()
+consumer = ClickHouseRuntimeEventConsumer(
+    source,
+    materializer,
+    service_name="your_service_name",  # optional filter by ServiceName
+)
+
+# Poll continuously for live updates (the materializer dedupes overlapping rows)
+while True:
+    consumer.poll_once()
+    snapshot = materializer.get_snapshot("<session_id>")
+    if snapshot:
+        print(snapshot)
+    time.sleep(1)
+```
+
+`get_snapshot(session_id)` returns a JSON-serializable dict with
+`session_id`, `topology_version`, `status`, `started_at`, `last_event_at`,
+`nodes[]`, `edges[]`, and `tools[]` — exactly what a live dashboard can render.
+
+#### In-process (no backend) consumption
+
+For local development or a quick demo, you can feed runtime events straight into
+the materializer in-process via a listener — no Collector or ClickHouse required:
+
+```python
+from ioa_observe.sdk.tracing import register_runtime_event_listener
+from ioa_observe.materializer import SessionStateMaterializer
+
+materializer = SessionStateMaterializer()
+register_runtime_event_listener(materializer.apply_event)
+# ... run your workflow inside session_start(); query materializer.get_snapshot(...)
+```
+
+A runnable end-to-end example lives in [`examples/realtime_demo/`](examples/realtime_demo/)
+(`./run.sh`), which renders the live topology as a multi-agent workflow executes.
+
+#### Bounding live-state memory
+
+The materializer (and the SDK's internal topology store) evict idle sessions to
+keep memory bounded. Tune them with environment variables or constructor args:
+
+| Setting | Env Variable | Default |
+|---------|--------------|---------|
+| Idle session TTL | `OBSERVE_REALTIME_SESSION_TTL_SECONDS` | `3600` |
+| Max live sessions | `OBSERVE_REALTIME_MAX_SESSIONS` | `1000` |
+
+```python
+materializer = SessionStateMaterializer(
+    max_sessions=500,
+    session_ttl_seconds=1800,
+)
+```
+
 ## Core SDK Components
 ### Key Decorators
 ```
