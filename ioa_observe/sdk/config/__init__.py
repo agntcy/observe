@@ -93,4 +93,3 @@ def realtime_max_sessions() -> int | None:
         "OBSERVE_REALTIME_MAX_SESSIONS",
         1000,
     )
-

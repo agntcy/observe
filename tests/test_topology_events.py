@@ -298,4 +298,3 @@ def test_live_topology_evicts_expired_session_by_ttl(monkeypatch):
 
     assert get_live_topology_snapshot("session-stale")["version"] == 0
     assert get_live_topology_snapshot("session-fresh")["version"] >= 1
-

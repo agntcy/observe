@@ -40,4 +40,3 @@ runtime events from the telemetry pipeline (see
 `docs/REALTIME_OBSERVABILITY_POC_PLAN.md` for the full data flow). This demo
 swaps the transport for an in-process listener purely so it is runnable
 locally with no backend.
-

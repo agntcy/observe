@@ -12,4 +12,3 @@ if command -v uv >/dev/null 2>&1; then
 else
   exec python agents.py
 fi
-
