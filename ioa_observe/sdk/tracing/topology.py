@@ -9,7 +9,11 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from ioa_observe.sdk.config import is_realtime_observability_enabled
+from ioa_observe.sdk.config import (
+    is_realtime_observability_enabled,
+    realtime_max_sessions,
+    realtime_session_ttl_seconds,
+)
 from ioa_observe.sdk.tracing.runtime_event_emitter import emit_runtime_event
 from ioa_observe.sdk.tracing.runtime_events import (
     RuntimeEventAttribute,
@@ -54,6 +58,7 @@ class SessionGraph:
     version: int = 0
     nodes: dict[str, TopologyNode] = field(default_factory=dict)
     edges: dict[str, TopologyEdge] = field(default_factory=dict)
+    updated_at_ms: int = field(default_factory=lambda: int(time.time() * 1000))
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -86,6 +91,7 @@ def record_session_started(session_id: str) -> None:
     with _lock:
         graph = _get_or_create_graph(session_id)
         graph.version += 1
+        _touch_graph(graph)
         snapshot = graph.snapshot()
         event = {
             "type": RuntimeEventName.TOPOLOGY_SESSION_STARTED.value,
@@ -119,6 +125,7 @@ def record_node_started(session_id: str, agent_name: str) -> None:
             node.completed_at_ms = None
 
         graph.version += 1
+        _touch_graph(graph)
         event = {
             "type": RuntimeEventName.TOPOLOGY_NODE_STARTED.value,
             "session_id": session_id,
@@ -154,6 +161,7 @@ def record_node_completed(session_id: str, agent_name: str) -> None:
             node.completed_at_ms = now_ms
 
         graph.version += 1
+        _touch_graph(graph)
         event = {
             "type": RuntimeEventName.TOPOLOGY_NODE_COMPLETED.value,
             "session_id": session_id,
@@ -205,6 +213,7 @@ def upsert_topology_edge(
             updated_at_ms=now_ms,
         )
         graph.version += 1
+        _touch_graph(graph)
         event = {
             "type": RuntimeEventName.TOPOLOGY_EDGE_UPDATED.value,
             "session_id": session_id,
@@ -242,6 +251,7 @@ def emit_topology_event(
 ) -> None:
     with _lock:
         graph = _get_or_create_graph(session_id)
+        _touch_graph(graph)
         event = {
             "type": event_type,
             "session_id": session_id,
@@ -267,6 +277,20 @@ def get_live_topology_snapshot(session_id: str) -> dict[str, Any]:
         if graph is None:
             return {"session_id": session_id, "version": 0, "nodes": [], "edges": []}
         return graph.snapshot()
+
+
+def next_session_event_version(session_id: str) -> int:
+    """Return a monotonically increasing per-session version number.
+
+    Used to order runtime events (such as tool lifecycle events) that are not
+    represented as topology nodes/edges, so downstream materializers can reject
+    stale or out-of-order updates.
+    """
+    with _lock:
+        graph = _get_or_create_graph(session_id)
+        graph.version += 1
+        _touch_graph(graph)
+        return graph.version
 
 
 def _runtime_attributes_for_event(
@@ -321,11 +345,47 @@ def _notify_listeners(event: dict[str, Any]) -> None:
 
 
 def _get_or_create_graph(session_id: str) -> SessionGraph:
+    _evict_expired_locked()
     graph = _session_graphs.get(session_id)
     if graph is None:
         graph = SessionGraph(session_id=session_id)
         _session_graphs[session_id] = graph
+        _enforce_max_sessions_locked(session_id)
     return graph
+
+
+def _touch_graph(graph: SessionGraph) -> None:
+    graph.updated_at_ms = _now_ms()
+
+
+def _evict_expired_locked() -> None:
+    """Remove sessions idle longer than the configured TTL. Caller holds _lock."""
+    ttl_seconds = realtime_session_ttl_seconds()
+    if not ttl_seconds:
+        return
+    cutoff_ms = _now_ms() - int(ttl_seconds * 1000)
+    expired = [
+        session_id
+        for session_id, graph in _session_graphs.items()
+        if graph.updated_at_ms < cutoff_ms
+    ]
+    for session_id in expired:
+        _session_graphs.pop(session_id, None)
+
+
+def _enforce_max_sessions_locked(protected_session_id: str | None = None) -> None:
+    """Evict the oldest sessions when above the cap. Caller holds _lock."""
+    max_sessions = realtime_max_sessions()
+    if not max_sessions:
+        return
+    while len(_session_graphs) > max_sessions:
+        oldest_id = min(
+            _session_graphs,
+            key=lambda sid: _session_graphs[sid].updated_at_ms,
+        )
+        if oldest_id == protected_session_id and len(_session_graphs) == 1:
+            break
+        _session_graphs.pop(oldest_id, None)
 
 
 def _now_ms() -> int:

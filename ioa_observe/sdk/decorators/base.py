@@ -63,6 +63,7 @@ from ioa_observe.sdk.tracing.topology import (
     record_node_completed,
     record_node_started,
     upsert_topology_edge,
+    next_session_event_version,
 )
 from ioa_observe.sdk.metrics.agents.agent_connections import connection_reliability
 from ioa_observe.sdk.utils import camel_to_snake
@@ -404,7 +405,7 @@ def _setup_span(
                 build_runtime_event_attributes(
                     RuntimeEventName.TOOL_STARTED,
                     session_id=session_id,
-                    snapshot_version=0,
+                    snapshot_version=next_session_event_version(session_id),
                     **{RuntimeEventAttribute.TOOL_NAME.value: entity_name},
                 )
             )
@@ -604,7 +605,7 @@ def _cleanup_span(span, ctx_token):
             build_runtime_event_attributes(
                 RuntimeEventName.TOOL_COMPLETED,
                 session_id=session_id,
-                snapshot_version=0,
+                snapshot_version=next_session_event_version(session_id),
                 **{RuntimeEventAttribute.TOOL_NAME.value: tool_name},
             )
         )

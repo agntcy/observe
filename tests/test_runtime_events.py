@@ -362,6 +362,21 @@ def test_tool_lifecycle_pushes_runtime_events(runtime_events):
     }
     assert "runtime_tool" in tool_names
 
+    # Tool events must carry a non-zero, monotonically increasing per-session
+    # version so downstream materializers can order them deterministically.
+    tool_versions = [
+        event[RuntimeEventAttribute.SNAPSHOT_VERSION.value]
+        for event in runtime_events
+        if event[RuntimeEventAttribute.EVENT_NAME.value]
+        in {
+            RuntimeEventName.TOOL_STARTED.value,
+            RuntimeEventName.TOOL_COMPLETED.value,
+        }
+    ]
+    assert all(version > 0 for version in tool_versions)
+    assert tool_versions == sorted(tool_versions)
+    assert len(set(tool_versions)) == len(tool_versions)
+
 
 def test_observe_init_can_disable_realtime_runtime_events(runtime_events):
     Observe.init(

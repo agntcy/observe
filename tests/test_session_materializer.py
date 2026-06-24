@@ -241,6 +241,93 @@ def test_clickhouse_consumer_polls_and_deduplicates_inclusive_cursor():
     )
 
 
+def test_materializer_rejects_stale_tool_events_by_version():
+    materializer = SessionStateMaterializer()
+    base_time = datetime(2026, 6, 11, 9, 0, tzinfo=timezone.utc)
+
+    started = _event(
+        RuntimeEventName.TOOL_STARTED,
+        base_time,
+        session_id="session-tool",
+        snapshot_version=5,
+        **{RuntimeEventAttribute.TOOL_NAME.value: "search"},
+    )
+    completed = _event(
+        RuntimeEventName.TOOL_COMPLETED,
+        base_time + timedelta(seconds=1),
+        session_id="session-tool",
+        snapshot_version=6,
+        **{RuntimeEventAttribute.TOOL_NAME.value: "search"},
+    )
+    # A stale, re-delivered "started" with an older version must be ignored so
+    # the active counter cannot be corrupted.
+    stale_started = _event(
+        RuntimeEventName.TOOL_STARTED,
+        base_time + timedelta(seconds=2),
+        session_id="session-tool",
+        snapshot_version=4,
+        **{RuntimeEventAttribute.TOOL_NAME.value: "search"},
+    )
+
+    materializer.apply_event(started)
+    materializer.apply_event(completed)
+    materializer.apply_event(stale_started)
+
+    snapshot = materializer.get_snapshot("session-tool")
+    tool = snapshot["tools"][0]
+    assert tool["name"] == "search"
+    assert tool["active_count"] == 0
+    assert tool["started_count"] == 1
+    assert tool["completed_count"] == 1
+    assert tool["status"] == "idle"
+
+
+def test_materializer_evicts_oldest_session_when_over_capacity():
+    materializer = SessionStateMaterializer(max_sessions=2)
+    base_time = datetime(2026, 6, 11, 9, 0, tzinfo=timezone.utc)
+
+    for index in range(3):
+        materializer.apply_event(
+            _event(
+                RuntimeEventName.TOPOLOGY_SESSION_STARTED,
+                base_time + timedelta(seconds=index),
+                session_id=f"session-{index}",
+                snapshot_version=1,
+            )
+        )
+
+    snapshots = {snapshot["session_id"] for snapshot in materializer.list_snapshots()}
+    assert snapshots == {"session-1", "session-2"}
+    assert materializer.get_snapshot("session-0") is None
+
+
+def test_materializer_evicts_expired_session_by_ttl():
+    materializer = SessionStateMaterializer(session_ttl_seconds=60)
+    old_time = datetime.now(timezone.utc) - timedelta(seconds=600)
+    fresh_time = datetime.now(timezone.utc)
+
+    materializer.apply_event(
+        _event(
+            RuntimeEventName.TOPOLOGY_SESSION_STARTED,
+            old_time,
+            session_id="stale",
+            snapshot_version=1,
+        )
+    )
+    # A new event for a different session triggers TTL eviction of the stale one.
+    materializer.apply_event(
+        _event(
+            RuntimeEventName.TOPOLOGY_SESSION_STARTED,
+            fresh_time,
+            session_id="fresh",
+            snapshot_version=1,
+        )
+    )
+
+    assert materializer.get_snapshot("stale") is None
+    assert materializer.get_snapshot("fresh") is not None
+
+
 def _event(
     name: RuntimeEventName,
     event_time: datetime,

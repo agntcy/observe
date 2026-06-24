@@ -49,3 +49,48 @@ def is_realtime_observability_enabled() -> bool:
 
 def set_realtime_observability_enabled(enabled: bool | None) -> None:
     _realtime_observability_config.set_override(enabled)
+
+
+def _read_positive_float_env(name: str, default: float | None) -> float | None:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else None
+
+
+def _read_positive_int_env(name: str, default: int | None) -> int | None:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else None
+
+
+def realtime_session_ttl_seconds() -> float | None:
+    """Idle timeout after which an inactive session's live state is evicted.
+
+    Returns ``None`` to disable TTL-based eviction. Defaults to 1 hour.
+    """
+    return _read_positive_float_env(
+        "OBSERVE_REALTIME_SESSION_TTL_SECONDS",
+        3600.0,
+    )
+
+
+def realtime_max_sessions() -> int | None:
+    """Maximum number of live sessions kept in memory before evicting the oldest.
+
+    Returns ``None`` to disable the cap. Defaults to 1000 sessions.
+    """
+    return _read_positive_int_env(
+        "OBSERVE_REALTIME_MAX_SESSIONS",
+        1000,
+    )
+

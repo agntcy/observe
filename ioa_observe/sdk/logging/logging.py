@@ -14,7 +14,11 @@ from opentelemetry.exporter.otlp.proto.http._log_exporter import (
     OTLPLogExporter as HTTPExporter,
 )
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk._logs.export import LogExporter, BatchLogRecordProcessor
+from opentelemetry.sdk._logs.export import (
+    LogExporter,
+    BatchLogRecordProcessor,
+    SimpleLogRecordProcessor,
+)
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
@@ -73,6 +77,7 @@ def init_logging_provider(
     exporter: LogExporter,
     resource_attributes: dict = None,
     install_logging_handler: bool = True,
+    use_simple_processor: bool = False,
 ) -> LoggerProvider:
     resource = (
         Resource.create(resource_attributes)
@@ -81,7 +86,14 @@ def init_logging_provider(
     )
 
     logger_provider = LoggerProvider(resource=resource)
-    logger_provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
+    # Runtime/real-time observability events need to be exported with minimal
+    # latency (before the corresponding spans flush), so callers can opt into a
+    # SimpleLogRecordProcessor which exports each record immediately instead of
+    # waiting for the batch schedule delay.
+    if use_simple_processor:
+        logger_provider.add_log_record_processor(SimpleLogRecordProcessor(exporter))
+    else:
+        logger_provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
 
     current_provider = get_logger_provider()
     if type(current_provider).__name__ == "ProxyLoggerProvider":

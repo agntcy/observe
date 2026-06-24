@@ -22,11 +22,20 @@ from ioa_observe.sdk.instrumentations.slim import (
     _emit_slim_send_topology_event,
 )
 from ioa_observe.sdk.tracing import get_live_topology_snapshot, session_start
-from ioa_observe.sdk.tracing.topology import clear_topology_listeners
+from ioa_observe.sdk.tracing.topology import (
+    clear_topology_listeners,
+    record_session_started,
+)
+from ioa_observe.sdk.tracing.tracing import TracerWrapper
 
 
 @pytest.fixture(autouse=True)
 def reset_topology_state():
+    # Other test modules call Observe.init() without an app_name, which mutates
+    # the global TracerWrapper.app_name. Pin it here so session ids are
+    # deterministic regardless of test execution order.
+    previous_app_name = TracerWrapper.app_name
+    TracerWrapper.app_name = "test"
     clear_topology_listeners()
     set_realtime_observability_enabled(None)
     with kv_store._lock:
@@ -36,6 +45,7 @@ def reset_topology_state():
     set_realtime_observability_enabled(None)
     with kv_store._lock:
         kv_store.store.clear()
+    TracerWrapper.app_name = previous_app_name
 
 
 @pytest.fixture
@@ -257,3 +267,35 @@ def test_observe_init_can_disable_realtime_topology_events(topology_events):
     assert node_ids["planner"]["status"] == "completed"
     assert node_ids["executor"]["status"] == "completed"
     assert edge_ids["agent_handoff:planner->executor"]["status"] == "observed"
+
+
+def test_live_topology_evicts_oldest_session_over_capacity(monkeypatch):
+    monkeypatch.setenv("OBSERVE_REALTIME_MAX_SESSIONS", "2")
+
+    record_session_started("session-a")
+    record_session_started("session-b")
+    record_session_started("session-c")
+
+    # The oldest session must be evicted so memory stays bounded.
+    assert get_live_topology_snapshot("session-a")["version"] == 0
+    assert get_live_topology_snapshot("session-b")["version"] >= 1
+    assert get_live_topology_snapshot("session-c")["version"] >= 1
+
+
+def test_live_topology_evicts_expired_session_by_ttl(monkeypatch):
+    monkeypatch.setenv("OBSERVE_REALTIME_SESSION_TTL_SECONDS", "60")
+
+    record_session_started("session-stale")
+
+    # Force the stale session's last-update timestamp far into the past.
+    from ioa_observe.sdk.tracing import topology as topology_module
+
+    with topology_module._lock:
+        topology_module._session_graphs["session-stale"].updated_at_ms -= 600_000
+
+    # A new session triggers TTL-based eviction of the stale one.
+    record_session_started("session-fresh")
+
+    assert get_live_topology_snapshot("session-stale")["version"] == 0
+    assert get_live_topology_snapshot("session-fresh")["version"] >= 1
+

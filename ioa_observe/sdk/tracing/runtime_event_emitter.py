@@ -109,5 +109,8 @@ def _ensure_runtime_event_logger() -> None:
             exporter,
             TracerWrapper.resource_attributes,
             install_logging_handler=False,
+            # Export runtime events immediately so downstream materializers can
+            # observe live session state before the matching spans flush.
+            use_simple_processor=True,
         )
         _runtime_logger_ready = True
