@@ -50,6 +50,7 @@ from ioa_observe.sdk.tracing.transform_span import (
     transform_json_object_configurable,
     validate_transformer_rules,
 )
+from ioa_observe.sdk.tracing.topology import record_session_started
 from ioa_observe.sdk.utils import is_notebook
 from ioa_observe.sdk.client import kv_store
 
@@ -719,6 +720,7 @@ def session_start(apply_transform: bool = False):
     # Initialize span tracking for this session (for agent linking)
     kv_store.set(f"session.{session_id}.agent_sequence", "0")
     kv_store.set(f"session.{session_id}.started_at", str(time.time()))
+    record_session_started(session_id)
 
     # Check if environment variable overrides the apply_transform parameter
     transformer_enabled_env = os.getenv("SPAN_TRANSFORMER_RULES_ENABLED")

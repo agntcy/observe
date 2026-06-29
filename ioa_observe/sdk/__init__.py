@@ -24,12 +24,17 @@ from ioa_observe.sdk.config import (
     is_tracing_enabled,
     is_metrics_enabled,
     is_logging_enabled,
+    set_realtime_observability_enabled,
 )
 from ioa_observe.sdk.tracing.tracing import (
     TracerWrapper,
     set_association_properties,
     set_external_prompt_tracing_context,
     #    init_spans_exporter,
+)
+from ioa_observe.sdk.tracing.topology import (
+    register_topology_listener,
+    unregister_topology_listener,
 )
 from typing import Dict
 from ioa_observe.sdk.client.client import Client
@@ -62,11 +67,13 @@ class Observe:
         propagator: TextMapPropagator = None,
         observe_sync_enabled: bool = False,
         should_enrich_metrics: bool = True,
+        realtime_observability_enabled: Optional[bool] = None,
         resource_attributes: dict = {},
         instruments: Optional[Set[Instruments]] = None,
         block_instruments: Optional[Set[Instruments]] = None,
         image_uploader=None,
     ) -> Optional[Client]:
+        set_realtime_observability_enabled(realtime_observability_enabled)
         if not enabled:
             TracerWrapper.set_disabled(True)
             print(
@@ -214,6 +221,14 @@ class Observe:
 
     def set_prompt(template: str, variables: dict, version: int):
         set_external_prompt_tracing_context(template, variables, version)
+
+    @staticmethod
+    def register_topology_listener(callback) -> None:
+        register_topology_listener(callback)
+
+    @staticmethod
+    def unregister_topology_listener(callback) -> None:
+        unregister_topology_listener(callback)
 
     @staticmethod
     def get():

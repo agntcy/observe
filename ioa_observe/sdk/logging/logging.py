@@ -4,6 +4,8 @@
 import logging
 from typing import Dict
 
+from opentelemetry._logs import get_logger_provider, set_logger_provider
+
 from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (
     OTLPLogExporter as GRPCExporter,
 )
@@ -12,7 +14,11 @@ from opentelemetry.exporter.otlp.proto.http._log_exporter import (
     OTLPLogExporter as HTTPExporter,
 )
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk._logs.export import LogExporter, BatchLogRecordProcessor
+from opentelemetry.sdk._logs.export import (
+    LogExporter,
+    BatchLogRecordProcessor,
+    SimpleLogRecordProcessor,
+)
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
@@ -68,7 +74,10 @@ def init_logging_exporter(endpoint: str, headers: Dict[str, str]) -> LogExporter
 
 
 def init_logging_provider(
-    exporter: LogExporter, resource_attributes: dict = None
+    exporter: LogExporter,
+    resource_attributes: dict = None,
+    install_logging_handler: bool = True,
+    use_simple_processor: bool = False,
 ) -> LoggerProvider:
     resource = (
         Resource.create(resource_attributes)
@@ -77,11 +86,23 @@ def init_logging_provider(
     )
 
     logger_provider = LoggerProvider(resource=resource)
-    logger_provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
+    # Runtime/real-time observability events need to be exported with minimal
+    # latency (before the corresponding spans flush), so callers can opt into a
+    # SimpleLogRecordProcessor which exports each record immediately instead of
+    # waiting for the batch schedule delay.
+    if use_simple_processor:
+        logger_provider.add_log_record_processor(SimpleLogRecordProcessor(exporter))
+    else:
+        logger_provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
 
-    logging_handler = LoggingHandler(
-        level=logging.NOTSET, logger_provider=logger_provider
-    )
-    logging.basicConfig(level=logging.INFO, handlers=[logging_handler])
+    current_provider = get_logger_provider()
+    if type(current_provider).__name__ == "ProxyLoggerProvider":
+        set_logger_provider(logger_provider)
+
+    if install_logging_handler:
+        logging_handler = LoggingHandler(
+            level=logging.NOTSET, logger_provider=logger_provider
+        )
+        logging.basicConfig(level=logging.INFO, handlers=[logging_handler])
 
     return logger_provider

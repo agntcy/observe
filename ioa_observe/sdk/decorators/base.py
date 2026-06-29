@@ -46,12 +46,24 @@ from ioa_observe.sdk.metrics.agents.tracker import connection_tracker
 from ioa_observe.sdk.metrics.agents.heuristics import compute_agent_interpretation_score
 from ioa_observe.sdk.telemetry import Telemetry
 from ioa_observe.sdk.tracing import get_tracer, set_workflow_name
+from ioa_observe.sdk.tracing.runtime_event_emitter import emit_runtime_event
+from ioa_observe.sdk.tracing.runtime_events import (
+    RuntimeEventAttribute,
+    RuntimeEventName,
+    build_runtime_event_attributes,
+)
 from ioa_observe.sdk.tracing.tracing import (
     TracerWrapper,
     set_entity_path,
     get_chained_entity_path,
     set_agent_id_event,
     set_application_id,
+)
+from ioa_observe.sdk.tracing.topology import (
+    record_node_completed,
+    record_node_started,
+    upsert_topology_edge,
+    next_session_event_version,
 )
 from ioa_observe.sdk.metrics.agents.agent_connections import connection_reliability
 from ioa_observe.sdk.utils import camel_to_snake
@@ -358,8 +370,22 @@ def _setup_span(
                 # Store sequence on span object for _cleanup_span to use
                 span._ioa_session_id = session_id
                 span._ioa_agent_sequence = new_seq
+                span._ioa_agent_name = entity_name
                 # Register live span ref for retroactive fork annotation
                 register_active_span(session_id, new_seq, span)
+                record_node_started(session_id, entity_name)
+                if previous_agent_name:
+                    upsert_topology_edge(
+                        session_id,
+                        previous_agent_name,
+                        entity_name,
+                        transport="agent_handoff",
+                        status="observed",
+                        operation="agent_handoff",
+                        sequence=new_seq,
+                        fork_id=fork_id or join_fork_id,
+                        kind="agent_handoff",
+                    )
 
             # Annotate fork attributes if this agent is a fork branch
             if fork_id:
@@ -371,6 +397,18 @@ def _setup_span(
             # Annotate join attributes if this agent is a join point
             if join_fork_id:
                 annotate_join(span, join_fork_id, len(links))
+
+        if tlp_span_kind == ObserveSpanKindValues.TOOL and session_id:
+            span._ioa_session_id = session_id
+            span._ioa_tool_name = entity_name
+            emit_runtime_event(
+                build_runtime_event_attributes(
+                    RuntimeEventName.TOOL_STARTED,
+                    session_id=session_id,
+                    snapshot_version=next_session_event_version(session_id),
+                    **{RuntimeEventAttribute.TOOL_NAME.value: entity_name},
+                )
+            )
 
         if tlp_span_kind in [
             ObserveSpanKindValues.TASK,
@@ -551,12 +589,26 @@ def _cleanup_span(span, ctx_token):
     if session_id and agent_seq:
         mark_agent_ended(session_id, agent_seq)
         unregister_active_span(session_id, agent_seq)
+        agent_name = getattr(span, "_ioa_agent_name", None)
+        if agent_name:
+            record_node_completed(session_id, agent_name)
 
     # Mark tool as no longer in-flight for tool-level fork detection
     tool_parent_hex = getattr(span, "_ioa_tool_parent_hex", None)
     tool_seq = getattr(span, "_ioa_tool_seq", None)
     if session_id and tool_parent_hex and tool_seq:
         mark_tool_ended_for_fork(session_id, tool_parent_hex, tool_seq)
+
+    tool_name = getattr(span, "_ioa_tool_name", None)
+    if session_id and tool_name:
+        emit_runtime_event(
+            build_runtime_event_attributes(
+                RuntimeEventName.TOOL_COMPLETED,
+                session_id=session_id,
+                snapshot_version=next_session_event_version(session_id),
+                **{RuntimeEventAttribute.TOOL_NAME.value: tool_name},
+            )
+        )
 
     span.end()
     context_api.detach(ctx_token)
