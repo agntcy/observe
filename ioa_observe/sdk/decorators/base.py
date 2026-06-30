@@ -243,6 +243,7 @@ def _setup_span(
     version: Optional[int] = None,
     description: Optional[str] = None,
     application_id: Optional[str] = None,
+    entity_input: Optional[str] = None,
 ):
     """Sets up the OpenTelemetry span and context"""
     if tlp_span_kind in [
@@ -373,7 +374,7 @@ def _setup_span(
                 span._ioa_agent_name = entity_name
                 # Register live span ref for retroactive fork annotation
                 register_active_span(session_id, new_seq, span)
-                record_node_started(session_id, entity_name)
+                record_node_started(session_id, entity_name, agent_input=entity_input)
                 if previous_agent_name:
                     upsert_topology_edge(
                         session_id,
@@ -406,7 +407,10 @@ def _setup_span(
                     RuntimeEventName.TOOL_STARTED,
                     session_id=session_id,
                     snapshot_version=next_session_event_version(session_id),
-                    **{RuntimeEventAttribute.TOOL_NAME.value: entity_name},
+                    **{
+                        RuntimeEventAttribute.TOOL_NAME.value: entity_name,
+                        RuntimeEventAttribute.TOOL_INPUT.value: entity_input,
+                    },
                 )
             )
 
@@ -469,46 +473,66 @@ def _setup_span(
     return span, ctx, ctx_token
 
 
-def _handle_span_input(span, args, kwargs, cls=None):
-    """Handles entity input logging in JSON for both sync and async functions"""
+def _compute_entity_input_json(args, kwargs):
+    """Serializes entity input (args/kwargs) to JSON.
+
+    Returns the JSON string when prompt content is allowed and within the
+    configured size limit, otherwise ``None``. Extracted so the serialized
+    input can be reused both as a span attribute and as a real-time runtime
+    event attribute (emitted at span start).
+    """
     try:
-        if _should_send_prompts():
-            # Use a safer serialization approach to avoid recursion
-            safe_args = []
-            safe_kwargs = {}
+        if not _should_send_prompts():
+            return None
 
-            # Safely convert args
-            for arg in args:
-                try:
-                    # Check if the object can be JSON serialized directly
-                    json.dumps(arg)
-                    safe_args.append(arg)
-                except (TypeError, ValueError, PydanticSerializationError):
-                    # Use intelligent serialization
-                    safe_args.append(_serialize_object(arg))
+        # Use a safer serialization approach to avoid recursion
+        safe_args = []
+        safe_kwargs = {}
 
-            # Safely convert kwargs
-            for key, value in kwargs.items():
-                try:
-                    # Test if the object can be JSON serialized directly
-                    json.dumps(value)
-                    safe_kwargs[key] = value
-                except (TypeError, ValueError, PydanticSerializationError):
-                    # Use intelligent serialization
-                    safe_kwargs[key] = _serialize_object(value)
+        # Safely convert args
+        for arg in args:
+            try:
+                # Check if the object can be JSON serialized directly
+                json.dumps(arg)
+                safe_args.append(arg)
+            except (TypeError, ValueError, PydanticSerializationError):
+                # Use intelligent serialization
+                safe_args.append(_serialize_object(arg))
 
-            # Create the JSON
-            json_input = json.dumps({"args": safe_args, "kwargs": safe_kwargs})
+        # Safely convert kwargs
+        for key, value in kwargs.items():
+            try:
+                # Test if the object can be JSON serialized directly
+                json.dumps(value)
+                safe_kwargs[key] = value
+            except (TypeError, ValueError, PydanticSerializationError):
+                # Use intelligent serialization
+                safe_kwargs[key] = _serialize_object(value)
 
-            if _is_json_size_valid(json_input):
-                span.set_attribute(
-                    OBSERVE_ENTITY_INPUT,
-                    json_input,
-                )
+        # Create the JSON
+        json_input = json.dumps({"args": safe_args, "kwargs": safe_kwargs})
+
+        if _is_json_size_valid(json_input):
+            return json_input
+        return None
     except Exception as e:
         # Log the exception but don't fail the actual function call
         print(f"Warning: Failed to serialize input for span: {e}")
         Telemetry().log_exception(e)
+        return None
+
+
+def _handle_span_input(span, entity_input, cls=None):
+    """Handles entity input logging in JSON for both sync and async functions.
+
+    ``entity_input`` is the pre-serialized JSON string produced by
+    :func:`_compute_entity_input_json`.
+    """
+    if entity_input is not None:
+        span.set_attribute(
+            OBSERVE_ENTITY_INPUT,
+            entity_input,
+        )
 
 
 def _handle_span_output(span, tlp_span_kind, res, cls=None):
@@ -644,14 +668,16 @@ def entity_method(
                             yield item
                         return
 
+                    _entity_input = _compute_entity_input_json(args, kwargs)
                     span, ctx, ctx_token = _setup_span(
                         entity_name,
                         tlp_span_kind,
                         version,
                         description,
                         application_id,
+                        entity_input=_entity_input,
                     )
-                    _handle_span_input(span, args, kwargs, cls=JSONEncoder)
+                    _handle_span_input(span, _entity_input, cls=JSONEncoder)
 
                     async for item in _ahandle_generator(
                         span, ctx_token, fn(*args, **kwargs)
@@ -666,18 +692,20 @@ def entity_method(
                     if not TracerWrapper.verify_initialized():
                         return await fn(*args, **kwargs)
 
+                    _entity_input = _compute_entity_input_json(args, kwargs)
                     span, ctx, ctx_token = _setup_span(
                         entity_name,
                         tlp_span_kind,
                         version,
                         description,
                         application_id,
+                        entity_input=_entity_input,
                     )
 
                     # Handle case where span setup failed
                     if span is None:
                         return fn(*args, **kwargs)
-                    _handle_span_input(span, args, kwargs, cls=JSONEncoder)
+                    _handle_span_input(span, _entity_input, cls=JSONEncoder)
                     success = False
                     try:
                         res = await fn(*args, **kwargs)
@@ -763,19 +791,21 @@ def entity_method(
                 if not TracerWrapper.verify_initialized():
                     return fn(*args, **kwargs)
 
+                _entity_input = _compute_entity_input_json(args, kwargs)
                 span, ctx, ctx_token = _setup_span(
                     entity_name,
                     tlp_span_kind,
                     version,
                     description,
                     application_id,
+                    entity_input=_entity_input,
                 )
 
                 # Handle case where span setup failed
                 if span is None:
                     return fn(*args, **kwargs)
 
-                _handle_span_input(span, args, kwargs, cls=JSONEncoder)
+                _handle_span_input(span, _entity_input, cls=JSONEncoder)
                 _handle_agent_span(span, entity_name, description, tlp_span_kind)
                 success = False
 
