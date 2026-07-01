@@ -108,6 +108,26 @@ def record_session_started(session_id: str) -> None:
     _publish(event, runtime_attributes)
 
 
+def record_session_completed(session_id: str) -> None:
+    with _lock:
+        graph = _get_or_create_graph(session_id)
+        graph.version += 1
+        _touch_graph(graph)
+        event = {
+            "type": RuntimeEventName.TOPOLOGY_SESSION_COMPLETED.value,
+            "session_id": session_id,
+            "snapshot_version": graph.version,
+            "snapshot": graph.snapshot(),
+        }
+        runtime_attributes = build_runtime_event_attributes(
+            RuntimeEventName.TOPOLOGY_SESSION_COMPLETED,
+            session_id=session_id,
+            snapshot_version=graph.version,
+        )
+
+    _publish(event, runtime_attributes)
+
+
 def record_node_started(
     session_id: str, agent_name: str, agent_input: str | None = None
 ) -> None:

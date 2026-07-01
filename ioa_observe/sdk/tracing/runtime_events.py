@@ -11,6 +11,7 @@ from typing import Any, Mapping
 
 class RuntimeEventName(str, Enum):
     TOPOLOGY_SESSION_STARTED = "topology.session.started"
+    TOPOLOGY_SESSION_COMPLETED = "topology.session.completed"
     TOPOLOGY_NODE_STARTED = "topology.node.started"
     TOPOLOGY_NODE_COMPLETED = "topology.node.completed"
     TOPOLOGY_EDGE_UPDATED = "topology.edge.updated"
@@ -52,6 +53,7 @@ COMMON_REQUIRED_ATTRIBUTES = frozenset(
 
 EVENT_REQUIRED_ATTRIBUTES = {
     RuntimeEventName.TOPOLOGY_SESSION_STARTED.value: COMMON_REQUIRED_ATTRIBUTES,
+    RuntimeEventName.TOPOLOGY_SESSION_COMPLETED.value: COMMON_REQUIRED_ATTRIBUTES,
     RuntimeEventName.TOPOLOGY_NODE_STARTED.value: COMMON_REQUIRED_ATTRIBUTES
     | {RuntimeEventAttribute.AGENT_NAME.value},
     RuntimeEventName.TOPOLOGY_NODE_COMPLETED.value: COMMON_REQUIRED_ATTRIBUTES

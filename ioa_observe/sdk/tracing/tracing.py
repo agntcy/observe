@@ -50,7 +50,10 @@ from ioa_observe.sdk.tracing.transform_span import (
     transform_json_object_configurable,
     validate_transformer_rules,
 )
-from ioa_observe.sdk.tracing.topology import record_session_started
+from ioa_observe.sdk.tracing.topology import (
+    record_session_completed,
+    record_session_started,
+)
 from ioa_observe.sdk.utils import is_notebook
 from ioa_observe.sdk.client import kv_store
 
@@ -373,6 +376,8 @@ class TracerWrapper(object):
                         span.set_attribute(OBSERVE_WORKFLOW_NAME, workflow_name)
                     span.set_attribute("session.ended_at", last_ts)
 
+                record_session_completed(session_id)
+
             # ensure end spans are exported reasonably fast
             self.flush()
 
@@ -410,6 +415,8 @@ class TracerWrapper(object):
                 if workflow_name:
                     span.set_attribute(OBSERVE_WORKFLOW_NAME, workflow_name)
                 span.set_attribute("session.ended_at", now)
+
+            record_session_completed(session_id)
 
         self.flush()
 
@@ -786,20 +793,17 @@ def session_start(apply_transform: bool = False):
         "executionID": get_value("session.id") or session_id,
         "traceparentID": get_current_traceparent(),
     }
-    import inspect
 
-    frame = inspect.currentframe().f_back
-    if frame and "__enter__" in frame.f_code.co_names:
-        # Used as a context manager
-        from contextlib import contextmanager
+    from contextlib import contextmanager
 
-        @contextmanager
-        def _cm():
+    @contextmanager
+    def _cm():
+        try:
             yield metadata
+        finally:
+            record_session_completed(session_id)
 
-        return _cm()
-    # Used as a normal function
-    return contextlib.nullcontext(metadata)
+    return _cm()
 
 
 def set_session_id(session_id: str, traceparent: str = None) -> None:
