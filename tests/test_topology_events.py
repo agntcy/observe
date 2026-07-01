@@ -298,3 +298,59 @@ def test_live_topology_evicts_expired_session_by_ttl(monkeypatch):
 
     assert get_live_topology_snapshot("session-stale")["version"] == 0
     assert get_live_topology_snapshot("session-fresh")["version"] >= 1
+
+
+def test_session_start_context_manager_emits_completed_event(topology_events):
+    """Exiting the session_start context manager must emit topology.session.completed."""
+    with session_start() as metadata:
+        pass  # no agents needed — just check the lifecycle events
+
+    types_emitted = [e["type"] for e in topology_events]
+    assert "topology.session.completed" in types_emitted
+
+    completed = next(
+        e for e in topology_events if e["type"] == "topology.session.completed"
+    )
+    assert completed["session_id"] == metadata["executionID"]
+    assert completed["snapshot_version"] >= 1
+
+
+def test_session_completed_event_appears_after_started(topology_events):
+    """topology.session.completed must be emitted after topology.session.started."""
+    with session_start():
+        pass
+
+    types_emitted = [e["type"] for e in topology_events]
+    started_idx = types_emitted.index("topology.session.started")
+    completed_idx = types_emitted.index("topology.session.completed")
+    assert completed_idx > started_idx
+
+
+def test_session_completed_materializes_as_completed_status():
+    """SessionStateMaterializer must mark session status as 'completed' after the event."""
+    from ioa_observe.materializer.session_state import SessionStateMaterializer
+    from ioa_observe.sdk.tracing.runtime_event_emitter import (
+        register_runtime_event_listener,
+        unregister_runtime_event_listener,
+    )
+
+    mat = SessionStateMaterializer()
+
+    def _on_event(event):
+        mat.apply_event(event)
+
+    register_runtime_event_listener(_on_event)
+    try:
+        with session_start() as metadata:
+            session_id = metadata["executionID"]
+            # status should be active mid-session
+            snapshot_mid = mat.get_snapshot(session_id)
+            assert snapshot_mid is not None
+            assert snapshot_mid["status"] == "active"
+
+        # after context exit the completed event should have been applied
+        snapshot_end = mat.get_snapshot(session_id)
+        assert snapshot_end is not None
+        assert snapshot_end["status"] == "completed"
+    finally:
+        unregister_runtime_event_listener(_on_event)

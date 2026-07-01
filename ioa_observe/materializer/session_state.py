@@ -78,6 +78,7 @@ class SessionNodeState:
     version: int = 0
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    input: str | None = None
 
 
 @dataclass
@@ -106,6 +107,7 @@ class SessionToolState:
     version: int = 0
     last_started_at: datetime | None = None
     last_completed_at: datetime | None = None
+    last_input: str | None = None
 
 
 @dataclass
@@ -180,6 +182,8 @@ class SessionStateMaterializer:
 
             if event_name == RuntimeEventName.TOPOLOGY_SESSION_STARTED:
                 self._apply_session_started(session, record)
+            elif event_name == RuntimeEventName.TOPOLOGY_SESSION_COMPLETED:
+                self._apply_session_completed(session, record)
             elif event_name in {
                 RuntimeEventName.TOPOLOGY_NODE_STARTED,
                 RuntimeEventName.TOPOLOGY_NODE_COMPLETED,
@@ -247,6 +251,16 @@ class SessionStateMaterializer:
             session.topology_version, record.snapshot_version
         )
 
+    def _apply_session_completed(
+        self,
+        session: SessionState,
+        record: RuntimeEventRecord,
+    ) -> None:
+        session.status = "completed"
+        session.topology_version = max(
+            session.topology_version, record.snapshot_version
+        )
+
     def _apply_node_event(
         self,
         session: SessionState,
@@ -273,6 +287,11 @@ class SessionStateMaterializer:
             node.status = "started"
             node.started_at = record.event_time
             node.completed_at = None
+            agent_input = _optional_attribute(
+                record, RuntimeEventAttribute.AGENT_INPUT.value
+            )
+            if agent_input is not None:
+                node.input = agent_input
         else:
             node.status = "completed"
             node.started_at = node.started_at or record.event_time
@@ -393,6 +412,11 @@ class SessionStateMaterializer:
             tool.started_count += 1
             tool.status = "running"
             tool.last_started_at = record.event_time
+            tool_input = _optional_attribute(
+                record, RuntimeEventAttribute.TOOL_INPUT.value
+            )
+            if tool_input is not None:
+                tool.last_input = tool_input
         else:
             tool.active_count = max(0, tool.active_count - 1)
             tool.completed_count += 1
