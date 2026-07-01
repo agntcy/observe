@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import atexit
-import contextlib
 import json
 import logging
 import os
