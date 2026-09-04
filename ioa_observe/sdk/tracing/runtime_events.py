@@ -17,6 +17,8 @@ class RuntimeEventName(str, Enum):
     TOPOLOGY_EDGE_UPDATED = "topology.edge.updated"
     TOOL_STARTED = "tool.started"
     TOOL_COMPLETED = "tool.completed"
+    LLM_STARTED = "llm.started"
+    LLM_COMPLETED = "llm.completed"
     A2A_MESSAGE_SENT = "a2a.message.sent"
     A2A_MESSAGE_RECEIVED = "a2a.message.received"
     SLIM_MESSAGE_SENT = "slim.message.sent"
@@ -34,6 +36,9 @@ class RuntimeEventAttribute(str, Enum):
     AGENT_INPUT = "agent.input"
     TOOL_NAME = "tool.name"
     TOOL_INPUT = "tool.input"
+    LLM_NAME = "llm.name"
+    LLM_INPUT = "llm.input"
+    LLM_CALL_ID = "llm.call.id"
     SOURCE_AGENT = "source.agent"
     TARGET_AGENT = "target.agent"
     MESSAGE_ID = "message.id"
@@ -67,6 +72,10 @@ EVENT_REQUIRED_ATTRIBUTES = {
     | {RuntimeEventAttribute.TOOL_NAME.value},
     RuntimeEventName.TOOL_COMPLETED.value: COMMON_REQUIRED_ATTRIBUTES
     | {RuntimeEventAttribute.TOOL_NAME.value},
+    RuntimeEventName.LLM_STARTED.value: COMMON_REQUIRED_ATTRIBUTES
+    | {RuntimeEventAttribute.LLM_NAME.value},
+    RuntimeEventName.LLM_COMPLETED.value: COMMON_REQUIRED_ATTRIBUTES
+    | {RuntimeEventAttribute.LLM_NAME.value},
     RuntimeEventName.A2A_MESSAGE_SENT.value: COMMON_REQUIRED_ATTRIBUTES
     | {
         RuntimeEventAttribute.SOURCE_AGENT.value,

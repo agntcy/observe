@@ -111,6 +111,19 @@ class SessionToolState:
 
 
 @dataclass
+class SessionLLMState:
+    name: str
+    active_count: int = 0
+    started_count: int = 0
+    completed_count: int = 0
+    status: str = "idle"
+    version: int = 0
+    last_started_at: datetime | None = None
+    last_completed_at: datetime | None = None
+    last_input: str | None = None
+
+
+@dataclass
 class SessionState:
     session_id: str
     topology_version: int = 0
@@ -121,6 +134,7 @@ class SessionState:
     nodes: dict[str, SessionNodeState] = field(default_factory=dict)
     edges: dict[str, SessionEdgeState] = field(default_factory=dict)
     tools: dict[str, SessionToolState] = field(default_factory=dict)
+    llms: dict[str, SessionLLMState] = field(default_factory=dict)
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -141,6 +155,10 @@ class SessionState:
             "tools": [
                 _serialize_state(tool)
                 for tool in sorted(self.tools.values(), key=lambda item: item.name)
+            ],
+            "llms": [
+                _serialize_state(llm)
+                for llm in sorted(self.llms.values(), key=lambda item: item.name)
             ],
         }
 
@@ -205,6 +223,11 @@ class SessionStateMaterializer:
                 RuntimeEventName.TOOL_COMPLETED,
             }:
                 self._apply_tool_event(session, record, event_name)
+            elif event_name in {
+                RuntimeEventName.LLM_STARTED,
+                RuntimeEventName.LLM_COMPLETED,
+            }:
+                self._apply_llm_event(session, record, event_name)
 
             return session
 
@@ -422,6 +445,40 @@ class SessionStateMaterializer:
             tool.completed_count += 1
             tool.status = "idle" if tool.active_count == 0 else "running"
             tool.last_completed_at = record.event_time
+
+        session.status = "active"
+
+    def _apply_llm_event(
+        self,
+        session: SessionState,
+        record: RuntimeEventRecord,
+        event_name: RuntimeEventName,
+    ) -> None:
+        llm_name = _required_attribute(record, RuntimeEventAttribute.LLM_NAME.value)
+        llm = session.llms.get(llm_name)
+        if llm is None:
+            llm = SessionLLMState(name=llm_name)
+            session.llms[llm_name] = llm
+
+        if record.snapshot_version and record.snapshot_version < llm.version:
+            return
+        llm.version = max(llm.version, record.snapshot_version)
+
+        if event_name == RuntimeEventName.LLM_STARTED:
+            llm.active_count += 1
+            llm.started_count += 1
+            llm.status = "running"
+            llm.last_started_at = record.event_time
+            llm_input = _optional_attribute(
+                record, RuntimeEventAttribute.LLM_INPUT.value
+            )
+            if llm_input is not None:
+                llm.last_input = llm_input
+        else:
+            llm.active_count = max(0, llm.active_count - 1)
+            llm.completed_count += 1
+            llm.status = "idle" if llm.active_count == 0 else "running"
+            llm.last_completed_at = record.event_time
 
         session.status = "active"
 

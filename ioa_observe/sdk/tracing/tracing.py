@@ -50,8 +50,15 @@ from ioa_observe.sdk.tracing.transform_span import (
     validate_transformer_rules,
 )
 from ioa_observe.sdk.tracing.topology import (
+    next_session_event_version,
     record_session_completed,
     record_session_started,
+)
+from ioa_observe.sdk.tracing.runtime_event_emitter import emit_runtime_event
+from ioa_observe.sdk.tracing.runtime_events import (
+    RuntimeEventAttribute,
+    RuntimeEventName,
+    build_runtime_event_attributes,
 )
 from ioa_observe.sdk.utils import is_notebook
 from ioa_observe.sdk.client import kv_store
@@ -160,6 +167,10 @@ class TracerWrapper(object):
             # Track spans that have been processed to avoid duplicates
             obj._processed_spans = set()
             obj._processed_spans_lock = threading.Lock()
+            obj._active_llm_spans: dict[int, tuple[str, str, str | None, str | None]] = (
+                {}
+            )
+            obj._active_llm_spans_lock = threading.Lock()
             TracerWrapper.app_name = TracerWrapper.resource_attributes.get(
                 "service.name", "observe"
             )
@@ -438,6 +449,30 @@ class TracerWrapper(object):
 
         if is_llm_span(span):
             self.llm_call_counter.add(1, attributes=span.attributes)
+            if session_id is not None:
+                llm_name = _llm_span_name(span)
+                operation = span.attributes.get(SpanAttributes.LLM_REQUEST_TYPE)
+                llm_call_id = format(span.context.span_id, "016x")
+                with self._active_llm_spans_lock:
+                    self._active_llm_spans[span.context.span_id] = (
+                        llm_name,
+                        str(session_id),
+                        str(workflow_name) if workflow_name is not None else None,
+                        str(operation) if operation is not None else None,
+                    )
+                emit_runtime_event(
+                    build_runtime_event_attributes(
+                        RuntimeEventName.LLM_STARTED,
+                        session_id=str(session_id),
+                        snapshot_version=next_session_event_version(str(session_id)),
+                        **{
+                            RuntimeEventAttribute.LLM_NAME.value: llm_name,
+                            RuntimeEventAttribute.LLM_CALL_ID.value: llm_call_id,
+                            RuntimeEventAttribute.AGENT_NAME.value: workflow_name,
+                            "operation.name": operation,
+                        },
+                    )
+                )
 
         span.set_attribute("ioa_start_time", time.time())  # Record start time
 
@@ -517,6 +552,29 @@ class TracerWrapper(object):
                 )
 
         determine_reliability_score(span)
+        with self._active_llm_spans_lock:
+            llm_runtime_context = self._active_llm_spans.pop(
+                span.context.span_id, None
+            )
+        if llm_runtime_context:
+            llm_name, llm_session_id, llm_agent_name, llm_operation = (
+                llm_runtime_context
+            )
+            emit_runtime_event(
+                build_runtime_event_attributes(
+                    RuntimeEventName.LLM_COMPLETED,
+                    session_id=llm_session_id,
+                    snapshot_version=next_session_event_version(llm_session_id),
+                    **{
+                        RuntimeEventAttribute.LLM_NAME.value: llm_name,
+                        RuntimeEventAttribute.LLM_CALL_ID.value: format(
+                            span.context.span_id, "016x"
+                        ),
+                        RuntimeEventAttribute.AGENT_NAME.value: llm_agent_name,
+                        "operation.name": llm_operation,
+                    },
+                )
+            )
         # start_time = span.attributes.get("ioa_start_time")
 
         # Apply transformations if enabled
@@ -932,6 +990,15 @@ def set_external_prompt_tracing_context(
 
 def is_llm_span(span) -> bool:
     return span.attributes.get(SpanAttributes.LLM_REQUEST_TYPE) is not None
+
+
+def _llm_span_name(span) -> str:
+    return str(
+        span.attributes.get(SpanAttributes.LLM_REQUEST_MODEL)
+        or span.attributes.get(SpanAttributes.LLM_RESPONSE_MODEL)
+        or span.attributes.get(SpanAttributes.LLM_SYSTEM)
+        or span.name
+    )
 
 
 def init_spans_exporter(api_endpoint: str, headers: Dict[str, str]) -> SpanExporter:
