@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+from opentelemetry import trace
+from opentelemetry.semconv_ai import SpanAttributes
 
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.decorators import agent, tool
@@ -376,6 +378,48 @@ def test_tool_lifecycle_pushes_runtime_events(runtime_events):
     assert all(version > 0 for version in tool_versions)
     assert tool_versions == sorted(tool_versions)
     assert len(set(tool_versions)) == len(tool_versions)
+
+
+def test_agent_interprets_instrumented_llm_child_spans(runtime_events):
+    @agent(name="llm_parent_agent")
+    def call_instrumented_llm():
+        with trace.get_tracer(__name__).start_as_current_span(
+            "openai.chat",
+            attributes={
+                SpanAttributes.LLM_REQUEST_TYPE: "chat",
+                SpanAttributes.LLM_REQUEST_MODEL: "gpt-5",
+            },
+        ) as span:
+            return format(span.get_span_context().span_id, "016x")
+
+    with session_start():
+        llm_call_id = call_instrumented_llm()
+
+    llm_events = [
+        event
+        for event in runtime_events
+        if event[RuntimeEventAttribute.EVENT_NAME.value]
+        in {
+            RuntimeEventName.LLM_STARTED.value,
+            RuntimeEventName.LLM_COMPLETED.value,
+        }
+        and event.get(RuntimeEventAttribute.LLM_CALL_ID.value) == llm_call_id
+    ]
+    assert {
+        event[RuntimeEventAttribute.EVENT_NAME.value] for event in llm_events
+    } == {
+        RuntimeEventName.LLM_STARTED.value,
+        RuntimeEventName.LLM_COMPLETED.value,
+    }
+    assert all(
+        event[RuntimeEventAttribute.LLM_NAME.value] == "gpt-5"
+        for event in llm_events
+    )
+    assert all(
+        event[RuntimeEventAttribute.AGENT_NAME.value] == "llm_parent_agent"
+        for event in llm_events
+    )
+    assert all(event["operation.name"] == "chat" for event in llm_events)
 
 
 def test_observe_init_can_disable_realtime_runtime_events(runtime_events):
