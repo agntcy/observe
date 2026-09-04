@@ -167,9 +167,9 @@ class TracerWrapper(object):
             # Track spans that have been processed to avoid duplicates
             obj._processed_spans = set()
             obj._processed_spans_lock = threading.Lock()
-            obj._active_llm_spans: dict[int, tuple[str, str, str | None, str | None]] = (
-                {}
-            )
+            obj._active_llm_spans: dict[
+                int, tuple[str, str, str | None, str | None]
+            ] = {}
             obj._active_llm_spans_lock = threading.Lock()
             TracerWrapper.app_name = TracerWrapper.resource_attributes.get(
                 "service.name", "observe"
@@ -553,9 +553,7 @@ class TracerWrapper(object):
 
         determine_reliability_score(span)
         with self._active_llm_spans_lock:
-            llm_runtime_context = self._active_llm_spans.pop(
-                span.context.span_id, None
-            )
+            llm_runtime_context = self._active_llm_spans.pop(span.context.span_id, None)
         if llm_runtime_context:
             llm_name, llm_session_id, llm_agent_name, llm_operation = (
                 llm_runtime_context

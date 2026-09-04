@@ -405,15 +405,12 @@ def test_agent_interprets_instrumented_llm_child_spans(runtime_events):
         }
         and event.get(RuntimeEventAttribute.LLM_CALL_ID.value) == llm_call_id
     ]
-    assert {
-        event[RuntimeEventAttribute.EVENT_NAME.value] for event in llm_events
-    } == {
+    assert {event[RuntimeEventAttribute.EVENT_NAME.value] for event in llm_events} == {
         RuntimeEventName.LLM_STARTED.value,
         RuntimeEventName.LLM_COMPLETED.value,
     }
     assert all(
-        event[RuntimeEventAttribute.LLM_NAME.value] == "gpt-5"
-        for event in llm_events
+        event[RuntimeEventAttribute.LLM_NAME.value] == "gpt-5" for event in llm_events
     )
     assert all(
         event[RuntimeEventAttribute.AGENT_NAME.value] == "llm_parent_agent"
