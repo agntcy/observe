@@ -1,10 +1,13 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+from opentelemetry import trace
+from opentelemetry.semconv_ai import SpanAttributes
 
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.decorators import agent, tool
@@ -361,6 +364,19 @@ def test_tool_lifecycle_pushes_runtime_events(runtime_events):
         }
     }
     assert "runtime_tool" in tool_names
+    tool_events = [
+        event
+        for event in runtime_events
+        if event.get(RuntimeEventAttribute.TOOL_NAME.value) == "runtime_tool"
+    ]
+    started, completed = tool_events
+    assert json.loads(started[RuntimeEventAttribute.TOOL_INPUT.value]) == {
+        "args": [{"task": "lookup"}],
+        "kwargs": {},
+    }
+    assert json.loads(completed[RuntimeEventAttribute.TOOL_OUTPUT.value]) == {
+        "tool_result": "lookup"
+    }
 
     # Tool events must carry a non-zero, monotonically increasing per-session
     # version so downstream materializers can order them deterministically.
@@ -376,6 +392,93 @@ def test_tool_lifecycle_pushes_runtime_events(runtime_events):
     assert all(version > 0 for version in tool_versions)
     assert tool_versions == sorted(tool_versions)
     assert len(set(tool_versions)) == len(tool_versions)
+
+
+def test_agent_interprets_instrumented_llm_child_spans(runtime_events):
+    @agent(name="llm_parent_agent")
+    def call_instrumented_llm():
+        with trace.get_tracer(__name__).start_as_current_span(
+            "openai.chat",
+            attributes={
+                SpanAttributes.LLM_REQUEST_TYPE: "chat",
+                SpanAttributes.LLM_REQUEST_MODEL: "gpt-5",
+            },
+        ) as span:
+            return format(span.get_span_context().span_id, "016x")
+
+    with session_start():
+        llm_call_id = call_instrumented_llm()
+
+    llm_events = [
+        event
+        for event in runtime_events
+        if event[RuntimeEventAttribute.EVENT_NAME.value]
+        in {
+            RuntimeEventName.LLM_STARTED.value,
+            RuntimeEventName.LLM_COMPLETED.value,
+        }
+        and event.get(RuntimeEventAttribute.LLM_CALL_ID.value) == llm_call_id
+    ]
+    assert {event[RuntimeEventAttribute.EVENT_NAME.value] for event in llm_events} == {
+        RuntimeEventName.LLM_STARTED.value,
+        RuntimeEventName.LLM_COMPLETED.value,
+    }
+    assert all(
+        event[RuntimeEventAttribute.LLM_NAME.value] == "gpt-5" for event in llm_events
+    )
+    assert all(
+        event[RuntimeEventAttribute.AGENT_NAME.value] == "llm_parent_agent"
+        for event in llm_events
+    )
+    assert all(event["operation.name"] == "chat" for event in llm_events)
+
+
+def test_agent_interprets_llm_attributes_added_after_span_start(runtime_events):
+    @agent(name="llm_parent_agent")
+    def call_instrumented_llm():
+        with trace.get_tracer(__name__).start_as_current_span(
+            "ChatOpenAI.chat"
+        ) as span:
+            span.set_attribute(SpanAttributes.LLM_SYSTEM, "openai")
+            span.set_attribute(SpanAttributes.LLM_REQUEST_MODEL, "gpt-4o")
+            span.set_attribute("gen_ai.prompt.0.role", "user")
+            span.set_attribute("gen_ai.prompt.0.content", "Hello")
+            span.set_attribute("gen_ai.completion.0.role", "assistant")
+            span.set_attribute("gen_ai.completion.0.content", "Hi")
+            return format(span.get_span_context().span_id, "016x")
+
+    with session_start():
+        llm_call_id = call_instrumented_llm()
+
+    llm_events = [
+        event
+        for event in runtime_events
+        if event[RuntimeEventAttribute.EVENT_NAME.value]
+        in {
+            RuntimeEventName.LLM_STARTED.value,
+            RuntimeEventName.LLM_COMPLETED.value,
+        }
+        and event.get(RuntimeEventAttribute.LLM_CALL_ID.value) == llm_call_id
+    ]
+
+    assert [event[RuntimeEventAttribute.EVENT_NAME.value] for event in llm_events] == [
+        RuntimeEventName.LLM_STARTED.value,
+        RuntimeEventName.LLM_COMPLETED.value,
+    ]
+    assert all(
+        event[RuntimeEventAttribute.LLM_NAME.value] == "gpt-4o" for event in llm_events
+    )
+    started, completed = llm_events
+    assert json.loads(started[RuntimeEventAttribute.LLM_INPUT.value]) == [
+        {"content": "Hello", "role": "user"}
+    ]
+    assert json.loads(completed[RuntimeEventAttribute.LLM_OUTPUT.value]) == [
+        {"content": "Hi", "role": "assistant"}
+    ]
+    assert (
+        completed[RuntimeEventAttribute.LLM_INPUT.value]
+        == (started[RuntimeEventAttribute.LLM_INPUT.value])
+    )
 
 
 def test_observe_init_can_disable_realtime_runtime_events(runtime_events):
