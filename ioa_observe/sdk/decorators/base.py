@@ -625,12 +625,16 @@ def _cleanup_span(span, ctx_token):
 
     tool_name = getattr(span, "_ioa_tool_name", None)
     if session_id and tool_name:
+        tool_output = span.attributes.get(OBSERVE_ENTITY_OUTPUT)
         emit_runtime_event(
             build_runtime_event_attributes(
                 RuntimeEventName.TOOL_COMPLETED,
                 session_id=session_id,
                 snapshot_version=next_session_event_version(session_id),
-                **{RuntimeEventAttribute.TOOL_NAME.value: tool_name},
+                **{
+                    RuntimeEventAttribute.TOOL_NAME.value: tool_name,
+                    RuntimeEventAttribute.TOOL_OUTPUT.value: tool_output,
+                },
             )
         )
 

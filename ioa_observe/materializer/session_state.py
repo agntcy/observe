@@ -108,6 +108,7 @@ class SessionToolState:
     last_started_at: datetime | None = None
     last_completed_at: datetime | None = None
     last_input: str | None = None
+    last_output: str | None = None
 
 
 @dataclass
@@ -121,6 +122,7 @@ class SessionLLMState:
     last_started_at: datetime | None = None
     last_completed_at: datetime | None = None
     last_input: str | None = None
+    last_output: str | None = None
 
 
 @dataclass
@@ -445,6 +447,11 @@ class SessionStateMaterializer:
             tool.completed_count += 1
             tool.status = "idle" if tool.active_count == 0 else "running"
             tool.last_completed_at = record.event_time
+            tool_output = _optional_attribute(
+                record, RuntimeEventAttribute.TOOL_OUTPUT.value
+            )
+            if tool_output is not None:
+                tool.last_output = tool_output
 
         session.status = "active"
 
@@ -479,6 +486,16 @@ class SessionStateMaterializer:
             llm.completed_count += 1
             llm.status = "idle" if llm.active_count == 0 else "running"
             llm.last_completed_at = record.event_time
+            llm_input = _optional_attribute(
+                record, RuntimeEventAttribute.LLM_INPUT.value
+            )
+            if llm_input is not None:
+                llm.last_input = llm_input
+            llm_output = _optional_attribute(
+                record, RuntimeEventAttribute.LLM_OUTPUT.value
+            )
+            if llm_output is not None:
+                llm.last_output = llm_output
 
         session.status = "active"
 

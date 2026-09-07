@@ -450,28 +450,17 @@ class TracerWrapper(object):
         if is_llm_span(span):
             self.llm_call_counter.add(1, attributes=span.attributes)
             if session_id is not None:
-                llm_name = _llm_span_name(span)
-                operation = span.attributes.get(SpanAttributes.LLM_REQUEST_TYPE)
-                llm_call_id = format(span.context.span_id, "016x")
+                llm_runtime_context = _llm_runtime_context(
+                    span,
+                    session_id=str(session_id),
+                    agent_name=workflow_name,
+                )
                 with self._active_llm_spans_lock:
-                    self._active_llm_spans[span.context.span_id] = (
-                        llm_name,
-                        str(session_id),
-                        str(workflow_name) if workflow_name is not None else None,
-                        str(operation) if operation is not None else None,
-                    )
-                emit_runtime_event(
-                    build_runtime_event_attributes(
-                        RuntimeEventName.LLM_STARTED,
-                        session_id=str(session_id),
-                        snapshot_version=next_session_event_version(str(session_id)),
-                        **{
-                            RuntimeEventAttribute.LLM_NAME.value: llm_name,
-                            RuntimeEventAttribute.LLM_CALL_ID.value: llm_call_id,
-                            RuntimeEventAttribute.AGENT_NAME.value: workflow_name,
-                            "operation.name": operation,
-                        },
-                    )
+                    self._active_llm_spans[span.context.span_id] = llm_runtime_context
+                _emit_llm_started_runtime_event(
+                    span,
+                    llm_runtime_context,
+                    capture_content=self._should_capture_content(),
                 )
 
         span.set_attribute("ioa_start_time", time.time())  # Record start time
@@ -554,9 +543,34 @@ class TracerWrapper(object):
         determine_reliability_score(span)
         with self._active_llm_spans_lock:
             llm_runtime_context = self._active_llm_spans.pop(span.context.span_id, None)
+        if llm_runtime_context is None and is_llm_span(span):
+            session_id = span.attributes.get("session.id")
+            if session_id:
+                self.llm_call_counter.add(1, attributes=span.attributes)
+                llm_runtime_context = _llm_runtime_context(
+                    span,
+                    session_id=str(session_id),
+                    agent_name=span.attributes.get(OBSERVE_WORKFLOW_NAME),
+                )
+                _emit_llm_started_runtime_event(
+                    span,
+                    llm_runtime_context,
+                    capture_content=self._should_capture_content(),
+                )
         if llm_runtime_context:
             llm_name, llm_session_id, llm_agent_name, llm_operation = (
                 llm_runtime_context
+            )
+            capture_content = self._should_capture_content()
+            llm_input = (
+                _llm_span_content(span, SpanAttributes.LLM_PROMPTS)
+                if capture_content
+                else None
+            )
+            llm_output = (
+                _llm_span_content(span, SpanAttributes.LLM_COMPLETIONS)
+                if capture_content
+                else None
             )
             emit_runtime_event(
                 build_runtime_event_attributes(
@@ -569,6 +583,8 @@ class TracerWrapper(object):
                             span.context.span_id, "016x"
                         ),
                         RuntimeEventAttribute.AGENT_NAME.value: llm_agent_name,
+                        RuntimeEventAttribute.LLM_INPUT.value: llm_input,
+                        RuntimeEventAttribute.LLM_OUTPUT.value: llm_output,
                         "operation.name": llm_operation,
                     },
                 )
@@ -704,6 +720,11 @@ class TracerWrapper(object):
 
     def get_tracer(self):
         return self.__tracer_provider.get_tracer(TRACER_NAME)
+
+    def _should_capture_content(self) -> bool:
+        return self.enable_content_tracing or bool(
+            get_value("override_enable_content_tracing")
+        )
 
     def record_agent_execution(self, agent_name: str, success: bool):
         with self._agent_execution_counts_lock:
@@ -987,7 +1008,15 @@ def set_external_prompt_tracing_context(
 
 
 def is_llm_span(span) -> bool:
-    return span.attributes.get(SpanAttributes.LLM_REQUEST_TYPE) is not None
+    attributes = span.attributes
+    if attributes.get(SpanAttributes.LLM_REQUEST_TYPE) is not None:
+        return True
+    if attributes.get("gen_ai.operation.name") is not None:
+        return True
+    return attributes.get(SpanAttributes.LLM_SYSTEM) is not None and (
+        attributes.get(SpanAttributes.LLM_REQUEST_MODEL) is not None
+        or attributes.get(SpanAttributes.LLM_RESPONSE_MODEL) is not None
+    )
 
 
 def _llm_span_name(span) -> str:
@@ -997,6 +1026,77 @@ def _llm_span_name(span) -> str:
         or span.attributes.get(SpanAttributes.LLM_SYSTEM)
         or span.name
     )
+
+
+def _llm_span_operation(span) -> str | None:
+    operation = span.attributes.get(
+        SpanAttributes.LLM_REQUEST_TYPE
+    ) or span.attributes.get("gen_ai.operation.name")
+    if operation is not None:
+        return str(operation)
+    if "." in span.name:
+        return span.name.rsplit(".", 1)[-1]
+    return None
+
+
+def _llm_runtime_context(
+    span,
+    *,
+    session_id: str,
+    agent_name,
+) -> tuple[str, str, str | None, str | None]:
+    return (
+        _llm_span_name(span),
+        session_id,
+        str(agent_name) if agent_name is not None else None,
+        _llm_span_operation(span),
+    )
+
+
+def _emit_llm_started_runtime_event(
+    span,
+    llm_runtime_context: tuple[str, str, str | None, str | None],
+    *,
+    capture_content: bool,
+) -> None:
+    llm_name, session_id, agent_name, operation = llm_runtime_context
+    llm_input = (
+        _llm_span_content(span, SpanAttributes.LLM_PROMPTS) if capture_content else None
+    )
+    emit_runtime_event(
+        build_runtime_event_attributes(
+            RuntimeEventName.LLM_STARTED,
+            session_id=session_id,
+            snapshot_version=next_session_event_version(session_id),
+            **{
+                RuntimeEventAttribute.LLM_NAME.value: llm_name,
+                RuntimeEventAttribute.LLM_CALL_ID.value: format(
+                    span.context.span_id, "016x"
+                ),
+                RuntimeEventAttribute.AGENT_NAME.value: agent_name,
+                RuntimeEventAttribute.LLM_INPUT.value: llm_input,
+                "operation.name": operation,
+            },
+        )
+    )
+
+
+def _llm_span_content(span, prefix: str) -> str | None:
+    pattern = re.compile(rf"^{re.escape(prefix)}\.(\d+)(?:\.(.+))?$")
+    messages: dict[int, dict[str, object]] = {}
+    for key, value in span.attributes.items():
+        match = pattern.match(key)
+        if match is None:
+            continue
+        index = int(match.group(1))
+        field = match.group(2) or "content"
+        messages.setdefault(index, {})[field] = value
+    if not messages:
+        return None
+    ordered_messages = [
+        dict(sorted(messages[index].items())) for index in sorted(messages)
+    ]
+    return json.dumps(ordered_messages, separators=(",", ":"), default=str)
 
 
 def init_spans_exporter(api_endpoint: str, headers: Dict[str, str]) -> SpanExporter:

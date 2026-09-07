@@ -86,7 +86,10 @@ def test_materializer_builds_live_session_state_from_runtime_events():
             base_time + timedelta(seconds=6),
             session_id="session-123",
             snapshot_version=0,
-            **{RuntimeEventAttribute.TOOL_NAME.value: "search"},
+            **{
+                RuntimeEventAttribute.TOOL_NAME.value: "search",
+                RuntimeEventAttribute.TOOL_OUTPUT.value: "result",
+            },
         ),
         _event(
             RuntimeEventName.LLM_STARTED,
@@ -103,7 +106,10 @@ def test_materializer_builds_live_session_state_from_runtime_events():
             base_time + timedelta(seconds=8),
             session_id="session-123",
             snapshot_version=7,
-            **{RuntimeEventAttribute.LLM_NAME.value: "gpt-5"},
+            **{
+                RuntimeEventAttribute.LLM_NAME.value: "gpt-5",
+                RuntimeEventAttribute.LLM_OUTPUT.value: "world",
+            },
         ),
     ]
 
@@ -130,6 +136,7 @@ def test_materializer_builds_live_session_state_from_runtime_events():
     assert tools["search"]["started_count"] == 1
     assert tools["search"]["completed_count"] == 1
     assert tools["search"]["status"] == "idle"
+    assert tools["search"]["last_output"] == "result"
 
     llms = {llm["name"]: llm for llm in snapshot["llms"]}
     assert llms["gpt-5"]["active_count"] == 0
@@ -137,6 +144,7 @@ def test_materializer_builds_live_session_state_from_runtime_events():
     assert llms["gpt-5"]["completed_count"] == 1
     assert llms["gpt-5"]["status"] == "idle"
     assert llms["gpt-5"]["last_input"] == "hello"
+    assert llms["gpt-5"]["last_output"] == "world"
 
 
 def test_materializer_ignores_stale_topology_updates():
