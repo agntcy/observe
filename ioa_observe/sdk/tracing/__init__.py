@@ -20,6 +20,14 @@ from ioa_observe.sdk.tracing.runtime_event_emitter import (
     register_runtime_event_listener,
     unregister_runtime_event_listener,
 )
+from ioa_observe.sdk.tracing.runtime_event_processor import (
+    GenAIRuntimeEventMapper,
+    InstrumentationScope,
+    RuntimeEventMapper,
+    RuntimeEventSpanProcessor,
+    SpanLifecycle,
+    SpanLifecycleObservation,
+)
 from ioa_observe.sdk.tracing.topology import (
     get_live_topology_snapshot,
     record_session_completed,
@@ -39,6 +47,12 @@ __all__ = [
     "register_runtime_event_listener",
     "unregister_runtime_event_listener",
     "clear_runtime_event_listeners",
+    "GenAIRuntimeEventMapper",
+    "InstrumentationScope",
+    "RuntimeEventMapper",
+    "RuntimeEventSpanProcessor",
+    "SpanLifecycle",
+    "SpanLifecycleObservation",
     "get_live_topology_snapshot",
     "record_session_completed",
 ]
