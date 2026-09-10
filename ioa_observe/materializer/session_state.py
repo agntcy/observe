@@ -79,6 +79,7 @@ class SessionNodeState:
     started_at: datetime | None = None
     completed_at: datetime | None = None
     input: str | None = None
+    output: str | None = None
 
 
 @dataclass
@@ -321,6 +322,11 @@ class SessionStateMaterializer:
             node.status = "completed"
             node.started_at = node.started_at or record.event_time
             node.completed_at = record.event_time
+            agent_output = _optional_attribute(
+                record, RuntimeEventAttribute.AGENT_OUTPUT.value
+            )
+            if agent_output is not None:
+                node.output = agent_output
 
     def _apply_topology_edge_event(
         self,

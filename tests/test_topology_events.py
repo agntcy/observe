@@ -1,6 +1,7 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -101,6 +102,17 @@ def test_agent_events_build_runtime_snapshot(topology_events):
     assert "topology.node.started" in event_types
     assert "topology.node.completed" in event_types
     assert "topology.edge.updated" in event_types
+    completed_events = {
+        event["agent_name"]: event
+        for event in topology_events
+        if event["type"] == "topology.node.completed"
+    }
+    assert json.loads(completed_events["planner"]["agent_output"]) == {
+        "planned": "draft"
+    }
+    assert json.loads(completed_events["executor"]["agent_output"]) == {
+        "result": "draft"
+    }
 
 
 def test_a2a_send_and_receive_emit_live_edge_events(topology_events):

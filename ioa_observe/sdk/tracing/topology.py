@@ -168,7 +168,9 @@ def record_node_started(
     _publish(event, runtime_attributes)
 
 
-def record_node_completed(session_id: str, agent_name: str) -> None:
+def record_node_completed(
+    session_id: str, agent_name: str, agent_output: str | None = None
+) -> None:
     now_ms = _now_ms()
     with _lock:
         graph = _get_or_create_graph(session_id)
@@ -191,6 +193,7 @@ def record_node_completed(session_id: str, agent_name: str) -> None:
             "type": RuntimeEventName.TOPOLOGY_NODE_COMPLETED.value,
             "session_id": session_id,
             "agent_name": agent_name,
+            "agent_output": agent_output,
             "snapshot_version": graph.version,
             "snapshot": graph.snapshot(),
         }
@@ -198,7 +201,10 @@ def record_node_completed(session_id: str, agent_name: str) -> None:
             RuntimeEventName.TOPOLOGY_NODE_COMPLETED,
             session_id=session_id,
             snapshot_version=graph.version,
-            **{RuntimeEventAttribute.AGENT_NAME.value: agent_name},
+            **{
+                RuntimeEventAttribute.AGENT_NAME.value: agent_name,
+                RuntimeEventAttribute.AGENT_OUTPUT.value: agent_output,
+            },
         )
 
     _publish(event, runtime_attributes)

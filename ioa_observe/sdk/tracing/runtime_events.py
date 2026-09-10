@@ -34,6 +34,7 @@ class RuntimeEventAttribute(str, Enum):
     SNAPSHOT_VERSION = "snapshot.version"
     AGENT_NAME = "agent.name"
     AGENT_INPUT = "agent.input"
+    AGENT_OUTPUT = "agent.output"
     TOOL_NAME = "tool.name"
     TOOL_INPUT = "tool.input"
     TOOL_OUTPUT = "tool.output"

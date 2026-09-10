@@ -77,7 +77,16 @@ def test_genai_agent_invocation_maps_to_topology_node_lifecycle():
     }
 
     started = mapper(observation(SpanLifecycle.START, attributes), 1)[0]
-    completed = mapper(observation(SpanLifecycle.END, attributes), 2)[0]
+    completed = mapper(
+        observation(
+            SpanLifecycle.END,
+            {
+                **attributes,
+                "gen_ai.output.messages": '[{"role":"assistant","parts":[]}]',
+            },
+        ),
+        2,
+    )[0]
 
     assert started.name == RuntimeEventName.TOPOLOGY_NODE_STARTED
     assert completed.name == RuntimeEventName.TOPOLOGY_NODE_COMPLETED
@@ -88,6 +97,9 @@ def test_genai_agent_invocation_maps_to_topology_node_lifecycle():
     }
     assert (
         started.to_otel_attributes()[RuntimeEventAttribute.SNAPSHOT_VERSION.value] == 1
+    )
+    assert completed.attributes[RuntimeEventAttribute.AGENT_OUTPUT.value] == (
+        '[{"role":"assistant","parts":[]}]'
     )
 
 

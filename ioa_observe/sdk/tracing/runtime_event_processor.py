@@ -362,6 +362,10 @@ class GenAIRuntimeEventMapper:
             RuntimeEventAttribute.AGENT_NAME.value: agent_name,
             "gen_ai.operation.name": "invoke_agent",
         }
+        if observation.lifecycle is SpanLifecycle.END:
+            agent_output = observation.attributes.get("gen_ai.output.messages")
+            if agent_output is not None:
+                attributes[RuntimeEventAttribute.AGENT_OUTPUT.value] = agent_output
         if isinstance(provider_name, str) and provider_name:
             attributes["gen_ai.provider.name"] = provider_name
         event = RuntimeEvent(
