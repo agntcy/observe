@@ -79,7 +79,10 @@ def test_materializer_builds_live_session_state_from_runtime_events():
             base_time + timedelta(seconds=5),
             session_id="session-123",
             snapshot_version=5,
-            **{RuntimeEventAttribute.AGENT_NAME.value: "planner"},
+            **{
+                RuntimeEventAttribute.AGENT_NAME.value: "planner",
+                RuntimeEventAttribute.AGENT_OUTPUT.value: "plan",
+            },
         ),
         _event(
             RuntimeEventName.TOOL_COMPLETED,
@@ -124,6 +127,7 @@ def test_materializer_builds_live_session_state_from_runtime_events():
     nodes = {node["id"]: node for node in snapshot["nodes"]}
     assert nodes["planner"]["status"] == "completed"
     assert nodes["planner"]["version"] == 5
+    assert nodes["planner"]["output"] == "plan"
 
     edges = {edge["id"]: edge for edge in snapshot["edges"]}
     assert edges["agent_handoff:planner->executor"]["status"] == "observed"

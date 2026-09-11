@@ -34,6 +34,7 @@ class RuntimeEventAttribute(str, Enum):
     SNAPSHOT_VERSION = "snapshot.version"
     AGENT_NAME = "agent.name"
     AGENT_INPUT = "agent.input"
+    AGENT_OUTPUT = "agent.output"
     TOOL_NAME = "tool.name"
     TOOL_INPUT = "tool.input"
     TOOL_OUTPUT = "tool.output"
@@ -121,6 +122,11 @@ class RuntimeEvent:
     snapshot_version: int
     event_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     attributes: Mapping[str, Any] = field(default_factory=dict)
+    trace_id: int | None = None
+    span_id: int | None = None
+    trace_flags: int | None = None
+    instrumentation_scope_name: str | None = None
+    instrumentation_scope_version: str | None = None
 
     def to_otel_attributes(self) -> dict[str, str | bool | int | float]:
         event_name = (

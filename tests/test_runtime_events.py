@@ -225,6 +225,18 @@ def test_agent_lifecycle_pushes_runtime_events(runtime_events):
         }
     }
     assert {"runtime_planner", "runtime_executor"}.issubset(agent_names)
+    completed_events = {
+        event[RuntimeEventAttribute.AGENT_NAME.value]: event
+        for event in runtime_events
+        if event[RuntimeEventAttribute.EVENT_NAME.value]
+        == RuntimeEventName.TOPOLOGY_NODE_COMPLETED.value
+    }
+    assert json.loads(
+        completed_events["runtime_planner"][RuntimeEventAttribute.AGENT_OUTPUT.value]
+    ) == {"planned": "draft"}
+    assert json.loads(
+        completed_events["runtime_executor"][RuntimeEventAttribute.AGENT_OUTPUT.value]
+    ) == {"result": "draft"}
 
 
 def test_a2a_helpers_push_runtime_events(runtime_events):

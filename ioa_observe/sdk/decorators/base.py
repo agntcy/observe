@@ -615,7 +615,11 @@ def _cleanup_span(span, ctx_token):
         unregister_active_span(session_id, agent_seq)
         agent_name = getattr(span, "_ioa_agent_name", None)
         if agent_name:
-            record_node_completed(session_id, agent_name)
+            record_node_completed(
+                session_id,
+                agent_name,
+                agent_output=span.attributes.get(OBSERVE_ENTITY_OUTPUT),
+            )
 
     # Mark tool as no longer in-flight for tool-level fork detection
     tool_parent_hex = getattr(span, "_ioa_tool_parent_hex", None)
