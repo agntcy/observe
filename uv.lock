@@ -5,12 +5,12 @@ resolution-markers = [
     "python_full_version >= '3.13' and platform_python_implementation == 'PyPy'",
     "python_full_version >= '3.13' and platform_python_implementation != 'PyPy'",
     "python_full_version >= '3.12.4' and python_full_version < '3.13' and platform_python_implementation != 'PyPy'",
-    "python_full_version >= '3.12' and python_full_version < '3.12.4' and platform_python_implementation != 'PyPy'",
-    "python_full_version == '3.11.*' and platform_python_implementation != 'PyPy'",
-    "python_full_version < '3.11' and platform_python_implementation != 'PyPy'",
     "python_full_version >= '3.12.4' and python_full_version < '3.13' and platform_python_implementation == 'PyPy'",
+    "python_full_version >= '3.12' and python_full_version < '3.12.4' and platform_python_implementation != 'PyPy'",
     "python_full_version >= '3.12' and python_full_version < '3.12.4' and platform_python_implementation == 'PyPy'",
+    "python_full_version == '3.11.*' and platform_python_implementation != 'PyPy'",
     "python_full_version == '3.11.*' and platform_python_implementation == 'PyPy'",
+    "python_full_version < '3.11' and platform_python_implementation != 'PyPy'",
     "python_full_version < '3.11' and platform_python_implementation == 'PyPy'",
 ]
 
@@ -232,7 +232,7 @@ name = "cffi"
 version = "1.17.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser", marker = "platform_python_implementation == 'PyPy'" },
+    { name = "pycparser" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/fc/97/c783634659c2920c3fc70419e3af40972dbaf758daa229a7d6ea6135c90d/cffi-1.17.1.tar.gz", hash = "sha256:1c39c6016c32bc48dd54561950ebd6836e1670f2ae46128f67cf49e789c52824", size = 516621, upload-time = "2024-09-04T20:45:21.852Z" }
 wheels = [
@@ -745,7 +745,7 @@ wheels = [
 
 [[package]]
 name = "ioa-observe-sdk"
-version = "1.0.45"
+version = "1.0.46"
 source = { editable = "." }
 dependencies = [
     { name = "colorama" },
@@ -1491,10 +1491,10 @@ resolution-markers = [
     "python_full_version >= '3.13' and platform_python_implementation == 'PyPy'",
     "python_full_version >= '3.13' and platform_python_implementation != 'PyPy'",
     "python_full_version >= '3.12.4' and python_full_version < '3.13' and platform_python_implementation != 'PyPy'",
-    "python_full_version >= '3.12' and python_full_version < '3.12.4' and platform_python_implementation != 'PyPy'",
-    "python_full_version == '3.11.*' and platform_python_implementation != 'PyPy'",
     "python_full_version >= '3.12.4' and python_full_version < '3.13' and platform_python_implementation == 'PyPy'",
+    "python_full_version >= '3.12' and python_full_version < '3.12.4' and platform_python_implementation != 'PyPy'",
     "python_full_version >= '3.12' and python_full_version < '3.12.4' and platform_python_implementation == 'PyPy'",
+    "python_full_version == '3.11.*' and platform_python_implementation != 'PyPy'",
     "python_full_version == '3.11.*' and platform_python_implementation == 'PyPy'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6c/4f/ccdb8ad3a38e583f214547fd2f7ff1fc160c43a75af88e6aec213404b96a/networkx-3.5.tar.gz", hash = "sha256:d4c6f9cf81f52d69230866796b82afbccdec3db7ae4fbd1b65ea750feed50037", size = 2471065, upload-time = "2025-05-29T11:35:07.804Z" }
@@ -1591,10 +1591,10 @@ resolution-markers = [
     "python_full_version >= '3.13' and platform_python_implementation == 'PyPy'",
     "python_full_version >= '3.13' and platform_python_implementation != 'PyPy'",
     "python_full_version >= '3.12.4' and python_full_version < '3.13' and platform_python_implementation != 'PyPy'",
-    "python_full_version >= '3.12' and python_full_version < '3.12.4' and platform_python_implementation != 'PyPy'",
-    "python_full_version == '3.11.*' and platform_python_implementation != 'PyPy'",
     "python_full_version >= '3.12.4' and python_full_version < '3.13' and platform_python_implementation == 'PyPy'",
+    "python_full_version >= '3.12' and python_full_version < '3.12.4' and platform_python_implementation != 'PyPy'",
     "python_full_version >= '3.12' and python_full_version < '3.12.4' and platform_python_implementation == 'PyPy'",
+    "python_full_version == '3.11.*' and platform_python_implementation != 'PyPy'",
     "python_full_version == '3.11.*' and platform_python_implementation == 'PyPy'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f3/db/8e12381333aea300890829a0a36bfa738cac95475d88982d538725143fd9/numpy-2.3.0.tar.gz", hash = "sha256:581f87f9e9e9db2cba2141400e160e9dd644ee248788d6f90636eeb8fd9260a6", size = 20382813, upload-time = "2025-06-07T14:54:32.608Z" }
@@ -3058,9 +3058,9 @@ resolution-markers = [
     "python_full_version < '3.11' and platform_python_implementation == 'PyPy'",
 ]
 dependencies = [
-    { name = "pyyaml", marker = "platform_python_implementation == 'PyPy'" },
-    { name = "wrapt", marker = "platform_python_implementation == 'PyPy'" },
-    { name = "yarl", marker = "platform_python_implementation == 'PyPy'" },
+    { name = "pyyaml" },
+    { name = "wrapt" },
+    { name = "yarl" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a5/ea/a166a3cce4ac5958ba9bbd9768acdb1ba38ae17ff7986da09fa5b9dbc633/vcrpy-5.1.0.tar.gz", hash = "sha256:bbf1532f2618a04f11bce2a99af3a9647a32c880957293ff91e0a5f187b6b3d2", size = 84576, upload-time = "2023-07-31T03:19:32.231Z" }
 wheels = [
@@ -3079,10 +3079,10 @@ resolution-markers = [
     "python_full_version < '3.11' and platform_python_implementation != 'PyPy'",
 ]
 dependencies = [
-    { name = "pyyaml", marker = "platform_python_implementation != 'PyPy'" },
-    { name = "urllib3", marker = "platform_python_implementation != 'PyPy'" },
-    { name = "wrapt", marker = "platform_python_implementation != 'PyPy'" },
-    { name = "yarl", marker = "platform_python_implementation != 'PyPy'" },
+    { name = "pyyaml" },
+    { name = "urllib3" },
+    { name = "wrapt" },
+    { name = "yarl" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/25/d3/856e06184d4572aada1dd559ddec3bedc46df1f2edc5ab2c91121a2cccdb/vcrpy-7.0.0.tar.gz", hash = "sha256:176391ad0425edde1680c5b20738ea3dc7fb942520a48d2993448050986b3a50", size = 85502, upload-time = "2024-12-31T00:07:57.894Z" }
 wheels = [

@@ -32,6 +32,34 @@ No external OTel Collector or ClickHouse is required. The demo attaches the
 `SessionStateMaterializer` in-process via the runtime-event listener so it runs
 with a single command.
 
+## Third-party OTel SDK mapping example
+
+`third_party_otel.py` creates and owns its own `TracerProvider`, instruments
+agent, model, and tool spans using current `gen_ai.*` semantic-convention
+attributes, and sends traces and mapped runtime-event logs to an OTLP/HTTP
+collector:
+
+```bash
+uv run python examples/realtime_demo/third_party_otel.py
+```
+
+Start an OTLP/HTTP collector on port `4318` before running this example.
+The endpoint defaults to `http://localhost:4318` and honors
+`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, and
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`.
+
+The application keeps ownership of its provider and existing span processor.
+Observe's processor owns the default GenAI mapper and private Logs pipeline:
+
+```python
+provider.add_span_processor(
+    RuntimeEventSpanProcessor(
+        endpoint="http://localhost:4318/v1/logs",
+        resource=resource,
+    )
+)
+```
+
 ## How it maps to production
 
 In production the materializer lives **downstream** and consumes the same OTel
