@@ -2,7 +2,7 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/ioa-observe-sdk.svg)](https://pypi.org/project/ioa-observe-sdk/)
 
-IOA observability SDK for your multi-agentic application.
+Full fledged observability SDK for your multi-agentic application.
 
 ## Table of Contents
 
