@@ -17,11 +17,13 @@ from opentelemetry.semconv_ai import SpanAttributes
 from opentelemetry.trace import Status, StatusCode, Tracer, TracerProvider
 
 from ioa_observe.sdk import Observe
-from ioa_observe.sdk.decorators import agent, workflow, tool
+from ioa_observe.sdk.decorators import agent, graph, workflow, tool
+from ioa_observe.sdk.tracing import session_start
 from ioa_observe.sdk.tracing.manual import track_llm_call, LLMMessage
 from ioa_observe.sdk.utils.const import (
     ObserveSpanKindValues,
     OBSERVE_ENTITY_INPUT,
+    OBSERVE_ENTITY_DESCRIPTION,
     OBSERVE_ENTITY_OUTPUT,
     OBSERVE_SPAN_KIND,
     OBSERVE_ASSOCIATION_PROPERTIES,
@@ -299,6 +301,38 @@ def test_association_properties(exporter_with_custom_span_processor):
         some_task_span.attributes[f"{OBSERVE_ASSOCIATION_PROPERTIES}.user_name"]
         == "John Doe"
     )
+
+
+def test_graph_uses_application_id_and_includes_description(
+    exporter_with_custom_span_processor,
+):
+    @graph(
+        name="graph_name",
+        application_id="app_id",
+        description="Coordinates the agent workflow",
+    )
+    def build_graph():
+        return None
+
+    build_graph()
+
+    spans = exporter_with_custom_span_processor.get_finished_spans()
+    assert len(spans) == 1
+    assert spans[0].name == "app_id.graph"
+    assert (
+        spans[0].attributes[OBSERVE_ENTITY_DESCRIPTION]
+        == "Coordinates the agent workflow"
+    )
+
+
+def test_session_start_emits_span(exporter_with_custom_span_processor):
+    with session_start() as metadata:
+        pass
+
+    spans = exporter_with_custom_span_processor.get_finished_spans()
+    session_span = next(span for span in spans if span.name == "session.start")
+    assert session_span.attributes["session.id"] == metadata["executionID"]
+    assert session_span.attributes["session.started_at"] is not None
 
 
 def test_association_properties_within_workflow(exporter_with_custom_span_processor):

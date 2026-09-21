@@ -799,11 +799,17 @@ def session_start(apply_transform: bool = False):
     """
     session_id = (TracerWrapper.app_name or "observe") + "_" + str(uuid.uuid4())
     set_session_id(session_id)
+    started_at = time.time()
 
     # Initialize span tracking for this session (for agent linking)
     kv_store.set(f"session.{session_id}.agent_sequence", "0")
-    kv_store.set(f"session.{session_id}.started_at", str(time.time()))
-    record_session_started(session_id)
+    kv_store.set(f"session.{session_id}.started_at", str(started_at))
+
+    tracer = TracerWrapper().get_tracer()
+    with tracer.start_as_current_span("session.start") as span:
+        span.set_attribute("session.id", session_id)
+        span.set_attribute("session.started_at", started_at)
+        record_session_started(session_id)
 
     # Check if environment variable overrides the apply_transform parameter
     transformer_enabled_env = os.getenv("SPAN_TRANSFORMER_RULES_ENABLED")
