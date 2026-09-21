@@ -347,6 +347,7 @@ def _setup_span(
             with trace.get_tracer(__name__).start_span(
                 "agent_start_event", context=trace.set_span_in_context(span)
             ) as start_span:
+                start_span.set_attribute("agent_id", entity_name)
                 start_span.add_event(
                     "agent_start_event",
                     {

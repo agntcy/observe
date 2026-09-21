@@ -349,6 +349,8 @@ def test_association_properties_within_workflow(exporter_with_custom_span_proces
         "test_agent_within.agent",
         "agent_end_event",
     }
+    agent_start_span = next(span for span in spans if span.name == "agent_start_event")
+    assert agent_start_span.attributes["agent_id"] == "test_agent_within"
 
     some_workflow_span = spans[1]
     assert (
