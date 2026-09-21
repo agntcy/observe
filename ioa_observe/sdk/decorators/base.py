@@ -71,6 +71,7 @@ from ioa_observe.sdk.utils.const import (
     ObserveSpanKindValues,
     OBSERVE_SPAN_KIND,
     OBSERVE_ENTITY_NAME,
+    OBSERVE_ENTITY_DESCRIPTION,
     OBSERVE_ENTITY_VERSION,
     OBSERVE_ENTITY_INPUT,
     OBSERVE_ENTITY_OUTPUT,
@@ -256,7 +257,7 @@ def _setup_span(
         #     session_id = entity_name + "_" + str(uuid.uuid4())
         #     set_session_id(session_id)
     if tlp_span_kind == "graph":
-        span_name = f"{entity_name}.{tlp_span_kind}"
+        span_name = f"{application_id or entity_name}.{tlp_span_kind}"
 
     else:
         span_name = f"{entity_name}.{tlp_span_kind.value}"
@@ -346,6 +347,7 @@ def _setup_span(
             with trace.get_tracer(__name__).start_span(
                 "agent_start_event", context=trace.set_span_in_context(span)
             ) as start_span:
+                start_span.set_attribute("agent_id", entity_name)
                 start_span.add_event(
                     "agent_start_event",
                     {
@@ -461,6 +463,8 @@ def _setup_span(
         else:
             span.set_attribute(OBSERVE_SPAN_KIND, tlp_span_kind.value)
         span.set_attribute(OBSERVE_ENTITY_NAME, entity_name)
+        if description:
+            span.set_attribute(OBSERVE_ENTITY_DESCRIPTION, description)
         if version:
             span.set_attribute(OBSERVE_ENTITY_VERSION, version)
 

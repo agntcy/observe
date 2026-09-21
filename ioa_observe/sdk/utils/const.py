@@ -6,6 +6,7 @@ from enum import Enum
 OBSERVE_SPAN_KIND = "ioa_observe.span.kind"
 OBSERVE_WORKFLOW_NAME = "ioa_observe.workflow.name"
 OBSERVE_ENTITY_NAME = "ioa_observe.entity.name"
+OBSERVE_ENTITY_DESCRIPTION = "ioa_observe.entity.description"
 OBSERVE_ENTITY_PATH = "ioa_observe.entity.path"
 OBSERVE_ENTITY_VERSION = "ioa_observe.entity.version"
 OBSERVE_ENTITY_INPUT = "ioa_observe.entity.input"
