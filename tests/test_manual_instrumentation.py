@@ -20,6 +20,7 @@ from ioa_observe.sdk import Observe
 from ioa_observe.sdk.decorators import agent, graph, workflow, tool
 from ioa_observe.sdk.tracing import session_start
 from ioa_observe.sdk.tracing.manual import track_llm_call, LLMMessage
+from ioa_observe.sdk.tracing.tracing import TracerWrapper
 from ioa_observe.sdk.utils.const import (
     ObserveSpanKindValues,
     OBSERVE_ENTITY_INPUT,
@@ -331,6 +332,7 @@ def test_session_start_emits_span(exporter_with_custom_span_processor):
 
     spans = exporter_with_custom_span_processor.get_finished_spans()
     session_span = next(span for span in spans if span.name == "session.start")
+    assert session_span.attributes["application.id"] == TracerWrapper.app_name
     assert session_span.attributes["session.id"] == metadata["executionID"]
     assert session_span.attributes["session.started_at"] is not None
 
