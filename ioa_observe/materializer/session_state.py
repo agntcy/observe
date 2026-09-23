@@ -95,6 +95,8 @@ class SessionEdgeState:
     message_id: str | None = None
     sequence: int | None = None
     fork_id: str | None = None
+    evidence: str | None = None
+    confidence: float | None = None
     updated_at: datetime | None = None
 
 
@@ -372,6 +374,8 @@ class SessionStateMaterializer:
         )
         edge.sequence = _optional_int(record, RuntimeEventAttribute.SEQUENCE.value)
         edge.fork_id = _optional_attribute(record, RuntimeEventAttribute.FORK_ID.value)
+        edge.evidence = _optional_attribute(record, "topology.edge.evidence")
+        edge.confidence = _optional_float(record, "topology.edge.confidence")
         edge.updated_at = record.event_time
         session.topology_version = max(
             session.topology_version, record.snapshot_version
@@ -585,6 +589,18 @@ def _optional_int(record: RuntimeEventRecord, key: str) -> int | None:
     if value in (None, ""):
         return None
     return _coerce_int(value, key)
+
+
+def _optional_float(record: RuntimeEventRecord, key: str) -> float | None:
+    value = record.attributes.get(key)
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"Runtime event attribute {key} must be a number")
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Runtime event attribute {key} must be a number") from exc
 
 
 def _coerce_int(value: Any, key: str) -> int:

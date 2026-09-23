@@ -54,7 +54,9 @@ def test_materializer_builds_live_session_state_from_runtime_events():
                 RuntimeEventAttribute.TARGET_AGENT.value: "executor",
                 "topology.edge.id": "agent_handoff:planner->executor",
                 "topology.edge.kind": "agent_handoff",
-                "topology.edge.status": "observed",
+                "topology.edge.status": "inferred",
+                "topology.edge.evidence": "temporal",
+                "topology.edge.confidence": 0.25,
                 "network.protocol.name": "agent_handoff",
                 "operation.name": "agent_handoff",
                 RuntimeEventAttribute.SEQUENCE.value: 2,
@@ -130,7 +132,10 @@ def test_materializer_builds_live_session_state_from_runtime_events():
     assert nodes["planner"]["output"] == "plan"
 
     edges = {edge["id"]: edge for edge in snapshot["edges"]}
-    assert edges["agent_handoff:planner->executor"]["status"] == "observed"
+    handoff_edge = edges["agent_handoff:planner->executor"]
+    assert handoff_edge["status"] == "inferred"
+    assert handoff_edge["evidence"] == "temporal"
+    assert handoff_edge["confidence"] == 0.25
     assert edges["a2a:planner->executor"]["status"] == "received"
     assert edges["a2a:planner->executor"]["message_id"] == "msg-1"
     assert edges["a2a:planner->executor"]["fork_id"] == "fork-1"

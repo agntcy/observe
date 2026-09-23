@@ -22,6 +22,7 @@ from ioa_observe.sdk.instrumentations.slim import (
     _emit_slim_receive_topology_event,
     _emit_slim_send_topology_event,
 )
+from ioa_observe.sdk.tracing.handoffs import extract_handoff_signal
 from ioa_observe.sdk.tracing import get_live_topology_snapshot, session_start
 from ioa_observe.sdk.tracing.topology import (
     clear_topology_listeners,
@@ -96,7 +97,10 @@ def test_agent_events_build_runtime_snapshot(topology_events):
 
     assert node_ids["planner"]["status"] == "completed"
     assert node_ids["executor"]["status"] == "completed"
-    assert edge_ids["agent_handoff:planner->executor"]["status"] == "observed"
+    edge = edge_ids["agent_handoff:planner->executor"]
+    assert edge["status"] == "inferred"
+    assert edge["evidence"] == "temporal"
+    assert edge["confidence"] == 0.25
 
     event_types = [event["type"] for event in topology_events]
     assert "topology.node.started" in event_types
@@ -113,6 +117,47 @@ def test_agent_events_build_runtime_snapshot(topology_events):
     assert json.loads(completed_events["executor"]["agent_output"]) == {
         "result": "draft"
     }
+
+
+def test_langgraph_result_is_normalized_by_framework_adapter():
+    command_type = type("Command", (), {"__module__": "langgraph.types"})
+    command = command_type()
+    command.goto = "executor"
+
+    signal = extract_handoff_signal(command)
+
+    assert signal is not None
+    assert signal.target_agent == "executor"
+    assert signal.evidence == "framework:langgraph"
+    assert signal.confidence == 0.9
+
+
+def test_framework_signal_marks_matching_next_agent_as_observed(topology_events):
+    command_type = type("Command", (), {"__module__": "langgraph.types"})
+
+    @agent(name="routing_agent")
+    def routing_agent():
+        command = command_type()
+        command.goto = "target_agent"
+        return command
+
+    @agent(name="target_agent")
+    def target_agent(_command):
+        return "done"
+
+    with session_start() as metadata:
+        command = routing_agent()
+        target_agent(command)
+
+    snapshot = get_live_topology_snapshot(metadata["executionID"])
+    edge = next(
+        edge
+        for edge in snapshot["edges"]
+        if edge["id"] == "agent_handoff:routing_agent->target_agent"
+    )
+    assert edge["status"] == "observed"
+    assert edge["evidence"] == "framework:langgraph"
+    assert edge["confidence"] == 0.9
 
 
 def test_a2a_send_and_receive_emit_live_edge_events(topology_events):
@@ -165,6 +210,8 @@ def test_a2a_send_and_receive_emit_live_edge_events(topology_events):
     assert edge["status"] == "received"
     assert edge["target"] == "executor"
     assert edge["transport"] == "a2a"
+    assert edge["evidence"] == "transport:a2a"
+    assert edge["confidence"] == 1.0
     assert edge["updated_at_ms"] > 0
     assert snapshot["version"] >= 2
 
@@ -206,6 +253,8 @@ def test_slim_send_and_receive_emit_live_edge_events(topology_events):
     assert edge["status"] == "received"
     assert edge["target"] == "slim://executor"
     assert edge["transport"] == "slim"
+    assert edge["evidence"] == "transport:slim"
+    assert edge["confidence"] == 1.0
     assert edge["updated_at_ms"] > 0
     assert snapshot["version"] >= 2
 
@@ -253,6 +302,8 @@ def test_mcp_send_and_receive_emit_live_edge_events(topology_events):
     assert edge["status"] == "received"
     assert edge["target"] == "mcp://math-server"
     assert edge["transport"] == "mcp"
+    assert edge["evidence"] == "transport:mcp"
+    assert edge["confidence"] == 1.0
     assert edge["updated_at_ms"] > 0
     assert snapshot["version"] >= 2
 
@@ -278,7 +329,9 @@ def test_observe_init_can_disable_realtime_topology_events(topology_events):
     edge_ids = {edge["id"]: edge for edge in snapshot["edges"]}
     assert node_ids["planner"]["status"] == "completed"
     assert node_ids["executor"]["status"] == "completed"
-    assert edge_ids["agent_handoff:planner->executor"]["status"] == "observed"
+    edge = edge_ids["agent_handoff:planner->executor"]
+    assert edge["status"] == "inferred"
+    assert edge["evidence"] == "temporal"
 
 
 def test_live_topology_evicts_oldest_session_over_capacity(monkeypatch):

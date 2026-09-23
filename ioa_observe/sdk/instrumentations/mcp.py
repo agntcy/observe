@@ -126,6 +126,8 @@ def _emit_mcp_send_topology_event(
         sequence=sequence,
         fork_id=fork_id,
         kind="mcp_message",
+        evidence="transport:mcp",
+        confidence=1.0,
     )
     emit_topology_event(
         RuntimeEventName.MCP_MESSAGE_SENT.value,
@@ -168,6 +170,8 @@ def _emit_mcp_receive_topology_event(
         sequence=sequence,
         fork_id=fork_id,
         kind="mcp_message",
+        evidence="transport:mcp",
+        confidence=1.0,
     )
     emit_topology_event(
         RuntimeEventName.MCP_MESSAGE_RECEIVED.value,

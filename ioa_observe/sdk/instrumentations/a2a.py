@@ -98,6 +98,8 @@ def _emit_a2a_send_topology_event(request, client_instance, operation: str) -> N
         sequence=sequence,
         fork_id=fork_id,
         kind="a2a_message",
+        evidence="transport:a2a",
+        confidence=1.0,
     )
     emit_topology_event(
         "a2a.message.sent",
@@ -137,6 +139,8 @@ def _emit_a2a_receive_topology_event(params, handler_instance, operation: str) -
         sequence=sequence,
         fork_id=fork_id,
         kind="a2a_message",
+        evidence="transport:a2a",
+        confidence=1.0,
     )
     emit_topology_event(
         "a2a.message.received",

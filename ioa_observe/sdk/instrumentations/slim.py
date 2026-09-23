@@ -108,6 +108,8 @@ def _emit_slim_send_topology_event(headers, operation):
         sequence=sequence,
         fork_id=fork_id,
         kind="slim_message",
+        evidence="transport:slim",
+        confidence=1.0,
     )
     emit_topology_event(
         RuntimeEventName.SLIM_MESSAGE_SENT.value,
@@ -149,6 +151,8 @@ def _emit_slim_receive_topology_event(headers, operation):
         sequence=sequence,
         fork_id=fork_id,
         kind="slim_message",
+        evidence="transport:slim",
+        confidence=1.0,
     )
     emit_topology_event(
         RuntimeEventName.SLIM_MESSAGE_RECEIVED.value,
