@@ -106,12 +106,14 @@ class SessionToolState:
     active_count: int = 0
     started_count: int = 0
     completed_count: int = 0
+    error_count: int = 0
     status: str = "idle"
     version: int = 0
     last_started_at: datetime | None = None
     last_completed_at: datetime | None = None
     last_input: str | None = None
     last_output: str | None = None
+    last_error: str | None = None
 
 
 @dataclass
@@ -455,13 +457,30 @@ class SessionStateMaterializer:
         else:
             tool.active_count = max(0, tool.active_count - 1)
             tool.completed_count += 1
-            tool.status = "idle" if tool.active_count == 0 else "running"
+            outcome = (
+                _optional_attribute(record, RuntimeEventAttribute.TOOL_STATUS.value)
+                or "success"
+            )
+            tool.status = (
+                "running"
+                if tool.active_count > 0
+                else "error"
+                if outcome == "error"
+                else "idle"
+            )
             tool.last_completed_at = record.event_time
             tool_output = _optional_attribute(
                 record, RuntimeEventAttribute.TOOL_OUTPUT.value
             )
             if tool_output is not None:
                 tool.last_output = tool_output
+            if outcome == "error":
+                tool.error_count += 1
+                tool_error = _optional_attribute(
+                    record, RuntimeEventAttribute.TOOL_ERROR_MESSAGE.value
+                )
+                if tool_error is not None:
+                    tool.last_error = tool_error
 
         session.status = "active"
 

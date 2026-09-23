@@ -9,6 +9,7 @@ from typing import (
 import pytest
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
+from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.semconv._incubating.attributes import (
     gen_ai_attributes as GenAIAttributes,
@@ -21,6 +22,8 @@ from ioa_observe.sdk.decorators import agent, graph, workflow, tool
 from ioa_observe.sdk.tracing import session_start
 from ioa_observe.sdk.tracing.manual import track_llm_call, LLMMessage
 from ioa_observe.sdk.utils.const import (
+    OBSERVE_AGENT_SPAN_ID,
+    OBSERVE_AGENT_TRACE_ID,
     ObserveSpanKindValues,
     OBSERVE_ENTITY_INPUT,
     OBSERVE_ENTITY_DESCRIPTION,
@@ -333,6 +336,31 @@ def test_session_start_emits_span(exporter_with_custom_span_processor):
     session_span = next(span for span in spans if span.name == "session.start")
     assert session_span.attributes["session.id"] == metadata["executionID"]
     assert session_span.attributes["session.started_at"] is not None
+
+
+def test_descendant_span_references_enclosing_agent_through_intermediate_span(
+    exporter_with_custom_span_processor,
+):
+    @agent(name="parent_agent")
+    def call_chat():
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span("framework.task"):
+            with tracer.start_as_current_span("openai.chat"):
+                pass
+
+    call_chat()
+
+    spans = exporter_with_custom_span_processor.get_finished_spans()
+    agent_span = next(span for span in spans if span.name == "parent_agent.agent")
+    task_span = next(span for span in spans if span.name == "framework.task")
+    chat_span = next(span for span in spans if span.name == "openai.chat")
+    agent_span_id = format(agent_span.context.span_id, "016x")
+    agent_trace_id = format(agent_span.context.trace_id, "032x")
+
+    assert task_span.parent.span_id == agent_span.context.span_id
+    assert chat_span.parent.span_id == task_span.context.span_id
+    assert chat_span.attributes[OBSERVE_AGENT_SPAN_ID] == agent_span_id
+    assert chat_span.attributes[OBSERVE_AGENT_TRACE_ID] == agent_trace_id
 
 
 def test_association_properties_within_workflow(exporter_with_custom_span_processor):

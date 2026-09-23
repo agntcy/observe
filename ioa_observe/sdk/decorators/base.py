@@ -57,6 +57,7 @@ from ioa_observe.sdk.tracing.runtime_events import (
     RuntimeEventName,
     build_runtime_event_attributes,
 )
+from ioa_observe.sdk.tracing.tool_results import tool_error_message
 from ioa_observe.sdk.tracing.tracing import (
     TracerWrapper,
     set_entity_path,
@@ -80,6 +81,8 @@ from ioa_observe.sdk.utils.const import (
     OBSERVE_ENTITY_VERSION,
     OBSERVE_ENTITY_INPUT,
     OBSERVE_ENTITY_OUTPUT,
+    OBSERVE_AGENT_SPAN_ID,
+    OBSERVE_AGENT_TRACE_ID,
 )
 from ioa_observe.sdk.utils.json_encoder import JSONEncoder
 from ioa_observe.sdk.metrics.agent import topology_dynamism, determinism_score
@@ -390,6 +393,19 @@ def _setup_span(
             attach(set_value("prompt_template_variables", prompt_template_variables))
 
         if tlp_span_kind == ObserveSpanKindValues.AGENT:
+            span_context = span.get_span_context()
+            attach(
+                set_value(
+                    OBSERVE_AGENT_SPAN_ID,
+                    format(span_context.span_id, "016x"),
+                )
+            )
+            attach(
+                set_value(
+                    OBSERVE_AGENT_TRACE_ID,
+                    format(span_context.trace_id, "032x"),
+                )
+            )
             with trace.get_tracer(__name__).start_span(
                 "agent_start_event", context=trace.set_span_in_context(span)
             ) as start_span:
@@ -592,6 +608,11 @@ def _handle_span_input(span, entity_input, cls=None):
 def _handle_span_output(span, tlp_span_kind, res, cls=None):
     """Handles entity output logging in JSON for both sync and async functions"""
     try:
+        if tlp_span_kind == ObserveSpanKindValues.TOOL:
+            error_message = tool_error_message(res)
+            if error_message:
+                span.set_status(trace.Status(trace.StatusCode.ERROR, error_message))
+
         handoff_signal = (
             extract_handoff_signal(res)
             if tlp_span_kind
@@ -707,15 +728,24 @@ def _cleanup_span(span, ctx_token):
     tool_name = getattr(span, "_ioa_tool_name", None)
     if session_id and tool_name:
         tool_output = span.attributes.get(OBSERVE_ENTITY_OUTPUT)
+        is_error = span.status.status_code is trace.StatusCode.ERROR
+        tool_attributes = {
+            RuntimeEventAttribute.TOOL_NAME.value: tool_name,
+            RuntimeEventAttribute.TOOL_OUTPUT.value: tool_output,
+            RuntimeEventAttribute.TOOL_STATUS.value: (
+                "error" if is_error else "success"
+            ),
+        }
+        if is_error and span.status.description:
+            tool_attributes[RuntimeEventAttribute.TOOL_ERROR_MESSAGE.value] = (
+                span.status.description
+            )
         emit_runtime_event(
             build_runtime_event_attributes(
                 RuntimeEventName.TOOL_COMPLETED,
                 session_id=session_id,
                 snapshot_version=next_session_event_version(session_id),
-                **{
-                    RuntimeEventAttribute.TOOL_NAME.value: tool_name,
-                    RuntimeEventAttribute.TOOL_OUTPUT.value: tool_output,
-                },
+                **tool_attributes,
             )
         )
 

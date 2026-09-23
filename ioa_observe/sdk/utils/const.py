@@ -12,6 +12,8 @@ OBSERVE_ENTITY_VERSION = "ioa_observe.entity.version"
 OBSERVE_ENTITY_INPUT = "ioa_observe.entity.input"
 OBSERVE_ENTITY_OUTPUT = "ioa_observe.entity.output"
 OBSERVE_ASSOCIATION_PROPERTIES = "ioa_observe.association.properties"
+OBSERVE_AGENT_SPAN_ID = "ioa_observe.agent.span_id"
+OBSERVE_AGENT_TRACE_ID = "ioa_observe.agent.trace_id"
 
 
 OBSERVE_PROMPT_MANAGED = "ioa_observe.prompt.managed"

@@ -77,6 +77,11 @@ def runtime_tool(payload: dict) -> dict:
     return {"tool_result": payload["task"]}
 
 
+@tool(name="content_result_tool", description="Returns content-only tool results")
+def content_result_tool(content: str) -> dict:
+    return {"content": content}
+
+
 def test_builds_session_started_runtime_event_attributes():
     attributes = build_runtime_event_attributes(
         RuntimeEventName.TOPOLOGY_SESSION_STARTED,
@@ -404,6 +409,26 @@ def test_tool_lifecycle_pushes_runtime_events(runtime_events):
     assert all(version > 0 for version in tool_versions)
     assert tool_versions == sorted(tool_versions)
     assert len(set(tool_versions)) == len(tool_versions)
+
+
+def test_tool_completion_classifies_content_only_failures(runtime_events):
+    with session_start():
+        content_result_tool("File '/tmp/train_fares.txt' not found.")
+        content_result_tool("Fare lookup completed successfully.")
+
+    completed = [
+        event
+        for event in runtime_events
+        if event[RuntimeEventAttribute.EVENT_NAME.value]
+        == RuntimeEventName.TOOL_COMPLETED.value
+    ]
+
+    assert completed[0][RuntimeEventAttribute.TOOL_STATUS.value] == "error"
+    assert completed[0][RuntimeEventAttribute.TOOL_ERROR_MESSAGE.value] == (
+        "File '/tmp/train_fares.txt' not found."
+    )
+    assert completed[1][RuntimeEventAttribute.TOOL_STATUS.value] == "success"
+    assert RuntimeEventAttribute.TOOL_ERROR_MESSAGE.value not in completed[1]
 
 
 def test_agent_interprets_instrumented_llm_child_spans(runtime_events):

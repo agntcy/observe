@@ -64,6 +64,8 @@ from ioa_observe.sdk.utils import is_notebook
 from ioa_observe.sdk.client import kv_store
 
 from ioa_observe.sdk.utils.const import (
+    OBSERVE_AGENT_SPAN_ID,
+    OBSERVE_AGENT_TRACE_ID,
     OBSERVE_WORKFLOW_NAME,
     OBSERVE_ASSOCIATION_PROPERTIES,
     OBSERVE_ENTITY_NAME,
@@ -409,6 +411,14 @@ class TracerWrapper(object):
         agent_id = get_value("agent_id")
         if agent_id is not None:
             span.set_attribute("agent_id", agent_id)
+
+        agent_span_id = get_value(OBSERVE_AGENT_SPAN_ID)
+        if agent_span_id is not None:
+            span.set_attribute(OBSERVE_AGENT_SPAN_ID, agent_span_id)
+
+        agent_trace_id = get_value(OBSERVE_AGENT_TRACE_ID)
+        if agent_trace_id is not None:
+            span.set_attribute(OBSERVE_AGENT_TRACE_ID, agent_trace_id)
 
         application_id = get_value("application_id")
         if application_id is not None:

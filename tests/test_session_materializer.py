@@ -323,6 +323,41 @@ def test_materializer_rejects_stale_tool_events_by_version():
     assert tool["status"] == "idle"
 
 
+def test_materializer_exposes_tool_error_outcome():
+    materializer = SessionStateMaterializer()
+    event_time = datetime(2026, 6, 11, 9, 0, tzinfo=timezone.utc)
+
+    materializer.apply_event(
+        _event(
+            RuntimeEventName.TOOL_STARTED,
+            event_time,
+            session_id="session-tool-error",
+            snapshot_version=1,
+            **{RuntimeEventAttribute.TOOL_NAME.value: "fare_lookup"},
+        )
+    )
+    materializer.apply_event(
+        _event(
+            RuntimeEventName.TOOL_COMPLETED,
+            event_time + timedelta(seconds=1),
+            session_id="session-tool-error",
+            snapshot_version=2,
+            **{
+                RuntimeEventAttribute.TOOL_NAME.value: "fare_lookup",
+                RuntimeEventAttribute.TOOL_STATUS.value: "error",
+                RuntimeEventAttribute.TOOL_ERROR_MESSAGE.value: (
+                    "File '/tmp/train_fares.txt' not found."
+                ),
+            },
+        )
+    )
+
+    tool = materializer.get_snapshot("session-tool-error")["tools"][0]
+    assert tool["status"] == "error"
+    assert tool["error_count"] == 1
+    assert tool["last_error"] == "File '/tmp/train_fares.txt' not found."
+
+
 def test_materializer_evicts_oldest_session_when_over_capacity():
     materializer = SessionStateMaterializer(max_sessions=2)
     base_time = datetime(2026, 6, 11, 9, 0, tzinfo=timezone.utc)
