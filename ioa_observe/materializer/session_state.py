@@ -95,6 +95,8 @@ class SessionEdgeState:
     message_id: str | None = None
     sequence: int | None = None
     fork_id: str | None = None
+    evidence: str | None = None
+    confidence: float | None = None
     updated_at: datetime | None = None
 
 
@@ -104,12 +106,14 @@ class SessionToolState:
     active_count: int = 0
     started_count: int = 0
     completed_count: int = 0
+    error_count: int = 0
     status: str = "idle"
     version: int = 0
     last_started_at: datetime | None = None
     last_completed_at: datetime | None = None
     last_input: str | None = None
     last_output: str | None = None
+    last_error: str | None = None
 
 
 @dataclass
@@ -372,6 +376,8 @@ class SessionStateMaterializer:
         )
         edge.sequence = _optional_int(record, RuntimeEventAttribute.SEQUENCE.value)
         edge.fork_id = _optional_attribute(record, RuntimeEventAttribute.FORK_ID.value)
+        edge.evidence = _optional_attribute(record, "topology.edge.evidence")
+        edge.confidence = _optional_float(record, "topology.edge.confidence")
         edge.updated_at = record.event_time
         session.topology_version = max(
             session.topology_version, record.snapshot_version
@@ -451,13 +457,30 @@ class SessionStateMaterializer:
         else:
             tool.active_count = max(0, tool.active_count - 1)
             tool.completed_count += 1
-            tool.status = "idle" if tool.active_count == 0 else "running"
+            outcome = (
+                _optional_attribute(record, RuntimeEventAttribute.TOOL_STATUS.value)
+                or "success"
+            )
+            tool.status = (
+                "running"
+                if tool.active_count > 0
+                else "error"
+                if outcome == "error"
+                else "idle"
+            )
             tool.last_completed_at = record.event_time
             tool_output = _optional_attribute(
                 record, RuntimeEventAttribute.TOOL_OUTPUT.value
             )
             if tool_output is not None:
                 tool.last_output = tool_output
+            if outcome == "error":
+                tool.error_count += 1
+                tool_error = _optional_attribute(
+                    record, RuntimeEventAttribute.TOOL_ERROR_MESSAGE.value
+                )
+                if tool_error is not None:
+                    tool.last_error = tool_error
 
         session.status = "active"
 
@@ -585,6 +608,18 @@ def _optional_int(record: RuntimeEventRecord, key: str) -> int | None:
     if value in (None, ""):
         return None
     return _coerce_int(value, key)
+
+
+def _optional_float(record: RuntimeEventRecord, key: str) -> float | None:
+    value = record.attributes.get(key)
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"Runtime event attribute {key} must be a number")
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Runtime event attribute {key} must be a number") from exc
 
 
 def _coerce_int(value: Any, key: str) -> int:

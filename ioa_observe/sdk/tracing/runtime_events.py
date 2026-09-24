@@ -38,6 +38,8 @@ class RuntimeEventAttribute(str, Enum):
     TOOL_NAME = "tool.name"
     TOOL_INPUT = "tool.input"
     TOOL_OUTPUT = "tool.output"
+    TOOL_STATUS = "tool.status"
+    TOOL_ERROR_MESSAGE = "tool.error.message"
     LLM_NAME = "llm.name"
     LLM_INPUT = "llm.input"
     LLM_OUTPUT = "llm.output"

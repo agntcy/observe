@@ -7,7 +7,12 @@ from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
 from opentelemetry import context as otel_context
-from opentelemetry.context import attach
+from opentelemetry.context import attach, get_value
+
+from ioa_observe.sdk.utils.const import (
+    OBSERVE_AGENT_SPAN_ID,
+    OBSERVE_AGENT_TRACE_ID,
+)
 
 """
 Usage Example:
@@ -34,9 +39,15 @@ def _get_agent_linking_info(session_id):
 
     linking_info = {}
     with _kv_lock:
-        last_agent_span_id = kv_store.get(f"session.{session_id}.last_agent_span_id")
-        last_agent_trace_id = kv_store.get(f"session.{session_id}.last_agent_trace_id")
-        last_agent_name = kv_store.get(f"session.{session_id}.last_agent_name")
+        last_agent_span_id = get_value(OBSERVE_AGENT_SPAN_ID) or kv_store.get(
+            f"session.{session_id}.last_agent_span_id"
+        )
+        last_agent_trace_id = get_value(OBSERVE_AGENT_TRACE_ID) or kv_store.get(
+            f"session.{session_id}.last_agent_trace_id"
+        )
+        last_agent_name = get_value("agent_id") or kv_store.get(
+            f"session.{session_id}.last_agent_name"
+        )
         agent_sequence = kv_store.get(f"session.{session_id}.agent_sequence")
 
         if last_agent_span_id:

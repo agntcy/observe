@@ -30,6 +30,7 @@ from ioa_observe.sdk.tracing.runtime_events import (
     RuntimeEventAttribute,
     RuntimeEventName,
 )
+from ioa_observe.sdk.tracing.tool_results import tool_error_message
 
 _logger = logging.getLogger(__name__)
 
@@ -415,6 +416,17 @@ class GenAIRuntimeEventMapper:
             if observation.lifecycle is SpanLifecycle.START
             else RuntimeEventName.TOOL_COMPLETED
         )
+        if event_name is RuntimeEventName.TOOL_COMPLETED:
+            error_message = tool_error_message(
+                attributes.get(RuntimeEventAttribute.TOOL_OUTPUT.value)
+            )
+            attributes[RuntimeEventAttribute.TOOL_STATUS.value] = (
+                "error" if error_message else "success"
+            )
+            if error_message:
+                attributes[RuntimeEventAttribute.TOOL_ERROR_MESSAGE.value] = (
+                    error_message
+                )
         event = RuntimeEvent(
             name=event_name,
             session_id=session_id,

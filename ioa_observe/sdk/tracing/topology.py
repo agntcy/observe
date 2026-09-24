@@ -49,6 +49,8 @@ class TopologyEdge:
     message_id: str | None = None
     sequence: int | None = None
     fork_id: str | None = None
+    evidence: str | None = None
+    confidence: float | None = None
     updated_at_ms: int = 0
 
 
@@ -222,6 +224,8 @@ def upsert_topology_edge(
     sequence: int | None = None,
     fork_id: str | None = None,
     kind: str = "agent_handoff",
+    evidence: str | None = None,
+    confidence: float | None = None,
 ) -> None:
     edge_id = f"{transport}:{source}->{target}"
     if kind == "agent_handoff":
@@ -241,6 +245,8 @@ def upsert_topology_edge(
             message_id=message_id,
             sequence=sequence,
             fork_id=fork_id,
+            evidence=evidence,
+            confidence=confidence,
             updated_at_ms=now_ms,
         )
         graph.version += 1
@@ -262,6 +268,8 @@ def upsert_topology_edge(
                 RuntimeEventAttribute.MESSAGE_ID.value: message_id,
                 RuntimeEventAttribute.FORK_ID.value: fork_id,
                 RuntimeEventAttribute.SEQUENCE.value: sequence,
+                "topology.edge.evidence": evidence,
+                "topology.edge.confidence": confidence,
                 "topology.edge.id": edge_id,
                 "topology.edge.kind": kind,
                 "topology.edge.status": status,

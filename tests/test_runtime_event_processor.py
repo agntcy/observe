@@ -132,6 +132,30 @@ def test_genai_tool_execution_maps_standardized_input_and_output():
         completed.attributes[RuntimeEventAttribute.TOOL_OUTPUT.value]
         == '{"temperature":22}'
     )
+    assert completed.attributes[RuntimeEventAttribute.TOOL_STATUS.value] == "success"
+
+
+def test_genai_tool_execution_classifies_content_only_failure():
+    mapper = GenAIRuntimeEventMapper()
+    completed = mapper(
+        observation(
+            SpanLifecycle.END,
+            {
+                "gen_ai.operation.name": "execute_tool",
+                "gen_ai.conversation.id": "conversation-123",
+                "gen_ai.tool.name": "fare_lookup",
+                "gen_ai.tool.call.result": (
+                    '{"content":"File \'/tmp/train_fares.txt\' not found."}'
+                ),
+            },
+        ),
+        2,
+    )[0]
+
+    assert completed.attributes[RuntimeEventAttribute.TOOL_STATUS.value] == "error"
+    assert completed.attributes[RuntimeEventAttribute.TOOL_ERROR_MESSAGE.value] == (
+        "File '/tmp/train_fares.txt' not found."
+    )
 
 
 def test_genai_model_inference_maps_standardized_model_and_messages():

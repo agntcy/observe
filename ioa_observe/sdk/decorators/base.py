@@ -47,11 +47,17 @@ from ioa_observe.sdk.metrics.agents.heuristics import compute_agent_interpretati
 from ioa_observe.sdk.telemetry import Telemetry
 from ioa_observe.sdk.tracing import get_tracer, set_workflow_name
 from ioa_observe.sdk.tracing.runtime_event_emitter import emit_runtime_event
+from ioa_observe.sdk.tracing.handoffs import (
+    consume_handoff_signals,
+    extract_handoff_signal,
+    record_handoff_signal,
+)
 from ioa_observe.sdk.tracing.runtime_events import (
     RuntimeEventAttribute,
     RuntimeEventName,
     build_runtime_event_attributes,
 )
+from ioa_observe.sdk.tracing.tool_results import tool_error_message
 from ioa_observe.sdk.tracing.tracing import (
     TracerWrapper,
     set_entity_path,
@@ -75,6 +81,10 @@ from ioa_observe.sdk.utils.const import (
     OBSERVE_ENTITY_VERSION,
     OBSERVE_ENTITY_INPUT,
     OBSERVE_ENTITY_OUTPUT,
+    OBSERVE_AGENT_SPAN_ID,
+    OBSERVE_AGENT_TRACE_ID,
+    OBSERVE_HANDOFF_SOURCE_SPAN_IDS,
+    OBSERVE_HANDOFF_SOURCE_TRACE_IDS,
 )
 from ioa_observe.sdk.utils.json_encoder import JSONEncoder
 from ioa_observe.sdk.metrics.agent import topology_dynamism, determinism_score
@@ -173,7 +183,7 @@ def _store_agent_span_info(
     return new_seq, fork_id, branch_index
 
 
-def _get_previous_agent_link(session_id: str) -> tuple:
+def _get_previous_agent_link(session_id: str, entity_name: str) -> tuple:
     """Get link(s) to previous agent span(s) from kv_store.
 
     Uses the OTel span hierarchy to find the true parent agent for fork/join
@@ -183,13 +193,45 @@ def _get_previous_agent_link(session_id: str) -> tuple:
     enabling fork sibling detection.
 
     Returns:
-        tuple: (links_list, previous_agent_name, sequence, join_fork_id, true_parent_seq)
+        tuple: (links_list, previous_agent_name, sequence, join_fork_id,
+        true_parent_seq, evidence, confidence)
     """
     if not session_id:
-        return [], None, 0, None, 0
+        return [], None, 0, None, 0, None, None
 
     sequence_str = kv_store.get(_get_session_span_key(session_id, "agent_sequence"))
     sequence = int(sequence_str) if sequence_str else 0
+
+    pending_handoffs = consume_handoff_signals(session_id, entity_name)
+    if pending_handoffs:
+        links = []
+        for handoff in pending_handoffs:
+            links.extend(
+                make_single_link(
+                    handoff["source_span_id"],
+                    handoff["source_trace_id"],
+                    handoff["source_agent"],
+                    "agent_handoff",
+                )
+            )
+        previous_agent_name = (
+            pending_handoffs[0]["source_agent"] if len(pending_handoffs) == 1 else None
+        )
+        evidence = (
+            pending_handoffs[0]["evidence"]
+            if len({item["evidence"] for item in pending_handoffs}) == 1
+            else "explicit_handoff"
+        )
+        confidence = min(item["confidence"] for item in pending_handoffs)
+        return (
+            links,
+            previous_agent_name,
+            sequence,
+            None,
+            0,
+            evidence,
+            confidence,
+        )
 
     # -----------------------------------------------------------------
     # Step 1: Check if the current OTel context has a parent span that
@@ -216,7 +258,15 @@ def _get_previous_agent_link(session_id: str) -> tuple:
                 parent_rec["name"],
                 "agent_handoff",
             )
-            return links, parent_rec["name"], sequence, None, true_parent_seq
+            return (
+                links,
+                parent_rec["name"],
+                sequence,
+                None,
+                true_parent_seq,
+                "parent_span",
+                1.0,
+            )
 
     # -----------------------------------------------------------------
     # Step 2: No agent parent in OTel context (e.g., new trace, root
@@ -235,7 +285,17 @@ def _get_previous_agent_link(session_id: str) -> tuple:
         )
 
     # For sequential / join case, the "parent" is the last sequential agent
-    return links, prev_agent_name, sequence, join_fork_id, sequence
+    evidence = "join" if join_fork_id else "temporal"
+    confidence = 1.0 if join_fork_id else 0.25
+    return (
+        links,
+        prev_agent_name,
+        sequence,
+        join_fork_id,
+        sequence,
+        evidence,
+        confidence,
+    )
 
 
 def _setup_span(
@@ -275,6 +335,8 @@ def _setup_span(
     agent_sequence = 0
     join_fork_id = None
     true_parent_seq = 0
+    handoff_evidence = None
+    handoff_confidence = None
 
     if tlp_span_kind == ObserveSpanKindValues.AGENT and session_id:
         (
@@ -283,7 +345,9 @@ def _setup_span(
             agent_sequence,
             join_fork_id,
             true_parent_seq,
-        ) = _get_previous_agent_link(session_id)
+            handoff_evidence,
+            handoff_confidence,
+        ) = _get_previous_agent_link(session_id, entity_name)
         links.extend(prev_links)
 
     # Capture the current (parent) span BEFORE creating the new span.
@@ -344,6 +408,28 @@ def _setup_span(
             attach(set_value("prompt_template_variables", prompt_template_variables))
 
         if tlp_span_kind == ObserveSpanKindValues.AGENT:
+            if links:
+                span.set_attribute(
+                    OBSERVE_HANDOFF_SOURCE_SPAN_IDS,
+                    tuple(format(link.context.span_id, "016x") for link in links),
+                )
+                span.set_attribute(
+                    OBSERVE_HANDOFF_SOURCE_TRACE_IDS,
+                    tuple(format(link.context.trace_id, "032x") for link in links),
+                )
+            span_context = span.get_span_context()
+            attach(
+                set_value(
+                    OBSERVE_AGENT_SPAN_ID,
+                    format(span_context.span_id, "016x"),
+                )
+            )
+            attach(
+                set_value(
+                    OBSERVE_AGENT_TRACE_ID,
+                    format(span_context.trace_id, "032x"),
+                )
+            )
             with trace.get_tracer(__name__).start_span(
                 "agent_start_event", context=trace.set_span_in_context(span)
             ) as start_span:
@@ -383,11 +469,15 @@ def _setup_span(
                         previous_agent_name,
                         entity_name,
                         transport="agent_handoff",
-                        status="observed",
+                        status=(
+                            "inferred" if handoff_evidence == "temporal" else "observed"
+                        ),
                         operation="agent_handoff",
                         sequence=new_seq,
                         fork_id=fork_id or join_fork_id,
                         kind="agent_handoff",
+                        evidence=handoff_evidence,
+                        confidence=handoff_confidence,
                     )
 
             # Annotate fork attributes if this agent is a fork branch
@@ -542,6 +632,17 @@ def _handle_span_input(span, entity_input, cls=None):
 def _handle_span_output(span, tlp_span_kind, res, cls=None):
     """Handles entity output logging in JSON for both sync and async functions"""
     try:
+        if tlp_span_kind == ObserveSpanKindValues.TOOL:
+            error_message = tool_error_message(res)
+            if error_message:
+                span.set_status(trace.Status(trace.StatusCode.ERROR, error_message))
+
+        handoff_signal = (
+            extract_handoff_signal(res)
+            if tlp_span_kind
+            in (ObserveSpanKindValues.AGENT, ObserveSpanKindValues.WORKFLOW)
+            else None
+        )
         if tlp_span_kind == ObserveSpanKindValues.AGENT:
             if "agent_id" in span.attributes:
                 agent_id = span.attributes["agent_id"]
@@ -562,27 +663,44 @@ def _handle_span_output(span, tlp_span_kind, res, cls=None):
         ):
             current_agent = span.attributes.get("agent_id", "unknown")
 
-            # Determine next agent from response (if Command object with goto)
-            next_agent = None
-            if isinstance(res, dict) and "goto" in res:
-                next_agent = res["goto"]
+            if handoff_signal:
+                next_agent = handoff_signal.target_agent
                 # Check if there's an error flag in the response
-                success = not (res.get("error", False) or res.get("goto") == "__end__")
+                success = not (isinstance(res, dict) and res.get("error", False))
 
                 # If we have a chain of communication, compute interpretation score
-                if next_agent and next_agent != "__end__":
-                    score = compute_agent_interpretation_score(
-                        sender_agent=current_agent,
-                        receiver_agent=next_agent,
-                        data=res,
-                    )
-                    span.set_attribute("gen_ai.ioa.agent.interpretation_score", score)
-                    reliability = connection_tracker.record_connection(
-                        sender=current_agent, receiver=next_agent, success=success
-                    )
-                    span.set_attribute(
-                        "gen_ai.ioa.agent.connection_reliability", reliability
-                    )
+                score = compute_agent_interpretation_score(
+                    sender_agent=current_agent,
+                    receiver_agent=next_agent,
+                    data=res,
+                )
+                span.set_attribute("gen_ai.ioa.agent.interpretation_score", score)
+                reliability = connection_tracker.record_connection(
+                    sender=current_agent, receiver=next_agent, success=success
+                )
+                span.set_attribute(
+                    "gen_ai.ioa.agent.connection_reliability", reliability
+                )
+                span.set_attribute("ioa_observe.handoff.target", next_agent)
+                span.set_attribute(
+                    "ioa_observe.handoff.evidence", handoff_signal.evidence
+                )
+                span.set_attribute(
+                    "ioa_observe.handoff.confidence", handoff_signal.confidence
+                )
+
+        if tlp_span_kind == ObserveSpanKindValues.AGENT and handoff_signal:
+            session_id = getattr(span, "_ioa_session_id", None)
+            source_agent = getattr(span, "_ioa_agent_name", None)
+            span_context = span.get_span_context()
+            if session_id and source_agent and span_context.is_valid:
+                record_handoff_signal(
+                    session_id=session_id,
+                    source_agent=source_agent,
+                    source_span_id=format(span_context.span_id, "016x"),
+                    source_trace_id=format(span_context.trace_id, "032x"),
+                    signal=handoff_signal,
+                )
 
         if _should_send_prompts():
             try:
@@ -634,15 +752,24 @@ def _cleanup_span(span, ctx_token):
     tool_name = getattr(span, "_ioa_tool_name", None)
     if session_id and tool_name:
         tool_output = span.attributes.get(OBSERVE_ENTITY_OUTPUT)
+        is_error = span.status.status_code is trace.StatusCode.ERROR
+        tool_attributes = {
+            RuntimeEventAttribute.TOOL_NAME.value: tool_name,
+            RuntimeEventAttribute.TOOL_OUTPUT.value: tool_output,
+            RuntimeEventAttribute.TOOL_STATUS.value: (
+                "error" if is_error else "success"
+            ),
+        }
+        if is_error and span.status.description:
+            tool_attributes[RuntimeEventAttribute.TOOL_ERROR_MESSAGE.value] = (
+                span.status.description
+            )
         emit_runtime_event(
             build_runtime_event_attributes(
                 RuntimeEventName.TOOL_COMPLETED,
                 session_id=session_id,
                 snapshot_version=next_session_event_version(session_id),
-                **{
-                    RuntimeEventAttribute.TOOL_NAME.value: tool_name,
-                    RuntimeEventAttribute.TOOL_OUTPUT.value: tool_output,
-                },
+                **tool_attributes,
             )
         )
 

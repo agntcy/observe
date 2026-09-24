@@ -64,6 +64,8 @@ from ioa_observe.sdk.utils import is_notebook
 from ioa_observe.sdk.client import kv_store
 
 from ioa_observe.sdk.utils.const import (
+    OBSERVE_AGENT_SPAN_ID,
+    OBSERVE_AGENT_TRACE_ID,
     OBSERVE_WORKFLOW_NAME,
     OBSERVE_ASSOCIATION_PROPERTIES,
     OBSERVE_ENTITY_NAME,
@@ -74,7 +76,6 @@ from ioa_observe.sdk.utils.const import (
     OBSERVE_PROMPT_KEY,
     OBSERVE_PROMPT_VERSION_HASH,
     OBSERVE_PROMPT_MANAGED,
-    OBSERVE_ENTITY_OUTPUT,
 )
 from ioa_observe.sdk.utils.package_check import is_package_installed
 from typing import Callable, Dict, Optional, Set
@@ -88,45 +89,13 @@ MAX_PROCESSED_SPANS_SIZE = 100000  # Maximum size before cleanup
 
 
 def determine_reliability_score(span):
-    if "observe.entity.output" in span.attributes:
-        current_agent = span.attributes["observe.workflow.name"]
-
-        span_entity_output = span.attributes[OBSERVE_ENTITY_OUTPUT]
-        # Check if the output is a dictionary
-        # and contains the "goto" key
-        try:
-            parsed = json.loads(span_entity_output)
-        except (ValueError, SyntaxError):
-            # If parsing fails, it might be a string or other type
-            parsed = span_entity_output
-        if isinstance(parsed, dict) and "goto" in parsed:
-            next_agent = parsed["goto"]
-
-            # Record successful connection
-            if next_agent and (next_agent != "__end__" or next_agent != "None"):
-                reliability = connection_reliability.record_connection_attempt(
-                    sender=current_agent, receiver=next_agent, success=True
-                )
-                span.set_attribute(
-                    "gen_ai.ioa.agent.connection_reliability", reliability
-                )
-        else:
-            parsed = json.loads(span_entity_output)
-            if "__str_representation__" in parsed:
-                inner = parsed["__str_representation__"]
-                # Use regex to find can_handoff_to field
-                match = re.search(r"can_handoff_to=([^\s]+)", inner)
-                if match:
-                    next_agent = match.group(1)
-
-                    # Record successful connection
-                    if next_agent and (next_agent != "__end__" or next_agent != "None"):
-                        reliability = connection_reliability.record_connection_attempt(
-                            sender=current_agent, receiver=next_agent, success=True
-                        )
-                        span.set_attribute(
-                            "gen_ai.ioa.agent.connection_reliability", reliability
-                        )
+    next_agent = span.attributes.get("ioa_observe.handoff.target")
+    current_agent = span.attributes.get("observe.workflow.name")
+    if next_agent and current_agent:
+        reliability = connection_reliability.record_connection_attempt(
+            sender=current_agent, receiver=next_agent, success=True
+        )
+        span.set_attribute("gen_ai.ioa.agent.connection_reliability", reliability)
 
 
 class TracerWrapper(object):
@@ -442,6 +411,14 @@ class TracerWrapper(object):
         agent_id = get_value("agent_id")
         if agent_id is not None:
             span.set_attribute("agent_id", agent_id)
+
+        agent_span_id = get_value(OBSERVE_AGENT_SPAN_ID)
+        if agent_span_id is not None:
+            span.set_attribute(OBSERVE_AGENT_SPAN_ID, agent_span_id)
+
+        agent_trace_id = get_value(OBSERVE_AGENT_TRACE_ID)
+        if agent_trace_id is not None:
+            span.set_attribute(OBSERVE_AGENT_TRACE_ID, agent_trace_id)
 
         application_id = get_value("application_id")
         if application_id is not None:
