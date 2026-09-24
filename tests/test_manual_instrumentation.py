@@ -365,6 +365,29 @@ def test_descendant_span_references_enclosing_agent_through_intermediate_span(
     assert chat_span.attributes[OBSERVE_AGENT_TRACE_ID] == agent_trace_id
 
 
+def test_tool_span_references_enclosing_agent(exporter_with_custom_span_processor):
+    @tool(name="lookup")
+    def lookup():
+        return None
+
+    @agent(name="researcher")
+    def research():
+        lookup()
+
+    research()
+
+    spans = exporter_with_custom_span_processor.get_finished_spans()
+    agent_span = next(span for span in spans if span.name == "researcher.agent")
+    tool_span = next(span for span in spans if span.name == "lookup.tool")
+
+    assert tool_span.attributes[OBSERVE_AGENT_SPAN_ID] == format(
+        agent_span.context.span_id, "016x"
+    )
+    assert tool_span.attributes[OBSERVE_AGENT_TRACE_ID] == format(
+        agent_span.context.trace_id, "032x"
+    )
+
+
 def test_handoff_links_receiving_agent_to_exact_source_invocation(
     exporter_with_custom_span_processor,
 ):
