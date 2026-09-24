@@ -4,10 +4,10 @@ version = "0.1.0"
 description = "A LangGraph-based project"
 requires-python = ">=3.10"
 dependencies = [
-  "python-a2a>=0.3.2",
-  "a2a-sdk[http-server]>=0.3.2",
+  # slima2a 0.7.0 pins a2a-sdk 1.1.0, the latest mutually compatible pair.
+  "a2a-sdk[http-server]==1.1.0",
   "uvicorn",
-  "slima2a>=0.2.2",
+  "slima2a==0.7.0",
   "ioa-observe-sdk",
 ]
 

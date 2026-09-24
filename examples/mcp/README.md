@@ -17,13 +17,13 @@ cp .env.example .env
 Install dependencies:
 
 ```bash
-pip install mcp ioa-observe-sdk python-dotenv
+pip install "mcp>=2.2,<3" ioa-observe-sdk python-dotenv
 ```
 
 For the LangChain client example, also install:
 
 ```bash
-pip install langchain-mcp-adapters langgraph langchain-openai
+pip install "langchain[mcp]>=1.4.2" langchain-openai
 ```
 
 ## Running the Examples
@@ -34,7 +34,7 @@ pip install langchain-mcp-adapters langgraph langchain-openai
 python server.py
 ```
 
-The server starts on `http://localhost:8000/mcp` using Streamable HTTP transport and exposes `add` and `multiply` tools.
+The server starts on `http://127.0.0.1:8000/mcp` using Streamable HTTP transport and exposes `add` and `multiply` tools.
 
 ### 2. Run a Client
 
@@ -44,7 +44,7 @@ The server starts on `http://localhost:8000/mcp` using Streamable HTTP transport
 python client_native.py
 ```
 
-This example uses the MCP SDK's `ClientSession` and `streamablehttp_client` directly to list tools and call them.
+This example uses the MCP SDK's high-level `Client` directly to list tools and call them.
 
 **LangChain MCP adapter client** (requires LangChain + OpenAI API key):
 
@@ -52,7 +52,7 @@ This example uses the MCP SDK's `ClientSession` and `streamablehttp_client` dire
 python client.py
 ```
 
-This example uses `langchain-mcp-adapters` to bridge MCP tools into a LangGraph ReAct agent.
+This example uses LangChain's built-in `langchain.mcp` adapter to bridge MCP tools into a LangChain agent.
 
 ## What Gets Traced
 
@@ -70,6 +70,6 @@ The `McpInstrumentor` automatically instruments all MCP transports (stdio, SSE, 
 
 | File | Description |
 |------|-------------|
-| `server.py` | MCP server using FastMCP with `add` and `multiply` tools |
-| `client_native.py` | Native MCP SDK client using `ClientSession` directly |
-| `client.py` | LangChain MCP adapter client with a ReAct agent |
+| `server.py` | MCP 2.x server using `MCPServer` with `add` and `multiply` tools |
+| `client_native.py` | Native MCP SDK client using the high-level `Client` |
+| `client.py` | LangChain's built-in MCP adapter with a LangChain agent |

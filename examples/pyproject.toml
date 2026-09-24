@@ -4,24 +4,35 @@ version = "0.1.0"
 description = "A LangGraph-based project"
 requires-python = ">=3.10"
 dependencies = [
-  "langgraph>=0.3.2",
-  "langchain>=0.3.19",
-  "langchain-openai>=0.3.8",
+  "langgraph>=1.2.12",
+  "langchain[mcp]>=1.4.2",
+  "langchain-openai>=1.6.5",
   "autogen-agentchat",
   "autogen-ext[openai,azure]",
-  "opentelemetry-api==1.33.1",
-  "langchain-community>=0.3.25",
-  "llama-index>=0.12.34",
-  "openai>=1.75.0",
-  "langchain_experimental>=0.3.2",
-  "python-a2a>=0.3.2",
-  "a2a-sdk[http-server]>=0.3.2",
+  "opentelemetry-api>=1.37.0",
+  "langchain-community>=0.4.1",
+  "langchain-tavily>=0.2.18",
+  "llama-index>=0.14.25",
+  # LlamaIndex 0.14 currently requires OpenAI 2.x.
+  "openai>=2.54.0,<3",
+  "langchain-experimental>=0.4.1",
+  "a2a-sdk[http-server]>=1.1.5,<2",
+  "mcp>=2.2.0,<3",
+  "ioa-observe-sdk",
+  "python-dotenv>=1.1.1",
+  "truststore>=0.10.4",
   "uvicorn",
 ]
 
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = []
+
+[tool.uv.sources]
+ioa-observe-sdk = { path = "..", editable = true }
 
 [tool.uv.workspace]
 members = [

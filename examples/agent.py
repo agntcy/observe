@@ -17,7 +17,7 @@ client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 @agent(name="joke_translation")
 def translate_joke_to_pirate(joke: str):
     completion = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
         messages=[
             {
                 "role": "user",
@@ -34,7 +34,7 @@ def translate_joke_to_pirate(joke: str):
 @tool(name="history_jokes")
 def history_jokes_tool():
     completion = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
         messages=[{"role": "user", "content": "get some history jokes"}],
     )
 

@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip before installing dependencies
 RUN python -m pip install --upgrade pip
 
-# Copy requirements.txt.txt from the parent directory
+# Copy requirements.txt from the parent directory
 COPY ../requirements.txt /app/requirements.txt
 
 # Copy the entire app source code from the parent directory
@@ -27,7 +27,7 @@ COPY ../client /client
 ENV PATH="/root/.cargo/bin:$PATH"
 
 # Install dependencies
-RUN pip install --no-cache-dir -r /app/requirements.txt.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # Expose necessary ports
 # ENV PORT=46357
@@ -37,4 +37,4 @@ RUN pip install --no-cache-dir -r /app/requirements.txt.txt
 RUN apt-get update && apt-get install -y vim curl net-tools iputils-ping && rm -rf /var/lib/apt/lists/*
 
 # Start the application
-CMD ["python", "slim.py"]
+CMD ["python", "client.py"]

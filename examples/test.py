@@ -18,7 +18,7 @@ class JokeEvent(Event):
 @graph(name="joke_workflow")
 @agent(name="joke_agent")
 class JokeFlow(Workflow):
-    llm = OpenAI(api_key="")
+    llm = OpenAI()
 
     @step
     async def generate_joke(self, ev: StartEvent) -> JokeEvent:

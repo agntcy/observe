@@ -3,6 +3,7 @@
 
 from typing import Collection
 import functools
+import inspect
 import threading
 
 from opentelemetry.context import get_value
@@ -26,14 +27,44 @@ _original_methods = {}
 
 
 def _safe_get_metadata(container):
-    try:
-        if hasattr(container, "params") and hasattr(container.params, "metadata"):
-            md = getattr(container.params, "metadata", None)
+    candidates = [
+        getattr(container, "params", None),
+        getattr(container, "message", None),
+        container,
+    ]
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        metadata = getattr(candidate, "metadata", None)
+        if isinstance(metadata, dict):
+            return metadata
+        if metadata is not None and hasattr(metadata, "DESCRIPTOR"):
+            from google.protobuf.json_format import MessageToDict
+
+            return MessageToDict(metadata)
+    return {}
+
+
+def _set_metadata(container, metadata):
+    candidates = [
+        getattr(container, "params", None),
+        getattr(container, "message", None),
+        container,
+    ]
+    for candidate in candidates:
+        if candidate is None or not hasattr(candidate, "metadata"):
+            continue
+        current = getattr(candidate, "metadata", None)
+        if isinstance(current, dict):
+            current.clear()
+            current.update(metadata)
+        elif current is not None and hasattr(current, "DESCRIPTOR"):
+            current.Clear()
+            current.update(metadata)
         else:
-            md = getattr(container, "metadata", None)
-    except AttributeError:
-        md = None
-    return md if isinstance(md, dict) else {}
+            setattr(candidate, "metadata", metadata)
+        return container
+    return container
 
 
 def _safe_get_observe_meta(container) -> dict:
@@ -42,7 +73,10 @@ def _safe_get_observe_meta(container) -> dict:
 
 def _safe_get_message_id(container) -> str | None:
     try:
-        message = getattr(getattr(container, "params", container), "message", None)
+        params = getattr(container, "params", container)
+        message = getattr(params, "message", None) or getattr(
+            container, "message", None
+        )
         if message is not None:
             return (
                 getattr(message, "messageId", None)
@@ -59,7 +93,7 @@ def _safe_get_target_name(container=None, fallback=None) -> str | None:
     for candidate in candidates:
         if candidate is None:
             continue
-        for attr in ("agent_card", "agent", "target_agent", "target"):
+        for attr in ("agent_card", "_card", "agent", "target_agent", "target"):
             nested = getattr(candidate, attr, None)
             if nested is not None:
                 candidates.append(nested)
@@ -173,15 +207,7 @@ def _inject_observe_metadata(request, span_name: str):
     # Get agent linking info for cross-process propagation (agent handoff event)
     agent_linking_info = _get_agent_linking_info(session_id) if session_id else {}
 
-    # Ensure metadata dict exists - handle both request.params.metadata and request.metadata
-    try:
-        if hasattr(request, "params") and hasattr(request.params, "metadata"):
-            md = getattr(request.params, "metadata", None)
-        else:
-            md = getattr(request, "metadata", None)
-    except AttributeError:
-        md = None
-    metadata = md if isinstance(md, dict) else {}
+    metadata = _safe_get_metadata(request)
 
     observe_meta = dict(metadata.get("observe", {}))
 
@@ -215,14 +241,9 @@ def _inject_observe_metadata(request, span_name: str):
 
     metadata["observe"] = observe_meta
 
-    # Write back metadata (pydantic models are mutable by default in v2)
     try:
-        if hasattr(request, "params") and hasattr(request.params, "metadata"):
-            request.params.metadata = metadata
-        else:
-            request.metadata = metadata
+        request = _set_metadata(request, metadata)
     except Exception:
-        # Fallback - create a new request with updated metadata
         try:
             if hasattr(request, "params"):
                 request = request.model_copy(
@@ -235,7 +256,7 @@ def _inject_observe_metadata(request, span_name: str):
             else:
                 request = request.model_copy(update={"metadata": metadata})
         except Exception:
-            pass  # If all else fails, continue without metadata injection
+            pass
 
     return request
 
@@ -276,24 +297,46 @@ class A2AInstrumentor(BaseInstrumentor):
             return
 
         try:
-            from a2a.client.base_client import A2AClient as BaseA2AClient
+            from a2a.client.base_client import BaseClient as BaseA2AClient
         except ImportError:
-            return
+            try:
+                from a2a.client.base_client import A2AClient as BaseA2AClient
+            except ImportError:
+                return
 
         # Instrument send_message
         if hasattr(BaseA2AClient, "send_message"):
             original_send_message = BaseA2AClient.send_message
             _original_methods["BaseA2AClient.send_message"] = original_send_message
 
-            @functools.wraps(original_send_message)
-            async def instrumented_send_message(self, request, *args, **kwargs):
-                nonlocal original_send_message
-                with _global_tracer.start_as_current_span("a2a.client.send_message"):
-                    request = _inject_observe_metadata(
-                        request, "a2a.client.send_message"
-                    )
-                    _emit_a2a_send_topology_event(request, self, "send_message")
-                return await original_send_message(self, request, *args, **kwargs)
+            if inspect.isasyncgenfunction(original_send_message):
+
+                @functools.wraps(original_send_message)
+                async def instrumented_send_message(self, request, *args, **kwargs):
+                    with _global_tracer.start_as_current_span(
+                        "a2a.client.send_message"
+                    ):
+                        request = _inject_observe_metadata(
+                            request, "a2a.client.send_message"
+                        )
+                        _emit_a2a_send_topology_event(request, self, "send_message")
+                    async for response in original_send_message(
+                        self, request, *args, **kwargs
+                    ):
+                        yield response
+
+            else:
+
+                @functools.wraps(original_send_message)
+                async def instrumented_send_message(self, request, *args, **kwargs):
+                    with _global_tracer.start_as_current_span(
+                        "a2a.client.send_message"
+                    ):
+                        request = _inject_observe_metadata(
+                            request, "a2a.client.send_message"
+                        )
+                        _emit_a2a_send_topology_event(request, self, "send_message")
+                    return await original_send_message(self, request, *args, **kwargs)
 
             BaseA2AClient.send_message = instrumented_send_message
 
@@ -397,12 +440,7 @@ class A2AInstrumentor(BaseInstrumentor):
                                 or None
                             )
 
-                # Ensure metadata dict exists
-                try:
-                    md = getattr(request.params, "metadata", None)
-                except AttributeError:
-                    md = None
-                metadata = md if isinstance(md, dict) else {}
+                metadata = _safe_get_metadata(request)
 
                 observe_meta = dict(metadata.get("observe", {}))
 
@@ -509,12 +547,7 @@ class A2AInstrumentor(BaseInstrumentor):
                                     or None
                                 )
 
-                    # Ensure metadata dict exists
-                    try:
-                        md = getattr(request.params, "metadata", None)
-                    except AttributeError:
-                        md = None
-                    metadata = md if isinstance(md, dict) else {}
+                    metadata = _safe_get_metadata(request)
 
                     observe_meta = dict(metadata.get("observe", {}))
 
@@ -586,7 +619,7 @@ class A2AInstrumentor(BaseInstrumentor):
         async def instrumented_on_message_send(self, params, context):
             # Read context from A2A message metadata (transport-agnostic)
             try:
-                metadata = getattr(params, "metadata", {}) or {}
+                metadata = _safe_get_metadata(params)
             except Exception:
                 metadata = {}
 
@@ -688,7 +721,7 @@ class A2AInstrumentor(BaseInstrumentor):
             async def instrumented_on_message_send_stream(self, params, context):
                 # Read context from A2A message metadata (transport-agnostic)
                 try:
-                    metadata = getattr(params, "metadata", {}) or {}
+                    metadata = _safe_get_metadata(params)
                 except Exception:
                     metadata = {}
 
@@ -840,12 +873,7 @@ class A2AInstrumentor(BaseInstrumentor):
                                 f"session.{session_id}.agent_sequence"
                             )
 
-                # Ensure metadata dict exists
-                try:
-                    md = getattr(request.params, "metadata", None)
-                except AttributeError:
-                    md = None
-                metadata = md if isinstance(md, dict) else {}
+                metadata = _safe_get_metadata(request)
 
                 observe_meta = dict(metadata.get("observe", {}))
 
@@ -887,12 +915,7 @@ class A2AInstrumentor(BaseInstrumentor):
 
                 metadata["observe"] = observe_meta
 
-                # Write back metadata (pydantic models are mutable by default in v2)
-                try:
-                    request.metadata = metadata
-                except Exception:
-                    # Fallback
-                    request = request.model_copy(update={"metadata": metadata})
+                request = _set_metadata(request, metadata)
 
             # Call through without transport-specific kwargs
             _emit_a2a_send_topology_event(request, self, "slima2a.send_message")
@@ -944,12 +967,7 @@ class A2AInstrumentor(BaseInstrumentor):
                                 f"session.{session_id}.agent_sequence"
                             )
 
-                # Ensure metadata dict exists
-                try:
-                    md = getattr(request.params, "metadata", None)
-                except AttributeError:
-                    md = None
-                metadata = md if isinstance(md, dict) else {}
+                metadata = _safe_get_metadata(request)
                 observe_meta = dict(metadata.get("observe", {}))
 
                 # Add agent linking info for cross-process span linking
@@ -990,12 +1008,7 @@ class A2AInstrumentor(BaseInstrumentor):
 
                 metadata["observe"] = observe_meta
 
-                # Write back metadata (pydantic models are mutable by default in v2)
-                try:
-                    request.metadata = metadata
-                except Exception:
-                    # Fallback
-                    request = request.model_copy(update={"metadata": metadata})
+                request = _set_metadata(request, metadata)
 
             _emit_a2a_send_topology_event(
                 request, self, "slima2a.send_message_streaming"
@@ -1018,7 +1031,7 @@ class A2AInstrumentor(BaseInstrumentor):
         # Uninstrument BaseA2AClient (new pattern v0.3.0+)
         if importlib.util.find_spec("a2a.client.base_client") is not None:
             try:
-                from a2a.client.base_client import A2AClient as BaseA2AClient
+                from a2a.client.base_client import BaseClient as BaseA2AClient
 
                 if "BaseA2AClient.send_message" in _original_methods:
                     BaseA2AClient.send_message = _original_methods[

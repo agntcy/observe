@@ -10,9 +10,9 @@ client <-----> SLIM <----> Server
 - Server listens for sessions and responds using an OpenAI agent
 - Gateway is a SLIM message broker
 
-## SLIM v1.x API
+## SLIM v2.x API
 
-This example uses the SLIM v1.x API with the following key features:
+This example uses the SLIM v2.x Python bindings with the following key features:
 
 - **Service-based architecture**: `slim_bindings.Service` + `slim_bindings.App` pattern
 - **Initialization**: `initialize_with_configs()` with config objects
@@ -24,7 +24,7 @@ This example uses the SLIM v1.x API with the following key features:
 ## Requirements
 
 - Python 3.12+
-- slim-bindings >= 1.0.0
+- slim-bindings >= 2.1.2, < 3
 - A virtual environment is recommended for isolating dependencies
 - A `.env` at the project root with your OpenAI API key
 

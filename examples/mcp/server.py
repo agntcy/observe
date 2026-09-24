@@ -4,12 +4,12 @@ MCP Server example with Observe SDK instrumentation.
 Start the server:
     python server.py
 
-The server will start on http://localhost:8000/mcp using Streamable HTTP transport.
+The server will start on http://127.0.0.1:8000/mcp using Streamable HTTP transport.
 """
 
 import os
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 from ioa_observe.sdk import Observe
 from ioa_observe.sdk.instrumentations.mcp import McpInstrumentor
 from dotenv import load_dotenv
@@ -19,7 +19,7 @@ load_dotenv()
 
 
 # Create an MCP server
-mcp = FastMCP("Demo")
+mcp = MCPServer("Demo")
 
 serviceName = "mcp_server"
 

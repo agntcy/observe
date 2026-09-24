@@ -4,20 +4,24 @@
 import os
 
 from langchain_openai import ChatOpenAI
+from langchain.agents import create_agent
 from typing import Annotated, TypedDict, Literal
 
 from langchain_core.messages import HumanMessage
 from langchain_experimental.utilities import PythonREPL
 from langgraph.constants import START, END
 from langgraph.graph import MessagesState, StateGraph
-from langgraph.prebuilt import create_react_agent
 from langgraph.types import Command
-from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain_tavily import TavilySearch
 
 from ioa_observe.sdk import Observe
 from ioa_observe.sdk.decorators import agent, graph
 from ioa_observe.sdk.decorators import tool as observe_tool
 from ioa_observe.sdk.tracing import session_start
+
+import truststore  # pip install truststore
+
+truststore.inject_into_ssl()
 
 # This executes code locally, which can be unsafe
 repl = PythonREPL()
@@ -25,7 +29,7 @@ serviceName = "multi-agent-service"
 
 Observe.init(serviceName, api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT"))
 
-tavily_tool = TavilySearchResults(max_results=5)
+tavily_tool = TavilySearch(max_results=5)
 
 
 @observe_tool(name="Python REPL tool", application_id="abcd")
@@ -98,8 +102,10 @@ def supervisor_node(state: State) -> Command[Literal["researcher", "coder", "__e
     application_id="abcd",
 )
 def create_research_agent():
-    return create_react_agent(
-        llm, tools=[tavily_tool], prompt="You are a researcher. DO NOT do any math."
+    return create_agent(
+        llm,
+        tools=[tavily_tool],
+        system_prompt="You are a researcher. DO NOT do any math.",
     )
 
 
@@ -124,7 +130,7 @@ def research_node(state: State) -> Command[Literal["supervisor"]]:
 
 
 # NOTE: THIS PERFORMS ARBITRARY CODE EXECUTION, WHICH CAN BE UNSAFE WHEN NOT SANDBOXED
-code_agent = create_react_agent(llm, tools=[python_repl_tool])
+code_agent = create_agent(llm, tools=[python_repl_tool])
 
 
 @agent(

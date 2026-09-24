@@ -11,8 +11,8 @@ Usage:
 
 import os
 
-from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
+from langchain.mcp import MCPAdapter
 import asyncio
 from dotenv import load_dotenv
 
@@ -35,25 +35,27 @@ McpInstrumentor().instrument()
     description="An agent that can perform mathematical operations using MCP tools.",
 )
 async def math_agent_fn(tools, messages):
-    react_agent = create_react_agent("gpt-4o", tools)
+    react_agent = create_agent("openai:gpt-4.1-mini", tools)
     return await react_agent.ainvoke(messages)
 
 
 async def main():
-    client = MultiServerMCPClient(
-        {
+    config = {
+        "mcpServers": {
             "math": {
-                "url": "http://localhost:8000/mcp",
-                "transport": "streamable_http",
+                "url": "http://127.0.0.1:8000/mcp",
             }
         }
-    )
-    tools = await client.get_tools()
-    session_start()
-    math_response = await math_agent_fn(
-        tools, {"messages": [{"role": "user", "content": "what's (3 + 5) x 12?"}]}
-    )
+    }
+    async with MCPAdapter(config) as adapter:
+        tools = await adapter.list_tools()
+        session_start()
+        math_response = await math_agent_fn(
+            tools,
+            {"messages": [{"role": "user", "content": "what's (3 + 5) x 12?"}]},
+        )
     print(math_response)
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
