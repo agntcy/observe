@@ -24,6 +24,8 @@ from ioa_observe.sdk.tracing.manual import track_llm_call, LLMMessage
 from ioa_observe.sdk.utils.const import (
     OBSERVE_AGENT_SPAN_ID,
     OBSERVE_AGENT_TRACE_ID,
+    OBSERVE_HANDOFF_SOURCE_SPAN_IDS,
+    OBSERVE_HANDOFF_SOURCE_TRACE_IDS,
     ObserveSpanKindValues,
     OBSERVE_ENTITY_INPUT,
     OBSERVE_ENTITY_DESCRIPTION,
@@ -361,6 +363,40 @@ def test_descendant_span_references_enclosing_agent_through_intermediate_span(
     assert chat_span.parent.span_id == task_span.context.span_id
     assert chat_span.attributes[OBSERVE_AGENT_SPAN_ID] == agent_span_id
     assert chat_span.attributes[OBSERVE_AGENT_TRACE_ID] == agent_trace_id
+
+
+def test_handoff_links_receiving_agent_to_exact_source_invocation(
+    exporter_with_custom_span_processor,
+):
+    command_type = type("Command", (), {"__module__": "langgraph.types"})
+
+    @agent(name="router")
+    def router():
+        command = command_type()
+        command.goto = "worker"
+        return command
+
+    @agent(name="worker")
+    def worker(_command):
+        return "done"
+
+    with session_start():
+        command = router()
+        worker(command)
+
+    spans = exporter_with_custom_span_processor.get_finished_spans()
+    router_span = next(span for span in spans if span.name == "router.agent")
+    worker_span = next(span for span in spans if span.name == "worker.agent")
+    source_span_id = format(router_span.context.span_id, "016x")
+    source_trace_id = format(router_span.context.trace_id, "032x")
+
+    assert [link.context.span_id for link in worker_span.links] == [
+        router_span.context.span_id
+    ]
+    assert worker_span.attributes[OBSERVE_HANDOFF_SOURCE_SPAN_IDS] == (source_span_id,)
+    assert worker_span.attributes[OBSERVE_HANDOFF_SOURCE_TRACE_IDS] == (
+        source_trace_id,
+    )
 
 
 def test_association_properties_within_workflow(exporter_with_custom_span_processor):

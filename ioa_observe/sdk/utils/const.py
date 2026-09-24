@@ -14,6 +14,8 @@ OBSERVE_ENTITY_OUTPUT = "ioa_observe.entity.output"
 OBSERVE_ASSOCIATION_PROPERTIES = "ioa_observe.association.properties"
 OBSERVE_AGENT_SPAN_ID = "ioa_observe.agent.span_id"
 OBSERVE_AGENT_TRACE_ID = "ioa_observe.agent.trace_id"
+OBSERVE_HANDOFF_SOURCE_SPAN_IDS = "ioa_observe.handoff.source.span_ids"
+OBSERVE_HANDOFF_SOURCE_TRACE_IDS = "ioa_observe.handoff.source.trace_ids"
 
 
 OBSERVE_PROMPT_MANAGED = "ioa_observe.prompt.managed"

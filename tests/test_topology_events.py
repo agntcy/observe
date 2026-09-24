@@ -5,6 +5,8 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from opentelemetry import context as context_api
+from opentelemetry.context import set_value
 
 from ioa_observe.sdk import Observe
 from ioa_observe.sdk.client import kv_store
@@ -22,13 +24,23 @@ from ioa_observe.sdk.instrumentations.slim import (
     _emit_slim_receive_topology_event,
     _emit_slim_send_topology_event,
 )
-from ioa_observe.sdk.tracing.handoffs import extract_handoff_signal
+from ioa_observe.sdk.tracing.handoffs import (
+    HandoffSignal,
+    consume_handoff_signals,
+    extract_handoff_signal,
+    record_handoff_signal,
+)
+from ioa_observe.sdk.tracing.context_utils import _get_agent_linking_info
 from ioa_observe.sdk.tracing import get_live_topology_snapshot, session_start
 from ioa_observe.sdk.tracing.topology import (
     clear_topology_listeners,
     record_session_started,
 )
 from ioa_observe.sdk.tracing.tracing import TracerWrapper
+from ioa_observe.sdk.utils.const import (
+    OBSERVE_AGENT_SPAN_ID,
+    OBSERVE_AGENT_TRACE_ID,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -130,6 +142,56 @@ def test_langgraph_result_is_normalized_by_framework_adapter():
     assert signal.target_agent == "executor"
     assert signal.evidence == "framework:langgraph"
     assert signal.confidence == 0.9
+
+
+def test_handoff_references_preserve_all_fan_in_sources():
+    signal = HandoffSignal(
+        target_agent="reviewer",
+        evidence="framework:langgraph",
+        confidence=0.9,
+    )
+    record_handoff_signal(
+        "session-123",
+        "researcher",
+        "0000000000000001",
+        "00000000000000000000000000000001",
+        signal,
+    )
+    record_handoff_signal(
+        "session-123",
+        "coder",
+        "0000000000000002",
+        "00000000000000000000000000000002",
+        signal,
+    )
+
+    references = consume_handoff_signals("session-123", "reviewer")
+
+    assert [reference["source_agent"] for reference in references] == [
+        "researcher",
+        "coder",
+    ]
+    assert consume_handoff_signals("session-123", "reviewer") == []
+
+
+def test_cross_process_linking_uses_active_agent_reference_before_session_cursor():
+    session_id = "session-123"
+    kv_store.set(f"session.{session_id}.last_agent_span_id", "stale-span")
+    kv_store.set(f"session.{session_id}.last_agent_trace_id", "stale-trace")
+    kv_store.set(f"session.{session_id}.last_agent_name", "stale-agent")
+    ctx = set_value(OBSERVE_AGENT_SPAN_ID, "active-span")
+    ctx = set_value(OBSERVE_AGENT_TRACE_ID, "active-trace", ctx)
+    ctx = set_value("agent_id", "active-agent", ctx)
+    token = context_api.attach(ctx)
+
+    try:
+        linking_info = _get_agent_linking_info(session_id)
+    finally:
+        context_api.detach(token)
+
+    assert linking_info["last_agent_span_id"] == "active-span"
+    assert linking_info["last_agent_trace_id"] == "active-trace"
+    assert linking_info["last_agent_name"] == "active-agent"
 
 
 def test_framework_signal_marks_matching_next_agent_as_observed(topology_events):

@@ -48,7 +48,7 @@ from ioa_observe.sdk.telemetry import Telemetry
 from ioa_observe.sdk.tracing import get_tracer, set_workflow_name
 from ioa_observe.sdk.tracing.runtime_event_emitter import emit_runtime_event
 from ioa_observe.sdk.tracing.handoffs import (
-    consume_handoff_signal,
+    consume_handoff_signals,
     extract_handoff_signal,
     record_handoff_signal,
 )
@@ -83,6 +83,8 @@ from ioa_observe.sdk.utils.const import (
     OBSERVE_ENTITY_OUTPUT,
     OBSERVE_AGENT_SPAN_ID,
     OBSERVE_AGENT_TRACE_ID,
+    OBSERVE_HANDOFF_SOURCE_SPAN_IDS,
+    OBSERVE_HANDOFF_SOURCE_TRACE_IDS,
 )
 from ioa_observe.sdk.utils.json_encoder import JSONEncoder
 from ioa_observe.sdk.metrics.agent import topology_dynamism, determinism_score
@@ -200,6 +202,37 @@ def _get_previous_agent_link(session_id: str, entity_name: str) -> tuple:
     sequence_str = kv_store.get(_get_session_span_key(session_id, "agent_sequence"))
     sequence = int(sequence_str) if sequence_str else 0
 
+    pending_handoffs = consume_handoff_signals(session_id, entity_name)
+    if pending_handoffs:
+        links = []
+        for handoff in pending_handoffs:
+            links.extend(
+                make_single_link(
+                    handoff["source_span_id"],
+                    handoff["source_trace_id"],
+                    handoff["source_agent"],
+                    "agent_handoff",
+                )
+            )
+        previous_agent_name = (
+            pending_handoffs[0]["source_agent"] if len(pending_handoffs) == 1 else None
+        )
+        evidence = (
+            pending_handoffs[0]["evidence"]
+            if len({item["evidence"] for item in pending_handoffs}) == 1
+            else "explicit_handoff"
+        )
+        confidence = min(item["confidence"] for item in pending_handoffs)
+        return (
+            links,
+            previous_agent_name,
+            sequence,
+            None,
+            0,
+            evidence,
+            confidence,
+        )
+
     # -----------------------------------------------------------------
     # Step 1: Check if the current OTel context has a parent span that
     # belongs to a known agent.  This correctly identifies the
@@ -234,24 +267,6 @@ def _get_previous_agent_link(session_id: str, entity_name: str) -> tuple:
                 "parent_span",
                 1.0,
             )
-
-    pending_handoff = consume_handoff_signal(session_id, entity_name)
-    if pending_handoff:
-        links = make_single_link(
-            pending_handoff["source_span_id"],
-            pending_handoff["source_trace_id"],
-            pending_handoff["source_agent"],
-            "agent_handoff",
-        )
-        return (
-            links,
-            pending_handoff["source_agent"],
-            sequence,
-            None,
-            sequence,
-            pending_handoff["evidence"],
-            pending_handoff["confidence"],
-        )
 
     # -----------------------------------------------------------------
     # Step 2: No agent parent in OTel context (e.g., new trace, root
@@ -393,6 +408,15 @@ def _setup_span(
             attach(set_value("prompt_template_variables", prompt_template_variables))
 
         if tlp_span_kind == ObserveSpanKindValues.AGENT:
+            if links:
+                span.set_attribute(
+                    OBSERVE_HANDOFF_SOURCE_SPAN_IDS,
+                    tuple(format(link.context.span_id, "016x") for link in links),
+                )
+                span.set_attribute(
+                    OBSERVE_HANDOFF_SOURCE_TRACE_IDS,
+                    tuple(format(link.context.trace_id, "032x") for link in links),
+                )
             span_context = span.get_span_context()
             attach(
                 set_value(
