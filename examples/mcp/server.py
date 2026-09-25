@@ -38,6 +38,7 @@ def add(a: int, b: int) -> int:
 
 
 @mcp.tool()
+@tool(name="multiply numbers", description="Multiply two numbers", application_id="abcd")
 def multiply(a: int, b: int) -> int:
     """Multiply two numbers"""
     return a * b
