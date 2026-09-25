@@ -1,22 +1,21 @@
-langgraph>=0.4.1
-langchain>=0.3.25
-langchain_openai>=0.3.21
-langgraph-sdk>=0.1.53
-langchain_experimental>=0.3.4
-llama-index>=0.12.34
-fastapi[standard]==0.115.11
-requests>=2.32.3
-starlette>=0.46.0
-uvicorn>=0.34.0
-packaging==24.2
-python-dotenv>=1.0.1
-pydantic>=2.10.6
-pydantic-settings>=2.8.1
-uvicorn>=0.34.0
-requests>=2.32.3
-python-json-logger>=3.3.0
-slim-bindings>=1.0.0  # SLIM v1.x required
-ioa_observe_sdk>=1.0.29
-openai>=1.0.0
+langgraph>=1.2.12
+langchain>=1.4.2
+langchain_openai>=1.6.5
+langgraph-sdk>=0.4.5
+langchain_experimental>=0.4.2
+llama-index>=0.14.25
+fastapi[standard]>=0.141.1
+requests>=2.34.2
+starlette>=1.7.0
+uvicorn>=0.53.0
+packaging>=26.3
+python-dotenv>=1.2.3
+pydantic>=2.13.5
+pydantic-settings>=2.15.0
+python-json-logger>=4.2.0
+slim-bindings>=2.1.2,<3
+ioa_observe_sdk>=1.0.47
+# LlamaIndex 0.14 currently requires OpenAI 2.x.
+openai>=2.54.0,<3
 # If you need to debug langgraph studio
 # debugpy==1.8.12

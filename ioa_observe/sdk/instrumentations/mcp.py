@@ -195,14 +195,23 @@ class McpInstrumentor(BaseInstrumentor):
         tracer_provider = kwargs.get("tracer_provider")
         tracer = get_tracer(__name__, __version__, tracer_provider)
 
+        def wrap_if_present(module_name, attribute, wrapper):
+            module = __import__(module_name, fromlist=[attribute.split(".", 1)[0]])
+            target = module
+            for part in attribute.split("."):
+                if not hasattr(target, part):
+                    return
+                target = getattr(target, part)
+            wrap_function_wrapper(module_name, attribute, wrapper)
+
         register_post_import_hook(
-            lambda _: wrap_function_wrapper(
+            lambda _: wrap_if_present(
                 "mcp.client.sse", "sse_client", self._transport_wrapper(tracer)
             ),
             "mcp.client.sse",
         )
         register_post_import_hook(
-            lambda _: wrap_function_wrapper(
+            lambda _: wrap_if_present(
                 "mcp.server.sse",
                 "SseServerTransport.connect_sse",
                 self._transport_wrapper(tracer),
@@ -210,19 +219,19 @@ class McpInstrumentor(BaseInstrumentor):
             "mcp.server.sse",
         )
         register_post_import_hook(
-            lambda _: wrap_function_wrapper(
+            lambda _: wrap_if_present(
                 "mcp.client.stdio", "stdio_client", self._transport_wrapper(tracer)
             ),
             "mcp.client.stdio",
         )
         register_post_import_hook(
-            lambda _: wrap_function_wrapper(
+            lambda _: wrap_if_present(
                 "mcp.server.stdio", "stdio_server", self._transport_wrapper(tracer)
             ),
             "mcp.server.stdio",
         )
         register_post_import_hook(
-            lambda _: wrap_function_wrapper(
+            lambda _: wrap_if_present(
                 "mcp.server.session",
                 "ServerSession.__init__",
                 self._base_session_init_wrapper(tracer),
@@ -230,7 +239,7 @@ class McpInstrumentor(BaseInstrumentor):
             "mcp.server.session",
         )
         register_post_import_hook(
-            lambda _: wrap_function_wrapper(
+            lambda _: wrap_if_present(
                 "mcp.client.streamable_http",
                 "streamablehttp_client",
                 self._transport_wrapper(tracer),
@@ -238,7 +247,7 @@ class McpInstrumentor(BaseInstrumentor):
             "mcp.client.streamable_http",
         )
         register_post_import_hook(
-            lambda _: wrap_function_wrapper(
+            lambda _: wrap_if_present(
                 "mcp.client.streamable_http",
                 "streamable_http_client",
                 self._transport_wrapper(tracer),
@@ -246,21 +255,31 @@ class McpInstrumentor(BaseInstrumentor):
             "mcp.client.streamable_http",
         )
         register_post_import_hook(
-            lambda _: wrap_function_wrapper(
+            lambda _: wrap_if_present(
                 "mcp.server.streamable_http",
                 "StreamableHTTPServerTransport.connect",
                 self._transport_wrapper(tracer),
             ),
             "mcp.server.streamable_http",
         )
-        wrap_function_wrapper(
-            "mcp.shared.session",
-            "BaseSession.send_request",
-            self.patch_mcp_client(tracer),
-        )
+        if find_spec("mcp.shared.session"):
+            wrap_function_wrapper(
+                "mcp.shared.session",
+                "BaseSession.send_request",
+                self.patch_mcp_client(tracer),
+            )
+        else:
+            wrap_function_wrapper(
+                "mcp.client.session",
+                "ClientSession.send_request",
+                self.patch_mcp_client(tracer),
+            )
 
     def _uninstrument(self, **kwargs):
-        unwrap("mcp.shared.session", "BaseSession.send_request")
+        if find_spec("mcp.shared.session"):
+            unwrap("mcp.shared.session", "BaseSession.send_request")
+        elif find_spec("mcp.client.session"):
+            unwrap("mcp.client.session", "ClientSession.send_request")
 
         unwrap("mcp.client.stdio", "stdio_client")
         unwrap("mcp.server.stdio", "stdio_server")
@@ -374,12 +393,12 @@ class McpInstrumentor(BaseInstrumentor):
             method = None
             params = None
             request_id = None
-            if len(args) > 0 and hasattr(args[0].root, "method"):
-                method = args[0].root.method
-            if len(args) > 0 and hasattr(args[0].root, "params"):
-                params = args[0].root.params
-            if len(args) > 0 and hasattr(args[0].root, "id"):
-                request_id = args[0].root.id
+            request = args[0] if args else None
+            request_root = getattr(request, "root", request)
+            if request_root is not None:
+                method = getattr(request_root, "method", None)
+                params = getattr(request_root, "params", None)
+                request_id = getattr(request_root, "id", None)
 
             with tracer.start_as_current_span(f"{method}.mcp") as span:
                 try:
@@ -463,15 +482,10 @@ class McpInstrumentor(BaseInstrumentor):
                         elif isinstance(existing_meta, dict):
                             meta_kwargs = dict(existing_meta)
                         meta_kwargs.update(observe_meta)
-                        from mcp.types import RequestParams as McpRequestParamsType
-
-                        args[0].root.params.meta = McpRequestParamsType.Meta(
-                            **meta_kwargs
-                        )
+                        params.meta = meta_kwargs
                     except Exception:
-                        # Fallback: set as dict (may trigger Pydantic warning)
                         try:
-                            args[0].root.params.meta = observe_meta
+                            params.meta = observe_meta
                         except Exception:
                             pass
 
@@ -490,7 +504,10 @@ class McpInstrumentor(BaseInstrumentor):
                         )
                     except Exception:
                         pass
-                    if hasattr(result, "isError") and result.isError:
+                    is_error = getattr(
+                        result, "is_error", getattr(result, "isError", False)
+                    )
+                    if is_error:
                         if len(result.content) > 0:
                             span.set_status(
                                 Status(StatusCode.ERROR, f"{result.content[0].text}")
@@ -585,12 +602,10 @@ class InstrumentedStreamReader(ObjectProxy):  # type: ignore
 
         async for item in self.__wrapped__:
             if isinstance(item, McpSessionMessage):
-                request = cast(McpJSONRPCMessage, item.message).root
-            elif type(item) is McpJSONRPCMessage:
-                request = cast(McpJSONRPCMessage, item).root
+                message = cast(McpJSONRPCMessage, item.message)
+                request = getattr(message, "root", message)
             else:
-                yield item
-                continue
+                request = getattr(item, "root", item)
 
             if not isinstance(request, McpJSONRPCRequest):
                 yield item
@@ -726,12 +741,10 @@ class InstrumentedStreamWriter(ObjectProxy):  # type: ignore
         from mcp.types import JSONRPCRequest as McpJSONRPCRequest
 
         if isinstance(item, McpSessionMessage):
-            request = cast(McpJSONRPCMessage, item.message).root
-        elif type(item) is McpJSONRPCMessage:
-            request = cast(McpJSONRPCMessage, item).root
+            message = cast(McpJSONRPCMessage, item.message)
+            request = getattr(message, "root", message)
         else:
-            # Always forward unrecognized message types
-            return await self.__wrapped__.send(item)
+            request = getattr(item, "root", item)
 
         try:
             with self._tracer.start_as_current_span("ResponseStreamWriter") as span:

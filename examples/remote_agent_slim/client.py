@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SLIM v1.x Client Example - Connects to server and exchanges messages."""
+"""SLIM v2.x client example that connects to a server and exchanges messages."""
 
 import asyncio
 import datetime

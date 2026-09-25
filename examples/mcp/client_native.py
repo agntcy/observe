@@ -16,8 +16,7 @@ import asyncio
 import os
 
 from dotenv import load_dotenv
-from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
+from mcp import Client
 
 from ioa_observe.sdk import Observe
 from ioa_observe.sdk.decorators import agent
@@ -37,31 +36,25 @@ McpInstrumentor().instrument()
 )
 async def math_agent(url: str):
     """Connect to an MCP server and call its tools."""
-    async with streamable_http_client(url) as (read, write, _):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
+    async with Client(url) as client:
+        tools_result = await client.list_tools()
+        print(f"Available tools: {[tool.name for tool in tools_result.tools]}")
 
-            # List available tools
-            tools_result = await session.list_tools()
-            print(f"Available tools: {[t.name for t in tools_result.tools]}")
+        add_result = await client.call_tool("add", {"a": 3, "b": 5})
+        print(f"add(3, 5) = {add_result.structured_content['result']}")
 
-            # Call the add tool
-            add_result = await session.call_tool("add", {"a": 3, "b": 5})
-            print(f"add(3, 5) = {add_result.content[0].text}")
+        multiply_result = await client.call_tool("multiply", {"a": 8, "b": 12})
+        print(f"multiply(8, 12) = {multiply_result.structured_content['result']}")
 
-            # Call the multiply tool
-            multiply_result = await session.call_tool("multiply", {"a": 8, "b": 12})
-            print(f"multiply(8, 12) = {multiply_result.content[0].text}")
-
-            return {
-                "add_result": add_result.content[0].text,
-                "multiply_result": multiply_result.content[0].text,
-            }
+        return {
+            "add_result": add_result.structured_content["result"],
+            "multiply_result": multiply_result.structured_content["result"],
+        }
 
 
 async def main():
     session_start()
-    result = await math_agent("http://localhost:8000/mcp")
+    result = await math_agent("http://127.0.0.1:8000/mcp")
     print(f"\nFinal result: {result}")
 
 

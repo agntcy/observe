@@ -1,4 +1,8 @@
-# Running the A2A examples
+# Running the A2A 1.0 examples
+
+These examples use the A2A 1.0 protocol. The HTTP examples use `a2a-sdk`
+1.1.x APIs. The SLIM examples use `slima2a` 0.7.0 and its pinned compatible
+`a2a-sdk` 1.1.0 dependency.
 
 You need to set the `OTLP_HTTP_ENDPOINT` variable to point to an otel collector.
 One can deploy one using the docker compose file provided in `deploy/` at the root folder of this repo.
@@ -9,6 +13,10 @@ $ cat <<< EOF > .env
 OTLP_HTTP_ENDPOINT="http://localhost:4318"
 EOF
 ```
+
+Install the locked environment:
+
+`uv sync`
 
 ## Plain A2A example
 

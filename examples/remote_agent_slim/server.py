@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SLIM v1.x Server Example - Listens for sessions and responds using OpenAI."""
+"""SLIM v2.x server example that listens for sessions and responds using OpenAI."""
 
 import asyncio
 import datetime
@@ -77,7 +77,7 @@ class SlimServer:
         if self.openai:
             try:
                 resp = await self.openai.chat.completions.create(
-                    model="gpt-4",
+                    model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
                     messages=[{"role": "user", "content": message}],
                     max_tokens=200,
                 )

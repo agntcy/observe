@@ -12,13 +12,14 @@ These examples are designed to help you understand how to build, trace, and debu
 
 ## 📦 Installation
 
-Make sure you have Python 3.8+ installed. Then:
+Make sure you have Python 3.10+ installed. Then:
 
 ```bash
-pip install -r requirements.txt.txt
+pip install -r requirements.txt
 ```
 
-> **Note:** Some examples may require additional dependencies — check the import statements in each script.
+The protocol-specific examples have their own setup instructions in `mcp/` and
+`a2a_examples/`.
 
 ---
 
@@ -135,9 +136,9 @@ The `a2a_examples` directory showcases examples that use the A2A protocol to fac
 Demonstrates MCP (Model Context Protocol) server and client instrumentation with full cross-process context propagation.
 
 **Files:**
-- `server.py` — MCP server using FastMCP with `add` and `multiply` tools
-- `client_native.py` — Native MCP SDK client using `ClientSession` and `streamablehttp_client` directly
-- `client.py` — LangChain MCP adapter client with a ReAct agent
+- `server.py` — MCP 2.x server using `MCPServer` with `add` and `multiply` tools
+- `client_native.py` — Native MCP 2.x client using the high-level `Client`
+- `client.py` — LangChain's built-in `langchain.mcp` adapter
 
 **Speciality:**
 - Full Observe SDK instrumentation across all MCP transports (stdio, SSE, Streamable HTTP)
