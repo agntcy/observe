@@ -11,6 +11,7 @@ import os
 
 from mcp.server import MCPServer
 from ioa_observe.sdk import Observe
+from ioa_observe.sdk.decorators import tool
 from ioa_observe.sdk.instrumentations.mcp import McpInstrumentor
 from dotenv import load_dotenv
 
@@ -30,6 +31,7 @@ McpInstrumentor().instrument()
 
 # Add an addition tool
 @mcp.tool()
+@tool(name="add numbers", description="Add two numbers", application_id="abcd")
 def add(a: int, b: int) -> int:
     """Add two numbers"""
     return a + b

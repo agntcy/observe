@@ -17,13 +17,7 @@ cp .env.example .env
 Install dependencies:
 
 ```bash
-pip install "mcp>=2.2,<3" ioa-observe-sdk python-dotenv
-```
-
-For the LangChain client example, also install:
-
-```bash
-pip install "langchain[mcp]>=1.4.2" langchain-openai
+uv sync --package mcp-examples
 ```
 
 ## Running the Examples
@@ -31,7 +25,7 @@ pip install "langchain[mcp]>=1.4.2" langchain-openai
 ### 1. Start the MCP Server
 
 ```bash
-python server.py
+uv run --package mcp-examples python server.py
 ```
 
 The server starts on `http://127.0.0.1:8000/mcp` using Streamable HTTP transport and exposes `add` and `multiply` tools.
@@ -41,7 +35,7 @@ The server starts on `http://127.0.0.1:8000/mcp` using Streamable HTTP transport
 **Native MCP SDK client** (no LangChain dependency):
 
 ```bash
-python client_native.py
+uv run --package mcp-examples python client_native.py
 ```
 
 This example uses the MCP SDK's high-level `Client` directly to list tools and call them.
@@ -49,7 +43,7 @@ This example uses the MCP SDK's high-level `Client` directly to list tools and c
 **LangChain MCP adapter client** (requires LangChain + OpenAI API key):
 
 ```bash
-python client.py
+uv run --package mcp-examples python client.py
 ```
 
 This example uses LangChain's built-in `langchain.mcp` adapter to bridge MCP tools into a LangChain agent.
