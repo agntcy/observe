@@ -9,7 +9,12 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from opentelemetry import trace
+from opentelemetry.sdk.trace import ReadableSpan
+from opentelemetry.trace import Span, SpanContext
+
 from ioa_observe.sdk.config import is_realtime_observability_enabled
+from ioa_observe.sdk.tracing.runtime_events import span_correlation_attributes
 
 
 RuntimeEventListener = Callable[[dict[str, Any]], None]
@@ -38,12 +43,25 @@ def clear_runtime_event_listeners() -> None:
         _listeners.clear()
 
 
-def emit_runtime_event(attributes: Mapping[str, str | bool | int | float]) -> None:
+def emit_runtime_event(
+    attributes: Mapping[str, str | bool | int | float],
+    *,
+    span: Span | ReadableSpan | None = None,
+) -> None:
     if not is_realtime_observability_enabled():
         return
+    if span is None:
+        span = trace.get_current_span()
+    span_context = span.get_span_context()
+    correlation = span_correlation_attributes(
+        getattr(span, "attributes", None) or {},
+        trace_id=span_context.trace_id,
+        span_id=span_context.span_id,
+    )
     event = dict(attributes)
+    event.update(correlation)
     _emit_to_listeners(event)
-    _emit_to_otel_logs(event)
+    _emit_to_otel_logs(event, span_context)
 
 
 def _emit_to_listeners(event: dict[str, Any]) -> None:
@@ -57,7 +75,7 @@ def _emit_to_listeners(event: dict[str, Any]) -> None:
             _logger.exception("Runtime event listener failed")
 
 
-def _emit_to_otel_logs(event: dict[str, Any]) -> None:
+def _emit_to_otel_logs(event: dict[str, Any], span_context: SpanContext) -> None:
     try:
         _ensure_runtime_event_logger()
         from opentelemetry._logs import LogRecord, SeverityNumber, get_logger
@@ -67,6 +85,9 @@ def _emit_to_otel_logs(event: dict[str, Any]) -> None:
         record = LogRecord(
             timestamp=observed_timestamp,
             observed_timestamp=observed_timestamp,
+            trace_id=span_context.trace_id,
+            span_id=span_context.span_id,
+            trace_flags=span_context.trace_flags,
             severity_text="INFO",
             severity_number=SeverityNumber.INFO,
             body=event.get("event.name", "runtime.event"),

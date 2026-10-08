@@ -26,9 +26,11 @@ from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor
 from opentelemetry.trace import Span, SpanKind
 
 from ioa_observe.sdk.tracing.runtime_events import (
+    GEN_AI_MODEL_OPERATIONS,
     RuntimeEvent,
     RuntimeEventAttribute,
     RuntimeEventName,
+    span_correlation_attributes,
 )
 from ioa_observe.sdk.tracing.tool_results import tool_error_message
 
@@ -309,8 +311,6 @@ class RuntimeEventSpanProcessor(SpanProcessor):
 class GenAIRuntimeEventMapper:
     """Map current OTel GenAI agent, tool, and inference spans to runtime events."""
 
-    _MODEL_OPERATIONS = frozenset({"chat", "generate_content", "text_completion"})
-
     def __call__(
         self,
         observation: SpanLifecycleObservation,
@@ -325,17 +325,23 @@ class GenAIRuntimeEventMapper:
 
         operation = observation.attributes.get("gen_ai.operation.name")
         if operation == "execute_tool":
-            return self._map_tool(observation, session_id, snapshot_version)
-        if operation == "invoke_agent":
-            return self._map_agent(observation, session_id, snapshot_version)
-        if operation in self._MODEL_OPERATIONS:
-            return self._map_model(
+            events = self._map_tool(observation, session_id, snapshot_version)
+        elif operation == "invoke_agent":
+            events = self._map_agent(observation, session_id, snapshot_version)
+        elif operation in GEN_AI_MODEL_OPERATIONS:
+            events = self._map_model(
                 observation,
                 session_id,
                 snapshot_version,
                 operation,
             )
-        return ()
+        else:
+            return ()
+        correlation = span_correlation_attributes(observation.attributes)
+        return tuple(
+            replace(event, attributes={**event.attributes, **correlation})
+            for event in events
+        )
 
     @staticmethod
     def _map_agent(

@@ -15,8 +15,18 @@ These examples are designed to help you understand how to build, trace, and debu
 Make sure you have Python 3.10+ installed. Then:
 
 ```bash
-pip install -r requirements.txt
+cd examples
+uv sync
 ```
+
+Run examples from this directory using `uv run python <filename.py>`. The
+repository root has a separate `.venv` with LangChain 0.3, which does not
+provide `langchain.agents.create_agent`; these examples require LangChain 1.x
+from `examples/.venv`.
+For a PyCharm run configuration, set the working directory to `examples/` and
+use `examples/.venv/bin/python` as the interpreter. If imports still resolve
+to LangChain 0.3 in that interpreter, run `uv sync --locked` from `examples/`
+before starting a new run.
 
 The protocol-specific examples have their own setup instructions in `mcp/` and
 `a2a_examples/`.
@@ -37,10 +47,10 @@ export TAVILY_API_KEY=<your_tavily_api_key>  # Optional, for web search tool use
 
 ### 🚀 How to Run
 
-After installing the dependencies and setting environment variables, run an example with:
+After installing the dependencies and setting environment variables, run an example from `examples/` with:
 
 ```bash
-python <filename.py>
+uv run python <filename.py>
 ```
 
 ---

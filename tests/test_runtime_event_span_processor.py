@@ -14,6 +14,7 @@ from ioa_observe.sdk.tracing import (
     RuntimeEventName,
     RuntimeEventSpanProcessor,
 )
+from ioa_observe.sdk.utils.const import OBSERVE_AGENT_SPAN_ID, OBSERVE_AGENT_TRACE_ID
 
 
 class MemoryLogExporter(LogRecordExporter):
@@ -47,6 +48,8 @@ def test_processor_exports_correlated_event_logs_without_replacing_global_provid
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.conversation.id": "conversation-123",
             "gen_ai.agent.name": "Weather Agent",
+            OBSERVE_AGENT_SPAN_ID: "0000000000000123",
+            OBSERVE_AGENT_TRACE_ID: "00000000000000000000000000000456",
         },
     ) as span:
         span_context = span.get_span_context()
@@ -64,6 +67,12 @@ def test_processor_exports_correlated_event_logs_without_replacing_global_provid
     assert all(
         record.log_record.trace_id == span_context.trace_id
         and record.log_record.span_id == span_context.span_id
+        for record in exporter.records
+    )
+    assert all(
+        record.log_record.attributes[OBSERVE_AGENT_SPAN_ID] == "0000000000000123"
+        and record.log_record.attributes[OBSERVE_AGENT_TRACE_ID]
+        == "00000000000000000000000000000456"
         for record in exporter.records
     )
     assert all(

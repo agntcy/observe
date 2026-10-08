@@ -745,10 +745,11 @@ wheels = [
 
 [[package]]
 name = "ioa-observe-sdk"
-version = "1.0.49"
+version = "1.0.50"
 source = { editable = "." }
 dependencies = [
     { name = "colorama" },
+    { name = "griffe" },
     { name = "langchain" },
     { name = "langchain-openai" },
     { name = "langgraph" },
@@ -792,6 +793,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "colorama", specifier = "==0.4.6" },
+    { name = "griffe", specifier = "<2" },
     { name = "langchain", specifier = ">=0.3.19" },
     { name = "langchain-openai", specifier = ">=0.3.8" },
     { name = "langgraph", specifier = ">=0.3.2" },

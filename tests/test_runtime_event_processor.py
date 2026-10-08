@@ -18,6 +18,7 @@ from ioa_observe.sdk.tracing.runtime_events import (
     RuntimeEventAttribute,
     RuntimeEventName,
 )
+from ioa_observe.sdk.utils.const import OBSERVE_AGENT_SPAN_ID, OBSERVE_AGENT_TRACE_ID
 
 
 def observation(
@@ -101,6 +102,52 @@ def test_genai_agent_invocation_maps_to_topology_node_lifecycle():
     assert completed.attributes[RuntimeEventAttribute.AGENT_OUTPUT.value] == (
         '[{"role":"assistant","parts":[]}]'
     )
+
+
+@pytest.mark.parametrize("lifecycle", [SpanLifecycle.START, SpanLifecycle.END])
+@pytest.mark.parametrize(
+    "operation_attributes",
+    [
+        {
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.agent.name": "nested_agent",
+        },
+        {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "lookup",
+        },
+        {
+            "gen_ai.operation.name": "chat",
+            "gen_ai.provider.name": "openai",
+            "gen_ai.request.model": "gpt-5",
+        },
+    ],
+)
+def test_genai_events_retain_enclosing_agent_correlation(
+    lifecycle, operation_attributes
+):
+    references = {
+        OBSERVE_AGENT_SPAN_ID: "0000000000000123",
+        OBSERVE_AGENT_TRACE_ID: "00000000000000000000000000000456",
+    }
+    event = GenAIRuntimeEventMapper()(
+        observation(
+            lifecycle,
+            {
+                **operation_attributes,
+                **references,
+                "gen_ai.conversation.id": "conversation-123",
+            },
+        ),
+        1,
+    )[0]
+
+    attributes = event.to_otel_attributes()
+    assert attributes["trace.id"] == "00000000000000000000000000000001"
+    assert attributes["span.id"] == "0000000000000002"
+    for key, value in references.items():
+        assert event.attributes[key] == value
+        assert attributes[key] == value
 
 
 def test_genai_tool_execution_maps_standardized_input_and_output():

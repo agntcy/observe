@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.semconv_ai import SpanAttributes
 
 from ioa_observe.sdk.client import kv_store
@@ -37,6 +38,7 @@ from ioa_observe.sdk.tracing import (
 from ioa_observe.sdk.config import set_realtime_observability_enabled
 from ioa_observe.sdk.tracing.runtime_events import validate_runtime_event_attributes
 from ioa_observe.sdk.tracing.topology import clear_topology_listeners
+from ioa_observe.sdk.utils.const import OBSERVE_AGENT_SPAN_ID, OBSERVE_AGENT_TRACE_ID
 
 
 @pytest.fixture(autouse=True)
@@ -470,6 +472,71 @@ def test_agent_interprets_instrumented_llm_child_spans(runtime_events):
     assert all(event["operation.name"] == "chat" for event in llm_events)
 
 
+@pytest.mark.parametrize("operation", ["invoke_agent", "execute_tool", "embeddings"])
+@pytest.mark.parametrize("with_model", [False, True])
+def test_agent_operations_do_not_emit_model_less_llm_events(
+    runtime_events, operation, with_model
+):
+    @agent(name="multi_agent_graph")
+    def invoke_graph():
+        attributes = {"gen_ai.operation.name": operation}
+        if with_model:
+            attributes.update(
+                {
+                    SpanAttributes.LLM_REQUEST_TYPE: "chat",
+                    SpanAttributes.LLM_SYSTEM: "openai",
+                    SpanAttributes.LLM_REQUEST_MODEL: "gpt-4o",
+                }
+            )
+        with trace.get_tracer(__name__).start_as_current_span(
+            f"{operation} LangGraph",
+            attributes=attributes,
+        ) as span:
+            return format(span.get_span_context().span_id, "016x")
+
+    with session_start():
+        call_id = invoke_graph()
+
+    assert not [
+        event
+        for event in runtime_events
+        if event["event.name"] in {"llm.started", "llm.completed"}
+        and event.get("llm.call.id") == call_id
+    ]
+
+
+@pytest.mark.parametrize("initial_model", [None, "gpt-4o"])
+@pytest.mark.parametrize("response_model", [None, "gpt-4o-2024-08-06"])
+def test_llm_completion_uses_model_attributes_added_after_start(
+    runtime_events, initial_model, response_model
+):
+    @agent(name="llm_parent_agent")
+    def call_instrumented_llm():
+        attributes = {"gen_ai.operation.name": "chat"}
+        if initial_model is not None:
+            attributes[SpanAttributes.LLM_REQUEST_MODEL] = initial_model
+        with trace.get_tracer(__name__).start_as_current_span(
+            "openai.chat",
+            attributes=attributes,
+        ) as span:
+            span.set_attribute(SpanAttributes.LLM_REQUEST_MODEL, "gpt-4o")
+            if response_model is not None:
+                span.set_attribute(SpanAttributes.LLM_RESPONSE_MODEL, response_model)
+            return format(span.get_span_context().span_id, "016x")
+
+    with session_start():
+        call_id = call_instrumented_llm()
+
+    completed = [
+        event
+        for event in runtime_events
+        if event["event.name"] == "llm.completed"
+        and event.get("llm.call.id") == call_id
+    ]
+    assert len(completed) == 1
+    assert completed[0]["llm.name"] == (response_model or "gpt-4o")
+
+
 def test_agent_interprets_llm_attributes_added_after_span_start(runtime_events):
     @agent(name="llm_parent_agent")
     def call_instrumented_llm():
@@ -516,6 +583,125 @@ def test_agent_interprets_llm_attributes_added_after_span_start(runtime_events):
         completed[RuntimeEventAttribute.LLM_INPUT.value]
         == (started[RuntimeEventAttribute.LLM_INPUT.value])
     )
+
+
+def test_runtime_events_link_descendants_to_exact_enclosing_agent(runtime_events):
+    @tool(name="linked_tool")
+    def linked_tool():
+        pass
+
+    @agent(name="nested_agent")
+    def nested_agent():
+        linked_tool()
+
+    @agent(name="enclosing_agent")
+    def enclosing_agent():
+        with trace.get_tracer(__name__).start_as_current_span("framework.task"):
+            linked_tool()
+            with trace.get_tracer(__name__).start_as_current_span(
+                "openai.chat",
+                attributes={
+                    SpanAttributes.LLM_REQUEST_TYPE: "chat",
+                    SpanAttributes.LLM_REQUEST_MODEL: "gpt-5",
+                },
+            ):
+                pass
+            nested_agent()
+
+    with session_start():
+        enclosing_agent()
+        enclosing_agent()
+        linked_tool()
+
+    active_agents = []
+    enclosing_ids = []
+    descendant_events = []
+    for event in runtime_events:
+        name = event["event.name"]
+        if name == RuntimeEventName.TOPOLOGY_NODE_STARTED.value:
+            invocation = (event["trace.id"], event["span.id"])
+            if active_agents:
+                assert (
+                    event[OBSERVE_AGENT_TRACE_ID],
+                    event[OBSERVE_AGENT_SPAN_ID],
+                ) == active_agents[-1]
+            else:
+                assert OBSERVE_AGENT_SPAN_ID not in event
+                assert OBSERVE_AGENT_TRACE_ID not in event
+                enclosing_ids.append(invocation)
+            active_agents.append(invocation)
+        elif name == RuntimeEventName.TOPOLOGY_NODE_COMPLETED.value:
+            assert (event["trace.id"], event["span.id"]) == active_agents.pop()
+        elif name in {
+            RuntimeEventName.TOOL_STARTED.value,
+            RuntimeEventName.TOOL_COMPLETED.value,
+            RuntimeEventName.LLM_STARTED.value,
+            RuntimeEventName.LLM_COMPLETED.value,
+        }:
+            if active_agents:
+                assert (
+                    event[OBSERVE_AGENT_TRACE_ID],
+                    event[OBSERVE_AGENT_SPAN_ID],
+                ) == active_agents[-1]
+                assert event["span.id"] != active_agents[-1][1]
+                descendant_events.append(event)
+            else:
+                assert OBSERVE_AGENT_SPAN_ID not in event
+                assert OBSERVE_AGENT_TRACE_ID not in event
+
+    assert not active_agents
+    assert len(enclosing_ids) == 2
+    assert enclosing_ids[0] != enclosing_ids[1]
+    assert len(descendant_events) == 12
+
+
+def test_event_log_uses_source_span_instead_of_ambient_context(
+    monkeypatch, runtime_events
+):
+    from ioa_observe.sdk.tracing import runtime_event_emitter
+
+    records = []
+    monkeypatch.setattr(
+        runtime_event_emitter, "_ensure_runtime_event_logger", lambda: None
+    )
+    monkeypatch.setattr(
+        "opentelemetry._logs.get_logger",
+        lambda name: SimpleNamespace(emit=records.append),
+    )
+    provider = TracerProvider()
+    tracer = provider.get_tracer(__name__)
+    source = tracer.start_span(
+        "source",
+        attributes={
+            OBSERVE_AGENT_SPAN_ID: "0000000000000123",
+            OBSERVE_AGENT_TRACE_ID: "00000000000000000000000000000456",
+        },
+    )
+    source.end()
+    with tracer.start_as_current_span("unrelated"):
+        runtime_event_emitter.emit_runtime_event(
+            build_runtime_event_attributes(
+                RuntimeEventName.TOOL_STARTED,
+                session_id="session-123",
+                snapshot_version=1,
+                **{RuntimeEventAttribute.TOOL_NAME.value: "linked_tool"},
+            ),
+            span=source,
+        )
+
+    context = source.get_span_context()
+    assert len(records) == 1
+    record = records[0]
+    assert record.trace_id == context.trace_id
+    assert record.span_id == context.span_id
+    assert record.trace_flags == context.trace_flags
+    assert record.attributes[OBSERVE_AGENT_SPAN_ID] == "0000000000000123"
+    assert record.attributes[OBSERVE_AGENT_TRACE_ID] == (
+        "00000000000000000000000000000456"
+    )
+    assert runtime_events[0]["span.id"] == f"{context.span_id:016x}"
+    assert runtime_events[0]["trace.id"] == f"{context.trace_id:032x}"
+    provider.shutdown()
 
 
 def test_observe_init_can_disable_realtime_runtime_events(runtime_events):

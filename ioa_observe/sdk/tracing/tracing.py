@@ -56,6 +56,7 @@ from ioa_observe.sdk.tracing.topology import (
 )
 from ioa_observe.sdk.tracing.runtime_event_emitter import emit_runtime_event
 from ioa_observe.sdk.tracing.runtime_events import (
+    GEN_AI_MODEL_OPERATIONS,
     RuntimeEventAttribute,
     RuntimeEventName,
     build_runtime_event_attributes,
@@ -535,9 +536,8 @@ class TracerWrapper(object):
                     capture_content=self._should_capture_content(),
                 )
         if llm_runtime_context:
-            llm_name, llm_session_id, llm_agent_name, llm_operation = (
-                llm_runtime_context
-            )
+            _, llm_session_id, llm_agent_name, llm_operation = llm_runtime_context
+            llm_name = _llm_span_name(span, completed=True)
             capture_content = self._should_capture_content()
             llm_input = (
                 _llm_span_content(span, SpanAttributes.LLM_PROMPTS)
@@ -564,7 +564,8 @@ class TracerWrapper(object):
                         RuntimeEventAttribute.LLM_OUTPUT.value: llm_output,
                         "operation.name": llm_operation,
                     },
-                )
+                ),
+                span=span,
             )
         # start_time = span.attributes.get("ioa_start_time")
 
@@ -993,9 +994,10 @@ def set_external_prompt_tracing_context(
 
 def is_llm_span(span) -> bool:
     attributes = span.attributes
+    operation = attributes.get("gen_ai.operation.name")
+    if operation is not None:
+        return operation in GEN_AI_MODEL_OPERATIONS
     if attributes.get(SpanAttributes.LLM_REQUEST_TYPE) is not None:
-        return True
-    if attributes.get("gen_ai.operation.name") is not None:
         return True
     return attributes.get(SpanAttributes.LLM_SYSTEM) is not None and (
         attributes.get(SpanAttributes.LLM_REQUEST_MODEL) is not None
@@ -1003,10 +1005,17 @@ def is_llm_span(span) -> bool:
     )
 
 
-def _llm_span_name(span) -> str:
+def _llm_span_name(span, *, completed: bool = False) -> str:
+    request_model = span.attributes.get(SpanAttributes.LLM_REQUEST_MODEL)
+    response_model = span.attributes.get(SpanAttributes.LLM_RESPONSE_MODEL)
+    model = (
+        response_model or request_model
+        if completed
+        else request_model or response_model
+    )
     return str(
-        span.attributes.get(SpanAttributes.LLM_REQUEST_MODEL)
-        or span.attributes.get(SpanAttributes.LLM_RESPONSE_MODEL)
+        model
+        or span.attributes.get("gen_ai.provider.name")
         or span.attributes.get(SpanAttributes.LLM_SYSTEM)
         or span.name
     )
@@ -1061,7 +1070,8 @@ def _emit_llm_started_runtime_event(
                 RuntimeEventAttribute.LLM_INPUT.value: llm_input,
                 "operation.name": operation,
             },
-        )
+        ),
+        span=span,
     )
 
 

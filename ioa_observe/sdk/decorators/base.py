@@ -503,7 +503,8 @@ def _setup_span(
                         RuntimeEventAttribute.TOOL_NAME.value: entity_name,
                         RuntimeEventAttribute.TOOL_INPUT.value: entity_input,
                     },
-                )
+                ),
+                span=span,
             )
 
         if tlp_span_kind in [
@@ -770,7 +771,8 @@ def _cleanup_span(span, ctx_token):
                 session_id=session_id,
                 snapshot_version=next_session_event_version(session_id),
                 **tool_attributes,
-            )
+            ),
+            span=span,
         )
 
     span.end()

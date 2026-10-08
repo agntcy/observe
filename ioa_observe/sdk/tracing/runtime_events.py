@@ -8,6 +8,11 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Mapping
 
+from ioa_observe.sdk.utils.const import OBSERVE_AGENT_SPAN_ID, OBSERVE_AGENT_TRACE_ID
+
+
+GEN_AI_MODEL_OPERATIONS = frozenset({"chat", "generate_content", "text_completion"})
+
 
 class RuntimeEventName(str, Enum):
     TOPOLOGY_SESSION_STARTED = "topology.session.started"
@@ -139,6 +144,9 @@ class RuntimeEvent:
             RuntimeEventAttribute.EVENT_TIME.value: self.event_time.isoformat(),
             RuntimeEventAttribute.SESSION_ID.value: self.session_id,
             RuntimeEventAttribute.SNAPSHOT_VERSION.value: self.snapshot_version,
+            **span_correlation_attributes(
+                self.attributes, trace_id=self.trace_id, span_id=self.span_id
+            ),
         }
 
         for key, value in self.attributes.items():
@@ -148,6 +156,24 @@ class RuntimeEvent:
 
         validate_runtime_event_attributes(event_name, attributes)
         return attributes
+
+
+def span_correlation_attributes(
+    attributes: Mapping[str, Any],
+    *,
+    trace_id: int | None = None,
+    span_id: int | None = None,
+) -> dict[str, str]:
+    correlation = {
+        key: value
+        for key in (OBSERVE_AGENT_SPAN_ID, OBSERVE_AGENT_TRACE_ID)
+        if isinstance(value := attributes.get(key), str) and value
+    }
+    if trace_id:
+        correlation["trace.id"] = f"{trace_id:032x}"
+    if span_id:
+        correlation["span.id"] = f"{span_id:016x}"
+    return correlation
 
 
 def build_runtime_event_attributes(
