@@ -3,6 +3,7 @@ import logging
 from a2a.client import create_client
 from a2a.helpers import get_stream_response_text, new_text_message
 from a2a.types import Role, SendMessageRequest
+from a2a_examples.metadata_debug import RequestMetadataPrinter
 
 from ioa_observe.sdk import Observe
 from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
@@ -18,7 +19,7 @@ async def main() -> None:
 
     base_url = "http://localhost:9999"
     logger.info("Connecting to %s", base_url)
-    client = await create_client(base_url)
+    client = await create_client(base_url, interceptors=[RequestMetadataPrinter()])
     session_start()
 
     request = SendMessageRequest(

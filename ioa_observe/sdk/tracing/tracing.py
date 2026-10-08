@@ -1076,6 +1076,18 @@ def _emit_llm_started_runtime_event(
 
 
 def _llm_span_content(span, prefix: str) -> str | None:
+    message_attribute = {
+        SpanAttributes.LLM_PROMPTS: "gen_ai.input.messages",
+        SpanAttributes.LLM_COMPLETIONS: "gen_ai.output.messages",
+    }[prefix]
+    content = span.attributes.get(message_attribute)
+    if content is not None:
+        return (
+            content
+            if isinstance(content, str)
+            else json.dumps(content, separators=(",", ":"), default=str)
+        )
+
     pattern = re.compile(rf"^{re.escape(prefix)}\.(\d+)(?:\.(.+))?$")
     messages: dict[int, dict[str, object]] = {}
     for key, value in span.attributes.items():

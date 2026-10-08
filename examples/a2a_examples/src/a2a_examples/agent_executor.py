@@ -4,6 +4,7 @@ from a2a.server.agent_execution.context import RequestContext
 from a2a.server.events.event_queue import EventQueue
 from a2a.helpers import new_text_message
 from pydantic import BaseModel
+from a2a_examples.metadata_debug import print_incoming_metadata
 
 from ioa_observe.sdk.decorators import agent
 
@@ -23,6 +24,7 @@ class RandomNumberAgentExecutor(AgentExecutor):
         self.agent = RandomNumberAgent()
 
     async def execute(self, context: RequestContext, event_queue: EventQueue):
+        print_incoming_metadata(context)
         result = await self.agent.invoke()
         await event_queue.enqueue_event(new_text_message(result))
 

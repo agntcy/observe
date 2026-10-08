@@ -13,6 +13,7 @@ from starlette.applications import Starlette
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.helpers import new_text_message
+from a2a_examples.metadata_debug import print_incoming_metadata
 from ioa_observe.sdk import Observe
 from ioa_observe.sdk.decorators import agent
 from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
@@ -41,6 +42,7 @@ class HelloWorldAgentExecutor(AgentExecutor):
         context: RequestContext,
         event_queue: EventQueue,
     ) -> None:
+        print_incoming_metadata(context)
         result = await self.agent.invoke()
         await event_queue.enqueue_event(new_text_message(result))
 

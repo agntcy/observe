@@ -9,6 +9,7 @@ from slima2a.client_transport import (
 import asyncio
 import httpx
 from a2a.types import Role, SendMessageRequest
+from a2a_examples.metadata_debug import RequestMetadataPrinter
 
 from ioa_observe.sdk import Observe
 from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
@@ -40,7 +41,7 @@ async def main():
     client_factory = MultiAgentClientFactory(client_config)
 
     ac = minimal_agent_card("agntcy/demo/server", ["slimrpc"])
-    client = client_factory.create(ac)
+    client = client_factory.create(ac, interceptors=[RequestMetadataPrinter()])
 
     request = SendMessageRequest(
         message=new_text_message(

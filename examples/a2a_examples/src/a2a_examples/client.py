@@ -8,6 +8,7 @@ from a2a.types import (
     Role,
     SendMessageRequest,
 )
+from a2a_examples.metadata_debug import RequestMetadataPrinter
 
 from ioa_observe.sdk import Observe
 from ioa_observe.sdk.decorators import graph
@@ -34,7 +35,7 @@ def get_agents() -> list:
 
 
 async def main() -> None:
-    client = await create_client(BASE_URL)
+    client = await create_client(BASE_URL, interceptors=[RequestMetadataPrinter()])
     session_start()
     get_agents()
 
