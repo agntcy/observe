@@ -537,6 +537,98 @@ def test_llm_completion_uses_model_attributes_added_after_start(
     assert completed[0]["llm.name"] == (response_model or "gpt-4o")
 
 
+@pytest.mark.parametrize("message_format", ["indexed", "messages"])
+@pytest.mark.parametrize("late_input", [False, True])
+@pytest.mark.parametrize("capture_content", [False, True])
+def test_llm_events_capture_messages(
+    runtime_events, monkeypatch, message_format, late_input, capture_content
+):
+    from ioa_observe.sdk.tracing.tracing import TracerWrapper
+
+    monkeypatch.setattr(TracerWrapper, "enable_content_tracing", capture_content)
+    prompt = '[{"role":"user","content":"Hello"}]'
+    completion = '[{"role":"assistant","content":"Hi"}]'
+
+    @agent(name="llm_parent_agent")
+    def call_instrumented_llm():
+        attributes = {
+            "gen_ai.operation.name": "chat",
+            SpanAttributes.LLM_REQUEST_MODEL: "gpt-4o",
+        }
+        input_attributes = (
+            {"gen_ai.input.messages": prompt}
+            if message_format == "messages"
+            else {
+                "gen_ai.prompt.0.role": "user",
+                "gen_ai.prompt.0.content": "Hello",
+            }
+        )
+        if not late_input:
+            attributes.update(input_attributes)
+        with trace.get_tracer(__name__).start_as_current_span(
+            "openai.chat", attributes=attributes
+        ) as span:
+            started = next(
+                event
+                for event in runtime_events
+                if event.get("llm.call.id")
+                == format(span.get_span_context().span_id, "016x")
+            )
+            assert started["event.name"] == "llm.started"
+            assert "llm.output" not in started
+            if late_input:
+                span.set_attributes(input_attributes)
+            if message_format == "messages":
+                span.set_attribute("gen_ai.output.messages", completion)
+            else:
+                span.set_attribute("gen_ai.completion.0.role", "assistant")
+                span.set_attribute("gen_ai.completion.0.content", "Hi")
+            return format(span.get_span_context().span_id, "016x")
+
+    with session_start():
+        call_id = call_instrumented_llm()
+
+    started, completed = [
+        event for event in runtime_events if event.get("llm.call.id") == call_id
+    ]
+    if capture_content:
+        assert json.loads(completed["llm.output"]) == json.loads(completion)
+        assert json.loads(completed["llm.input"]) == json.loads(prompt)
+        if not late_input:
+            assert json.loads(started["llm.input"]) == json.loads(prompt)
+    else:
+        assert "llm.input" not in completed
+        assert "llm.output" not in completed
+    if late_input or not capture_content:
+        assert "llm.input" not in started
+
+
+def test_llm_events_prefer_standard_messages(runtime_events):
+    prompt = '[{"role":"user","parts":[{"type":"text","content":"Hello"}]}]'
+    completion = '[{"role":"assistant","parts":[{"type":"text","content":"Hi"}]}]'
+
+    with session_start():
+        with trace.get_tracer(__name__).start_as_current_span(
+            "openai.chat",
+            attributes={
+                "gen_ai.operation.name": "chat",
+                SpanAttributes.LLM_REQUEST_MODEL: "gpt-4o",
+                "gen_ai.input.messages": prompt,
+                "gen_ai.prompt.0.content": "legacy prompt",
+            },
+        ) as span:
+            span.set_attribute("gen_ai.output.messages", completion)
+            span.set_attribute("gen_ai.completion.0.content", "legacy completion")
+            call_id = format(span.get_span_context().span_id, "016x")
+
+    started, completed = [
+        event for event in runtime_events if event.get("llm.call.id") == call_id
+    ]
+    assert started["llm.input"] == prompt
+    assert completed["llm.input"] == prompt
+    assert completed["llm.output"] == completion
+
+
 def test_agent_interprets_llm_attributes_added_after_span_start(runtime_events):
     @agent(name="llm_parent_agent")
     def call_instrumented_llm():
