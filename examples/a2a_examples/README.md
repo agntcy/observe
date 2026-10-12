@@ -52,9 +52,13 @@ SLIM transport instrumentation can inject metadata again after the client
 interceptor runs; the server print shows the received value.
 
 Compare the outgoing and incoming `traceparent` values, then compare their IDs
-with the `trace.id` and `span.id` attributes on A2A runtime events. Equality with
-the send event is not guaranteed on every instrumentation path, particularly
-when stored incoming trace context is reused.
+with the `trace.id` and `span.id` attributes on A2A runtime events. Outbound
+BaseClient, legacy, and SLIM instrumentation now injects its active send span and
+emits the send event in that span, even when stored incoming context is present
+or the send span is unsampled. Session identity and existing metadata are retained.
+With multiple instrumented layers, compare the final wire metadata to the final
+transport send event, not an earlier client-layer diagnostic or event. External
+proxy inspection and end-to-end Analytics correlation remain unverified.
 
 These examples print full request metadata, including baggage. Use only demo
 data and avoid exposing sensitive metadata in shared logs.

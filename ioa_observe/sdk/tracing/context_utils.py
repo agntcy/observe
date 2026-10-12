@@ -1,4 +1,5 @@
 import threading
+from urllib.parse import unquote_plus
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry import baggage
@@ -25,6 +26,42 @@ After receiving a message, extract headers and call set_context_from_headers(hea
 """
 
 _kv_lock = threading.RLock()
+
+
+def _inject_outbound_context(carrier, *, current_context=None):
+    """Inject the active span, not the stored incoming traceparent.
+
+    Keep existing baggage entries when adding baggage from the local context.
+    Valid non-recording (unsampled) spans are propagated too.
+    """
+    TraceContextTextMapPropagator().inject(carrier=carrier, context=current_context)
+    outgoing = {}
+    W3CBaggagePropagator().inject(carrier=outgoing, context=current_context)
+    if outgoing.get("baggage"):
+        local_keys = baggage.get_all(W3CBaggagePropagator().extract(carrier=outgoing))
+        existing = carrier.get("baggage")
+        # Keep wire members intact, including W3C baggage properties and their
+        # encoding, rather than decoding/re-encoding unrelated entries.
+        members = (
+            [
+                member
+                for member in existing.split(",")
+                if unquote_plus(member.split("=", 1)[0].strip()) not in local_keys
+            ]
+            if isinstance(existing, str) and existing
+            else []
+        )
+        carrier["baggage"] = ",".join([*members, outgoing["baggage"]])
+    return carrier
+
+
+def _get_outbound_session_id():
+    """Resolve session identity independently of a newly created outbound span."""
+    session_id = get_value("session.id")
+    if session_id:
+        return session_id
+    traceparent = get_current_traceparent()
+    return kv_store.get(f"execution.{traceparent}") if traceparent else None
 
 
 def _get_agent_linking_info(session_id):
