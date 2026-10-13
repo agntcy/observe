@@ -14,8 +14,12 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 
 from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
-from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
-from ioa_observe.sdk.tracing.context_utils import _get_agent_linking_info
+from ioa_observe.sdk.tracing import set_session_id
+from ioa_observe.sdk.tracing.context_utils import (
+    _get_agent_linking_info,
+    _get_outbound_session_id,
+    _inject_outbound_context,
+)
 from ioa_observe.sdk.tracing.topology import emit_topology_event, upsert_topology_edge
 
 _instruments = ("a2a-sdk >= 0.3.0",)
@@ -46,6 +50,7 @@ def _safe_get_metadata(container):
 
 
 def _set_metadata(container, metadata):
+    metadata = dict(metadata)
     candidates = [
         getattr(container, "params", None),
         getattr(container, "message", None),
@@ -146,6 +151,8 @@ def _emit_a2a_send_topology_event(request, client_instance, operation: str) -> N
         sequence=sequence,
         fork_id=fork_id,
         protocol="a2a",
+        source_agent_span_id=observe_meta.get("last_agent_span_id"),
+        source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
     )
 
 
@@ -187,6 +194,8 @@ def _emit_a2a_receive_topology_event(params, handler_instance, operation: str) -
         sequence=sequence,
         fork_id=fork_id,
         protocol="a2a",
+        source_agent_span_id=observe_meta.get("last_agent_span_id"),
+        source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
     )
 
 
@@ -195,14 +204,11 @@ def _inject_observe_metadata(request, span_name: str):
     Helper function to inject observability metadata into request.
     This is shared between legacy and new client instrumentation.
     """
-    traceparent = get_current_traceparent()
-    session_id = None
+    traceparent = _inject_outbound_context({}).get("traceparent")
+    session_id = _get_outbound_session_id()
     if traceparent:
-        session_id = kv_store.get(f"execution.{traceparent}")
-        if not session_id:
-            session_id = get_value("session.id")
-            if session_id:
-                kv_store.set(f"execution.{traceparent}", session_id)
+        if session_id:
+            kv_store.set(f"execution.{traceparent}", session_id)
 
     # Get agent linking info for cross-process propagation (agent handoff event)
     agent_linking_info = _get_agent_linking_info(session_id) if session_id else {}
@@ -212,8 +218,7 @@ def _inject_observe_metadata(request, span_name: str):
     observe_meta = dict(metadata.get("observe", {}))
 
     # Inject W3C trace context + baggage into observe_meta
-    TraceContextTextMapPropagator().inject(carrier=observe_meta)
-    W3CBaggagePropagator().inject(carrier=observe_meta)
+    _inject_outbound_context(observe_meta)
 
     if traceparent:
         observe_meta["traceparent"] = traceparent
@@ -406,18 +411,15 @@ class A2AInstrumentor(BaseInstrumentor):
         async def instrumented_send_message(self, request, *args, **kwargs):
             # Put context into A2A message metadata instead of HTTP headers
             with _global_tracer.start_as_current_span("a2a.send_message"):
-                traceparent = get_current_traceparent()
-                session_id = None
+                traceparent = _inject_outbound_context({}).get("traceparent")
+                session_id = _get_outbound_session_id()
                 last_agent_span_id = None
                 last_agent_trace_id = None
                 last_agent_name = None
                 agent_sequence = None
                 if traceparent:
-                    session_id = kv_store.get(f"execution.{traceparent}")
-                    if not session_id:
-                        session_id = get_value("session.id")
-                        if session_id:
-                            kv_store.set(f"execution.{traceparent}", session_id)
+                    if session_id:
+                        kv_store.set(f"execution.{traceparent}", session_id)
                     # Get agent linking info for cross-process propagation
                     if session_id:
                         with _kv_lock:
@@ -445,8 +447,7 @@ class A2AInstrumentor(BaseInstrumentor):
                 observe_meta = dict(metadata.get("observe", {}))
 
                 # Inject W3C trace context + baggage into observe_meta
-                TraceContextTextMapPropagator().inject(carrier=observe_meta)
-                W3CBaggagePropagator().inject(carrier=observe_meta)
+                _inject_outbound_context(observe_meta)
 
                 if traceparent:
                     observe_meta["traceparent"] = traceparent
@@ -493,8 +494,8 @@ class A2AInstrumentor(BaseInstrumentor):
                         }
                     )
 
+                _emit_a2a_send_topology_event(request, self, "send_message")
             # Call through without transport-specific kwargs
-            _emit_a2a_send_topology_event(request, self, "send_message")
             return await original_send_message(self, request, *args, **kwargs)
 
         legacy_client.send_message = instrumented_send_message
@@ -510,18 +511,15 @@ class A2AInstrumentor(BaseInstrumentor):
             async def instrumented_broadcast_message(self, request, *args, **kwargs):
                 # Put context into A2A message metadata instead of HTTP headers
                 with _global_tracer.start_as_current_span("a2a.broadcast_message"):
-                    traceparent = get_current_traceparent()
-                    session_id = None
+                    traceparent = _inject_outbound_context({}).get("traceparent")
+                    session_id = _get_outbound_session_id()
                     last_agent_span_id = None
                     last_agent_trace_id = None
                     last_agent_name = None
                     agent_sequence = None
                     if traceparent:
-                        session_id = kv_store.get(f"execution.{traceparent}")
-                        if not session_id:
-                            session_id = get_value("session.id")
-                            if session_id:
-                                kv_store.set(f"execution.{traceparent}", session_id)
+                        if session_id:
+                            kv_store.set(f"execution.{traceparent}", session_id)
                         if session_id:
                             with _kv_lock:
                                 last_agent_span_id = (
@@ -576,8 +574,7 @@ class A2AInstrumentor(BaseInstrumentor):
                             ]
 
                     # Inject W3C trace context + baggage into observe_meta
-                    TraceContextTextMapPropagator().inject(carrier=observe_meta)
-                    W3CBaggagePropagator().inject(carrier=observe_meta)
+                    _inject_outbound_context(observe_meta)
 
                     if traceparent:
                         observe_meta["traceparent"] = traceparent
@@ -600,8 +597,8 @@ class A2AInstrumentor(BaseInstrumentor):
                             }
                         )
 
+                    _emit_a2a_send_topology_event(request, self, "broadcast_message")
                 # Call through without transport-specific kwargs
-                _emit_a2a_send_topology_event(request, self, "broadcast_message")
                 return await original_broadcast_message(self, request, *args, **kwargs)
 
             legacy_client.broadcast_message = instrumented_broadcast_message
@@ -845,18 +842,15 @@ class A2AInstrumentor(BaseInstrumentor):
         ):
             # Put context into A2A message metadata instead of HTTP headers
             with _global_tracer.start_as_current_span("slima2a.send_message"):
-                traceparent = get_current_traceparent()
-                session_id = None
+                traceparent = _inject_outbound_context({}).get("traceparent")
+                session_id = _get_outbound_session_id()
                 last_agent_span_id = None
                 last_agent_trace_id = None
                 last_agent_name = None
                 agent_sequence = None
                 if traceparent:
-                    session_id = kv_store.get(f"execution.{traceparent}")
-                    if not session_id:
-                        session_id = get_value("session.id")
-                        if session_id:
-                            kv_store.set(f"execution.{traceparent}", session_id)
+                    if session_id:
+                        kv_store.set(f"execution.{traceparent}", session_id)
                     # Get agent linking info for cross-process propagation
                     if session_id:
                         with _kv_lock:
@@ -904,8 +898,7 @@ class A2AInstrumentor(BaseInstrumentor):
                 metadata["observe"] = observe_meta
 
                 # Inject W3C trace context + baggage into observe_meta
-                TraceContextTextMapPropagator().inject(carrier=observe_meta)
-                W3CBaggagePropagator().inject(carrier=observe_meta)
+                _inject_outbound_context(observe_meta)
 
                 if traceparent:
                     observe_meta["traceparent"] = traceparent
@@ -917,8 +910,8 @@ class A2AInstrumentor(BaseInstrumentor):
 
                 request = _set_metadata(request, metadata)
 
+                _emit_a2a_send_topology_event(request, self, "slima2a.send_message")
             # Call through without transport-specific kwargs
-            _emit_a2a_send_topology_event(request, self, "slima2a.send_message")
             return await original_srpc_transport_send_message(
                 self, request, *args, **kwargs
             )
@@ -939,18 +932,15 @@ class A2AInstrumentor(BaseInstrumentor):
         ):
             # Put context into A2A message metadata instead of HTTP headers
             with _global_tracer.start_as_current_span("slima2a.send_message_streaming"):
-                traceparent = get_current_traceparent()
-                session_id = None
+                traceparent = _inject_outbound_context({}).get("traceparent")
+                session_id = _get_outbound_session_id()
                 last_agent_span_id = None
                 last_agent_trace_id = None
                 last_agent_name = None
                 agent_sequence = None
                 if traceparent:
-                    session_id = kv_store.get(f"execution.{traceparent}")
-                    if not session_id:
-                        session_id = get_value("session.id")
-                        if session_id:
-                            kv_store.set(f"execution.{traceparent}", session_id)
+                    if session_id:
+                        kv_store.set(f"execution.{traceparent}", session_id)
                     # Get agent linking info for cross-process propagation
                     if session_id:
                         with _kv_lock:
@@ -997,8 +987,7 @@ class A2AInstrumentor(BaseInstrumentor):
                 metadata["observe"] = observe_meta
 
                 # Inject W3C trace context + baggage into observe_meta
-                TraceContextTextMapPropagator().inject(carrier=observe_meta)
-                W3CBaggagePropagator().inject(carrier=observe_meta)
+                _inject_outbound_context(observe_meta)
 
                 if traceparent:
                     observe_meta["traceparent"] = traceparent
@@ -1010,9 +999,9 @@ class A2AInstrumentor(BaseInstrumentor):
 
                 request = _set_metadata(request, metadata)
 
-            _emit_a2a_send_topology_event(
-                request, self, "slima2a.send_message_streaming"
-            )
+                _emit_a2a_send_topology_event(
+                    request, self, "slima2a.send_message_streaming"
+                )
             async for response in original_srpc_transport_send_message_streaming(
                 self, request, *args, **kwargs
             ):

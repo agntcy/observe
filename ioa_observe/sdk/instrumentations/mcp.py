@@ -12,10 +12,10 @@ import threading
 from http import HTTPStatus
 
 from opentelemetry.context import get_value
-from opentelemetry import baggage, context, propagate
+from opentelemetry import context, propagate
 from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
 from opentelemetry.instrumentation.utils import unwrap
-from opentelemetry.trace import get_tracer, Tracer
+from opentelemetry.trace import get_current_span, get_tracer, Tracer
 from wrapt import ObjectProxy, register_post_import_hook, wrap_function_wrapper
 from opentelemetry.trace.status import Status, StatusCode
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
@@ -32,6 +32,11 @@ from ..utils.const import (
     OBSERVE_ENTITY_INPUT,
 )
 from ..tracing.runtime_events import RuntimeEventName
+from ..tracing.context_utils import (
+    _get_agent_linking_info,
+    _get_outbound_session_id,
+    _inject_outbound_context,
+)
 from ..tracing.topology import emit_topology_event, upsert_topology_edge
 from ..version import __version__
 
@@ -45,6 +50,45 @@ def _safe_get_current_actor_name() -> str:
 
 def _safe_int(value):
     return int(value) if str(value).isdigit() else None
+
+
+def _request_field(request, name):
+    return (
+        request.get(name) if isinstance(request, dict) else getattr(request, name, None)
+    )
+
+
+def _request_meta(params):
+    meta = (
+        params.get("_meta")
+        if isinstance(params, dict)
+        else getattr(params, "meta", None)
+    )
+    if hasattr(meta, "model_dump"):
+        return meta.model_dump(by_alias=True, exclude_none=True)
+    return dict(meta) if isinstance(meta, dict) else {}
+
+
+def _set_request_meta(request, params, meta):
+    from mcp.types import JSONRPCRequest, RequestParams
+
+    if params is None:
+        params = (
+            RequestParams()
+            if hasattr(type(request), "model_fields")
+            and not isinstance(request, JSONRPCRequest)
+            else {}
+        )
+        if isinstance(request, dict):
+            request["params"] = params
+        else:
+            request.params = params
+    if isinstance(params, dict):
+        params["_meta"] = meta
+    elif isinstance(params, RequestParams):
+        params.meta = RequestParams.Meta.model_validate(meta)
+    else:
+        params.meta = meta
 
 
 def _safe_stringify_mcp_peer(candidate) -> str | None:
@@ -140,6 +184,8 @@ def _emit_mcp_send_topology_event(
         sequence=sequence,
         fork_id=fork_id,
         protocol="mcp",
+        source_agent_span_id=observe_meta.get("last_agent_span_id"),
+        source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
     )
 
 
@@ -184,6 +230,8 @@ def _emit_mcp_receive_topology_event(
         sequence=sequence,
         fork_id=fork_id,
         protocol="mcp",
+        source_agent_span_id=observe_meta.get("last_agent_span_id"),
+        source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
     )
 
 
@@ -277,9 +325,9 @@ class McpInstrumentor(BaseInstrumentor):
 
     def _uninstrument(self, **kwargs):
         if find_spec("mcp.shared.session"):
-            unwrap("mcp.shared.session", "BaseSession.send_request")
+            unwrap("mcp.shared.session.BaseSession", "send_request")
         elif find_spec("mcp.client.session"):
-            unwrap("mcp.client.session", "ClientSession.send_request")
+            unwrap("mcp.client.session.ClientSession", "send_request")
 
         unwrap("mcp.client.stdio", "stdio_client")
         unwrap("mcp.server.stdio", "stdio_server")
@@ -387,18 +435,16 @@ class McpInstrumentor(BaseInstrumentor):
     def patch_mcp_client(self, tracer: Tracer):
         async def traced_method(wrapped, instance, args, kwargs):
             from ioa_observe.sdk.client import kv_store
-            from ioa_observe.sdk.tracing import get_current_traceparent
-            from ioa_observe.sdk.tracing.context_utils import _get_agent_linking_info
 
             method = None
             params = None
             request_id = None
-            request = args[0] if args else None
+            request = args[0] if args else kwargs.get("request")
             request_root = getattr(request, "root", request)
             if request_root is not None:
-                method = getattr(request_root, "method", None)
-                params = getattr(request_root, "params", None)
-                request_id = getattr(request_root, "id", None)
+                method = _request_field(request_root, "method")
+                params = _request_field(request_root, "params")
+                request_id = _request_field(request_root, "id")
 
             with tracer.start_as_current_span(f"{method}.mcp") as span:
                 try:
@@ -406,29 +452,15 @@ class McpInstrumentor(BaseInstrumentor):
                 except Exception:
                     pass
 
-                traceparent = get_current_traceparent()
-                session_id = None
-                if traceparent:
+                observe_meta = _request_meta(params)
+                _inject_outbound_context(observe_meta)
+                traceparent = observe_meta.get("traceparent")
+                session_id = _get_outbound_session_id()
+                if traceparent and session_id:
                     with _kv_lock:
-                        session_id = kv_store.get(f"execution.{traceparent}")
-                    if not session_id:
-                        session_id = get_value("session.id")
-                        if session_id:
-                            with _kv_lock:
-                                kv_store.set(f"execution.{traceparent}", session_id)
-
-                # Build observe metadata dict (matching A2A pattern)
-                observe_meta = {}
-
-                # Inject W3C trace context + baggage
-                TraceContextTextMapPropagator().inject(carrier=observe_meta)
-                W3CBaggagePropagator().inject(carrier=observe_meta)
-
-                if traceparent:
-                    observe_meta["traceparent"] = traceparent
+                        kv_store.set(f"execution.{traceparent}", session_id)
                 if session_id:
                     observe_meta["session.id"] = session_id
-                    baggage.set_baggage(f"execution.{traceparent}", session_id)
 
                 # Add agent linking info for cross-process propagation
                 if session_id:
@@ -472,22 +504,8 @@ class McpInstrumentor(BaseInstrumentor):
                     observe_meta["target_agent"] = target_agent
 
                 # Inject observe metadata into request params._meta
-                if observe_meta and params and len(args) > 0:
-                    try:
-                        # Get existing meta or create new one
-                        existing_meta = getattr(params, "meta", None)
-                        meta_kwargs = {}
-                        if existing_meta and hasattr(existing_meta, "model_dump"):
-                            meta_kwargs = existing_meta.model_dump(exclude_none=True)
-                        elif isinstance(existing_meta, dict):
-                            meta_kwargs = dict(existing_meta)
-                        meta_kwargs.update(observe_meta)
-                        params.meta = meta_kwargs
-                    except Exception:
-                        try:
-                            params.meta = observe_meta
-                        except Exception:
-                            pass
+                if observe_meta and request_root is not None:
+                    _set_request_meta(request_root, params, observe_meta)
 
                 _emit_mcp_send_topology_event(
                     observe_meta,
@@ -746,6 +764,9 @@ class InstrumentedStreamWriter(ObjectProxy):  # type: ignore
         else:
             request = getattr(item, "root", item)
 
+        # The request span is active here. The writer's diagnostic child span
+        # must not replace the context used by the send event and wire request.
+        outbound_context = context.get_current()
         try:
             with self._tracer.start_as_current_span("ResponseStreamWriter") as span:
                 if hasattr(request, "result"):
@@ -772,9 +793,21 @@ class InstrumentedStreamWriter(ObjectProxy):  # type: ignore
                     return await self.__wrapped__.send(item)
                 if not request.params:
                     request.params = {}
-                meta = request.params.setdefault("_meta", {})
-
-                propagate.get_global_textmap().inject(meta)
+                meta = _request_meta(request.params)
+                injection_context = outbound_context
+                if not get_current_span(
+                    outbound_context
+                ).get_span_context().is_valid and not meta.get("traceparent"):
+                    # Standalone stream writes still get a trace context when
+                    # there is no request span or already-propagated context.
+                    injection_context = context.get_current()
+                extra = {}
+                propagate.get_global_textmap().inject(extra, context=injection_context)
+                for key, value in extra.items():
+                    if key not in ("traceparent", "tracestate", "baggage"):
+                        meta[key] = value
+                _inject_outbound_context(meta, current_context=injection_context)
+                request.params["_meta"] = meta
                 return await self.__wrapped__.send(item)
         except Exception as e:
             logging.warning(f"mcp instrumentation ResponseStreamWriter exception: {e}")

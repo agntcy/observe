@@ -50,6 +50,8 @@ class RuntimeEventAttribute(str, Enum):
     LLM_OUTPUT = "llm.output"
     LLM_CALL_ID = "llm.call.id"
     SOURCE_AGENT = "source.agent"
+    SOURCE_AGENT_SPAN_ID = "source.agent.span.id"
+    SOURCE_AGENT_TRACE_ID = "source.agent.trace.id"
     TARGET_AGENT = "target.agent"
     MESSAGE_ID = "message.id"
     FORK_ID = "fork.id"
