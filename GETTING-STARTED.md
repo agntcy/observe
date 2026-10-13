@@ -135,6 +135,30 @@ while True:
 `session_id`, `topology_version`, `status`, `started_at`, `last_event_at`,
 `nodes[]`, `edges[]`, and `tools[]` — exactly what a live dashboard can render.
 
+#### Correlating MCP/A2A events with source agents
+
+MCP and A2A `message.sent` / `message.received` runtime events preserve
+`last_agent_trace_id` and `last_agent_span_id` from the propagated Observe metadata
+as `source.agent.trace.id` and `source.agent.span.id` in `LogAttributes`.
+These optional attributes identify the source agent span, not the transport span
+encoded in `traceparent`. Missing or empty source IDs are omitted.
+
+The log's top-level `TraceId` / `SpanId` (and `trace.id` / `span.id` attributes)
+continue to identify the local span associated with the event. To find the source
+agent's runtime events, match the source attributes against other rows'
+`TraceId` / `SpanId`:
+
+```sql
+SELECT Timestamp, EventName, LogAttributes
+FROM otel_logs
+WHERE TraceId = '<source.agent.trace.id>'
+  AND SpanId = '<source.agent.span.id>'
+  AND LogAttributes['session.id'] = '<session_id>'
+ORDER BY Timestamp ASC;
+```
+
+Source events must have been emitted and ingested for this lookup to return rows.
+
 #### In-process (no backend) consumption
 
 For local development or a quick demo, you can feed runtime events straight into

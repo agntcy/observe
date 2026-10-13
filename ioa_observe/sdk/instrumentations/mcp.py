@@ -184,6 +184,8 @@ def _emit_mcp_send_topology_event(
         sequence=sequence,
         fork_id=fork_id,
         protocol="mcp",
+        source_agent_span_id=observe_meta.get("last_agent_span_id"),
+        source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
     )
 
 
@@ -228,6 +230,8 @@ def _emit_mcp_receive_topology_event(
         sequence=sequence,
         fork_id=fork_id,
         protocol="mcp",
+        source_agent_span_id=observe_meta.get("last_agent_span_id"),
+        source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
     )
 
 

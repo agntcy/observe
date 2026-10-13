@@ -151,6 +151,8 @@ def _emit_a2a_send_topology_event(request, client_instance, operation: str) -> N
         sequence=sequence,
         fork_id=fork_id,
         protocol="a2a",
+        source_agent_span_id=observe_meta.get("last_agent_span_id"),
+        source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
     )
 
 
@@ -192,6 +194,8 @@ def _emit_a2a_receive_topology_event(params, handler_instance, operation: str) -
         sequence=sequence,
         fork_id=fork_id,
         protocol="a2a",
+        source_agent_span_id=observe_meta.get("last_agent_span_id"),
+        source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
     )
 
 

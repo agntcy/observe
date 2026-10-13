@@ -344,6 +344,13 @@ def _runtime_attributes_for_event(
         payload[RuntimeEventAttribute.AGENT_NAME.value] = attributes["agent_name"]
     if "source" in attributes:
         payload[RuntimeEventAttribute.SOURCE_AGENT.value] = attributes["source"]
+    for key, attribute in (
+        ("source_agent_span_id", RuntimeEventAttribute.SOURCE_AGENT_SPAN_ID),
+        ("source_agent_trace_id", RuntimeEventAttribute.SOURCE_AGENT_TRACE_ID),
+    ):
+        value = attributes.get(key)
+        if isinstance(value, str) and value:
+            payload[attribute.value] = value
     if "target" in attributes:
         payload[RuntimeEventAttribute.TARGET_AGENT.value] = attributes["target"]
     if "message_id" in attributes:

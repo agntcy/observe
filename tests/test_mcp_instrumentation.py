@@ -66,6 +66,11 @@ def test_patch_mcp_client_injects_realtime_protocol_metadata_and_events():
     session_id = "session-123"
     kv_store.set(f"execution.{traceparent}", session_id)
     kv_store.set(f"session.{session_id}.last_agent_name", "planner")
+    kv_store.set(f"session.{session_id}.last_agent_span_id", "0000000000000123")
+    kv_store.set(
+        f"session.{session_id}.last_agent_trace_id",
+        "00000000000000000000000000000456",
+    )
     kv_store.set(f"session.{session_id}.agent_sequence", "2")
     kv_store.set(f"session.{session_id}.agents.2.fork_id", "fork-1")
 
@@ -103,6 +108,13 @@ def test_patch_mcp_client_injects_realtime_protocol_metadata_and_events():
     _, trace_id, span_id, _ = request.root.params.meta["traceparent"].split("-")
     assert sent["trace.id"] == trace_id
     assert sent["span.id"] == span_id
+    assert (
+        sent["source.agent.span.id"] == request.root.params.meta["last_agent_span_id"]
+    )
+    assert (
+        sent["source.agent.trace.id"] == request.root.params.meta["last_agent_trace_id"]
+    )
+    assert sent["source.agent.span.id"] != sent["span.id"]
 
     snapshot = get_live_topology_snapshot(session_id)
     assert snapshot["edges"][0]["id"] == "mcp:planner->mcp://math-server"

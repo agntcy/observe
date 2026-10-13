@@ -162,6 +162,11 @@ def test_a2a_outbound_wire_matches_send_event_and_restores_methods(
     token = context.attach(ctx)
     parent = trace.get_current_span().get_span_context()
     expected_session = "legacy-session" if legacy_session else "active-session"
+    kv_store.set(f"session.{expected_session}.last_agent_span_id", "0000000000000123")
+    kv_store.set(
+        f"session.{expected_session}.last_agent_trace_id",
+        "00000000000000000000000000000456",
+    )
 
     async def invoke():
         result = getattr(cls, method)(
@@ -190,6 +195,9 @@ def test_a2a_outbound_wire_matches_send_event_and_restores_methods(
     assert span_id != INCOMING.split("-")[2]
     assert bool(int(flags, 16) & 1) is sampled
     assert observe["session_id"] == expected_session
+    assert sent["source.agent.span.id"] == observe["last_agent_span_id"]
+    assert sent["source.agent.trace.id"] == observe["last_agent_trace_id"]
+    assert sent["source.agent.span.id"] != sent["span.id"]
     assert kv_store.get(f"execution.{observe['traceparent']}") == expected_session
     assert metadata["unrelated"] == {"kept": True}
     assert observe["custom"] == "kept"
