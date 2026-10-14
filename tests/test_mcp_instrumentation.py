@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from opentelemetry import baggage
 from opentelemetry.trace import get_current_span, get_tracer
-from opentelemetry.context import attach, detach, set_value
+from opentelemetry.context import Context, attach, detach, get_value, set_value
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.sampling import ALWAYS_OFF, ALWAYS_ON
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
@@ -16,6 +16,7 @@ from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.instrumentations.mcp import (
     McpInstrumentor,
+    InstrumentedStreamReader,
     InstrumentedStreamWriter,
 )
 from ioa_observe.sdk.tracing import (
@@ -161,6 +162,206 @@ def test_patch_mcp_client_preserves_list_tools_metadata(with_params):
         assert sent[0]["params"]["cursor"] == "next-page"
         assert meta["progressToken"] == "progress-1"
         assert meta["custom"] == {"kept": True}
+
+
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
+def test_mcp_http_tool_lifecycle_preserves_request_session_and_trace(
+    mode,
+    monkeypatch,
+):
+    pytest.importorskip("mcp.server.mcpserver")
+    import socket
+
+    import uvicorn
+    from mcp import Client
+    from mcp.server import MCPServer
+    from mcp.server._otel import OpenTelemetryMiddleware
+    from opentelemetry.sdk._logs import LoggerProvider
+    from opentelemetry.sdk._logs.export import (
+        InMemoryLogRecordExporter,
+        SimpleLogRecordProcessor,
+    )
+
+    from ioa_observe.sdk.decorators import tool
+
+    events = []
+    register_runtime_event_listener(events.append)
+    logger_provider = LoggerProvider()
+    log_exporter = InMemoryLogRecordExporter()
+    logger_provider.add_log_record_processor(SimpleLogRecordProcessor(log_exporter))
+    monkeypatch.setattr(
+        "ioa_observe.sdk.tracing.runtime_event_emitter._ensure_runtime_event_logger",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "opentelemetry._logs.get_logger",
+        lambda *args, **kwargs: logger_provider.get_logger(
+            "ioa_observe.runtime_events"
+        ),
+    )
+    server = MCPServer("math")
+
+    @server.tool()
+    @tool(name="add numbers")
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    @server.tool()
+    @tool(name="failing tool")
+    async def fail() -> int:
+        raise ValueError("tool failed")
+
+    async def run():
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            sock.listen()
+            port = sock.getsockname()[1]
+            service = uvicorn.Server(
+                uvicorn.Config(server.streamable_http_app(), log_level="error")
+            )
+            task = asyncio.create_task(service.serve(sockets=[sock]))
+            try:
+                while not service.started:
+                    if task.done():
+                        await task
+                        raise RuntimeError("MCP test server stopped before startup")
+                    await asyncio.sleep(0.01)
+                async with Client(f"http://127.0.0.1:{port}/mcp", mode=mode) as client:
+                    token = attach(set_value("session.id", "math-session"))
+                    try:
+                        result = await client.call_tool("add", {"a": 3, "b": 5})
+                        assert result.structured_content["result"] == 8
+                    finally:
+                        detach(token)
+                    token = attach(set_value("session.id", "failure-session"))
+                    try:
+                        result = await client.call_tool("fail", {})
+                        assert result.is_error
+                    finally:
+                        detach(token)
+                    result = await client.call_tool("add", {"a": 8, "b": 12})
+                    assert result.structured_content["result"] == 20
+            finally:
+                service.should_exit = True
+                await task
+
+    instrumentor = McpInstrumentor()
+    original_middleware = OpenTelemetryMiddleware.__call__
+    instrumentor._instrument()
+    token = attach(Context())
+    try:
+        asyncio.run(asyncio.wait_for(run(), timeout=15))
+    finally:
+        detach(token)
+        instrumentor._uninstrument()
+        logger_provider.shutdown()
+    assert OpenTelemetryMiddleware.__call__ is original_middleware
+
+    tool_events = [event for event in events if event["event.name"].startswith("tool.")]
+    assert [event["event.name"] for event in tool_events] == [
+        "tool.started",
+        "tool.completed",
+        "tool.started",
+        "tool.completed",
+    ]
+    for session_id, tool_name, status in (
+        ("math-session", "add numbers", "success"),
+        ("failure-session", "failing tool", "error"),
+    ):
+        started, completed = [
+            event for event in tool_events if event["session.id"] == session_id
+        ]
+        sent = next(
+            event
+            for event in events
+            if event["event.name"] == "mcp.message.sent"
+            and event["operation.name"] == "tools/call"
+            and event["session.id"] == session_id
+        )
+        received = [
+            event
+            for event in events
+            if event["event.name"] == "mcp.message.received"
+            and event["operation.name"] == "tools/call"
+            and event["session.id"] == session_id
+        ]
+        assert len(received) == 1
+        assert started["tool.name"] == completed["tool.name"] == tool_name
+        assert completed["tool.status"] == status
+        assert started["trace.id"] == completed["trace.id"] == sent["trace.id"]
+        assert received[0]["trace.id"] == sent["trace.id"]
+        assert started["span.id"] == completed["span.id"]
+    tool_logs = [
+        item.log_record
+        for item in log_exporter.get_finished_logs()
+        if item.log_record.event_name.startswith("tool.")
+    ]
+    assert [record.event_name for record in tool_logs] == [
+        event["event.name"] for event in tool_events
+    ]
+    for record, event in zip(tool_logs, tool_events):
+        assert record.attributes["session.id"] == event["session.id"]
+        assert record.attributes["tool.name"] == event["tool.name"]
+        assert format(record.trace_id, "032x") == event["trace.id"]
+        assert format(record.span_id, "016x") == event["span.id"]
+
+
+def test_mcp_stream_reader_restores_tool_session_without_leaking_context():
+    types = pytest.importorskip("mcp.types")
+    from ioa_observe.sdk.decorators import tool
+
+    events = []
+    register_runtime_event_listener(events.append)
+    traceparent = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
+    meta = {
+        "traceparent": traceparent,
+        "session.id": "stream-session",
+        "last_agent_name": "planner",
+        "agent_sequence": "2",
+        "fork_id": "fork-one",
+        "fork_parent_seq": "1",
+        "fork_branch_index": "1",
+    }
+    request = types.JSONRPCRequest(
+        method="tools/call", jsonrpc="2.0", id=1, params={"_meta": meta}
+    )
+
+    class Stream:
+        __slots__ = ()
+
+        async def __aiter__(self):
+            yield request
+
+    @tool(name="stream tool")
+    def run_tool():
+        assert get_value("session.id") == "stream-session"
+        assert get_value("current_traceparent") == traceparent
+        return "done"
+
+    async def run():
+        reader = InstrumentedStreamReader(Stream(), get_tracer(__name__))
+        async for item in reader:
+            assert item is request
+            assert run_tool() == "done"
+        assert get_value("session.id") is None
+        assert get_value("current_traceparent") is None
+
+    token = attach(Context())
+    try:
+        asyncio.run(run())
+    finally:
+        detach(token)
+    tool_events = [event for event in events if event["event.name"].startswith("tool.")]
+    assert [event["event.name"] for event in tool_events] == [
+        "tool.started",
+        "tool.completed",
+    ]
+    assert all(event["session.id"] == "stream-session" for event in tool_events)
+    assert all(event["trace.id"] == traceparent.split("-")[1] for event in tool_events)
+    assert kv_store.get("session.stream-session.last_agent_name") == "planner"
+    assert kv_store.get("session.stream-session.agents.2.fork_id") == "fork-one"
+    assert kv_store.get("session.stream-session.agents.2.parent_seq") == "1"
+    assert kv_store.get("session.stream-session.agents.2.branch_index") == "1"
 
 
 @pytest.mark.parametrize(

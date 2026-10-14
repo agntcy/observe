@@ -64,6 +64,10 @@ The `McpInstrumentor` automatically instruments all MCP transports (stdio, SSE, 
   when it lists its tools; `mcp.tools.discovered` is emitted by the client when
   it receives that list. Both events contain the tool definitions when content
   tracing is enabled.
+- **Tool execution runtime events**: the server's Observe `@tool` decorators
+  emit `tool.started` and `tool.completed` for each call with a propagated
+  `session.id`. These events appear under `mcp_server` and share the client's
+  session and trace. Listing tools alone does not emit tool execution events.
 - **Cross-process context propagation** via the `_meta` field in MCP requests:
   - W3C `traceparent` and `baggage` for distributed tracing
   - `session.id` for session tracking
