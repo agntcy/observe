@@ -11,7 +11,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.semconv_ai import SpanAttributes
 
 from ioa_observe.sdk.client import kv_store
-from ioa_observe.sdk.decorators import agent, tool
+from ioa_observe.sdk.decorators import agent, graph, tool, workflow
 from ioa_observe.sdk.instrumentations.a2a import (
     _emit_a2a_receive_topology_event,
     _emit_a2a_send_topology_event,
@@ -36,7 +36,10 @@ from ioa_observe.sdk.tracing import (
     unregister_runtime_event_listener,
 )
 from ioa_observe.sdk.config import set_realtime_observability_enabled
-from ioa_observe.sdk.tracing.runtime_events import validate_runtime_event_attributes
+from ioa_observe.sdk.tracing.runtime_events import (
+    span_correlation_attributes,
+    validate_runtime_event_attributes,
+)
 from ioa_observe.sdk.tracing.topology import clear_topology_listeners
 from ioa_observe.sdk.utils.const import OBSERVE_AGENT_SPAN_ID, OBSERVE_AGENT_TRACE_ID
 
@@ -97,6 +100,16 @@ def test_builds_session_started_runtime_event_attributes():
     assert attributes[RuntimeEventAttribute.SESSION_ID.value] == "session-123"
     assert attributes[RuntimeEventAttribute.SNAPSHOT_VERSION.value] == 1
     assert RuntimeEventAttribute.EVENT_TIME.value in attributes
+
+
+@pytest.mark.parametrize("application_id", [None, "", 123])
+def test_span_correlation_omits_unavailable_application_id(application_id):
+    attributes = span_correlation_attributes({"application_id": application_id})
+
+    assert RuntimeEventAttribute.APPLICATION_ID.value not in attributes
+    assert RuntimeEventAttribute.APPLICATION_ID.value not in (
+        span_correlation_attributes({})
+    )
 
 
 def test_builds_a2a_message_runtime_event_attributes():
@@ -677,6 +690,46 @@ def test_agent_interprets_llm_attributes_added_after_span_start(runtime_events):
     )
 
 
+@pytest.mark.parametrize("decorator", [agent, graph, tool, workflow])
+def test_runtime_events_include_decorator_application_id(runtime_events, decorator):
+    @tool(name="application_tool")
+    def application_tool():
+        return "done"
+
+    @decorator(name="application_parent", application_id="app-123")
+    def application_parent():
+        application_tool()
+        with trace.get_tracer(__name__).start_as_current_span(
+            "openai.chat",
+            attributes={
+                SpanAttributes.LLM_REQUEST_TYPE: "chat",
+                SpanAttributes.LLM_REQUEST_MODEL: "gpt-5",
+            },
+        ):
+            pass
+
+    with session_start():
+        application_parent()
+
+    events = [
+        event
+        for event in runtime_events
+        if event["event.name"]
+        not in {
+            RuntimeEventName.TOPOLOGY_SESSION_STARTED.value,
+            RuntimeEventName.TOPOLOGY_SESSION_COMPLETED.value,
+        }
+    ]
+    assert {
+        RuntimeEventName.TOOL_STARTED.value,
+        RuntimeEventName.TOOL_COMPLETED.value,
+        RuntimeEventName.LLM_STARTED.value,
+        RuntimeEventName.LLM_COMPLETED.value,
+    }.issubset({event["event.name"] for event in events})
+    for event in events:
+        assert event[RuntimeEventAttribute.APPLICATION_ID.value] == "app-123"
+
+
 def test_runtime_events_link_descendants_to_exact_enclosing_agent(runtime_events):
     @tool(name="linked_tool")
     def linked_tool():
@@ -765,12 +818,15 @@ def test_event_log_uses_source_span_instead_of_ambient_context(
     source = tracer.start_span(
         "source",
         attributes={
+            RuntimeEventAttribute.APPLICATION_ID.value: "source-app",
             OBSERVE_AGENT_SPAN_ID: "0000000000000123",
             OBSERVE_AGENT_TRACE_ID: "00000000000000000000000000000456",
         },
     )
     source.end()
-    with tracer.start_as_current_span("unrelated"):
+    with tracer.start_as_current_span(
+        "unrelated", attributes={"application_id": "unrelated-app"}
+    ):
         runtime_event_emitter.emit_runtime_event(
             build_runtime_event_attributes(
                 RuntimeEventName.TOOL_STARTED,
@@ -787,6 +843,12 @@ def test_event_log_uses_source_span_instead_of_ambient_context(
     assert record.trace_id == context.trace_id
     assert record.span_id == context.span_id
     assert record.trace_flags == context.trace_flags
+    assert record.attributes[RuntimeEventAttribute.APPLICATION_ID.value] == (
+        "source-app"
+    )
+    assert runtime_events[0][RuntimeEventAttribute.APPLICATION_ID.value] == (
+        "source-app"
+    )
     assert record.attributes[OBSERVE_AGENT_SPAN_ID] == "0000000000000123"
     assert record.attributes[OBSERVE_AGENT_TRACE_ID] == (
         "00000000000000000000000000000456"

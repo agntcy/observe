@@ -3,7 +3,10 @@
 
 from typing import Collection
 import functools
+import importlib
 import inspect
+import json
+import logging
 import threading
 
 from opentelemetry.context import get_value
@@ -21,6 +24,7 @@ from ioa_observe.sdk.tracing.context_utils import (
     _inject_outbound_context,
 )
 from ioa_observe.sdk.tracing.topology import emit_topology_event, upsert_topology_edge
+from ioa_observe.sdk.tracing.capability_capture import record_capability_event
 
 _instruments = ("a2a-sdk >= 0.3.0",)
 _global_tracer = None
@@ -28,6 +32,47 @@ _kv_lock = threading.RLock()  # Add thread-safety for kv_store operations
 
 # Track original methods for uninstrumentation
 _original_methods = {}
+
+
+def _record_card(card, source, *, session_id=None, attributes=None):
+    if card is not None:
+        if hasattr(card, "DESCRIPTOR"):
+            from google.protobuf.json_format import MessageToDict
+
+            card = MessageToDict(card)
+        url = card.get("url") if isinstance(card, dict) else getattr(card, "url", None)
+        if not url and isinstance(card, dict):
+            interfaces = card.get("supportedInterfaces", [])
+            if interfaces:
+                url = interfaces[0].get("url")
+        record_capability_event(
+            "a2a.agent_card",
+            card,
+            provider_id=url,
+            source=source,
+            session_id=session_id,
+            attributes=attributes,
+        )
+
+
+def _record_message_card(instance, observe_meta, source, message_id, operation):
+    try:
+        for field in ("_card", "_agent_card", "agent_card"):
+            card = getattr(instance, field, None)
+            if card is not None:
+                _record_card(
+                    card,
+                    source,
+                    session_id=observe_meta.get("session_id"),
+                    attributes={
+                        "message.id": message_id,
+                        "operation.name": operation,
+                        "network.protocol.name": "a2a",
+                    },
+                )
+                return
+    except Exception:
+        logging.warning("Unable to capture A2A message card")
 
 
 def _safe_get_metadata(container):
@@ -122,6 +167,13 @@ def _emit_a2a_send_topology_event(request, client_instance, operation: str) -> N
     sender = observe_meta.get("last_agent_name") or _safe_get_current_actor_name()
     target = _safe_get_target_name(request, client_instance) or "unknown"
     message_id = _safe_get_message_id(request)
+    _record_message_card(
+        client_instance,
+        observe_meta,
+        "client-discovered",
+        message_id,
+        operation,
+    )
     agent_sequence = observe_meta.get("agent_sequence")
     fork_id = observe_meta.get("fork_id")
     sequence = int(agent_sequence) if str(agent_sequence).isdigit() else None
@@ -165,6 +217,13 @@ def _emit_a2a_receive_topology_event(params, handler_instance, operation: str) -
     source = observe_meta.get("last_agent_name") or "unknown"
     target = _safe_get_target_name(handler_instance) or _safe_get_current_actor_name()
     message_id = _safe_get_message_id(params)
+    _record_message_card(
+        handler_instance,
+        observe_meta,
+        "server-published",
+        message_id,
+        operation,
+    )
     agent_sequence = observe_meta.get("agent_sequence")
     fork_id = observe_meta.get("fork_id")
     sequence = int(agent_sequence) if str(agent_sequence).isdigit() else None
@@ -289,9 +348,96 @@ class A2AInstrumentor(BaseInstrumentor):
 
         # Instrument server handler
         self._instrument_server_handler()
+        self._instrument_cards()
 
         # Instrument slima2a if available
         self._instrument_slima2a()
+
+    def _instrument_cards(self):
+        self._card_methods = []
+        targets = (
+            ("a2a.client.card_resolver", "A2ACardResolver", "get_agent_card"),
+            ("a2a.client.base_client", "BaseClient", "get_card"),
+            ("a2a.client.base_client", "BaseClient", "get_extended_agent_card"),
+            ("a2a.client.legacy", "A2AClient", "get_card"),
+            ("a2a.server.request_handlers", "DefaultRequestHandler", "__init__"),
+            (
+                "a2a.server.request_handlers",
+                "DefaultRequestHandler",
+                "on_get_extended_agent_card",
+            ),
+            ("a2a.server.apps", "A2AStarletteApplication", "__init__"),
+            ("a2a.server.apps", "A2AFastAPIApplication", "__init__"),
+            (
+                "a2a.server.request_handlers.jsonrpc_handler",
+                "JSONRPCHandler",
+                "get_authenticated_extended_card",
+            ),
+            ("a2a.server.apps", "A2AStarletteApplication", "_handle_get_agent_card"),
+            (
+                "a2a.server.apps",
+                "A2AStarletteApplication",
+                "_handle_get_authenticated_extended_agent_card",
+            ),
+        )
+        for module_name, class_name, method in targets:
+            try:
+                cls = getattr(importlib.import_module(module_name), class_name)
+            except (ImportError, AttributeError):
+                continue
+            original = getattr(cls, method, None)
+            if original is None:
+                continue
+            if method == "__init__":
+                signature = inspect.signature(original)
+
+                def constructor(original=original, signature=signature):
+                    @functools.wraps(original)
+                    def wrapped(instance, *args, **kwargs):
+                        original(instance, *args, **kwargs)
+                        try:
+                            bound = signature.bind(instance, *args, **kwargs).arguments
+                            for field in ("agent_card", "extended_agent_card"):
+                                _record_card(bound.get(field), "server-published")
+                        except Exception:
+                            logging.warning("Unable to capture registered A2A card")
+
+                    return wrapped
+
+                wrapper = constructor()
+            elif inspect.iscoroutinefunction(original):
+                source = (
+                    "client-discovered"
+                    if module_name.startswith("a2a.client")
+                    else "server-published"
+                )
+
+                def result_wrapper(original=original, source=source):
+                    @functools.wraps(original)
+                    async def wrapped(instance, *args, **kwargs):
+                        result = await original(instance, *args, **kwargs)
+                        try:
+                            card = (
+                                json.loads(result.body)
+                                if hasattr(result, "body") and result.status_code == 200
+                                else result
+                                if not hasattr(result, "body")
+                                else None
+                            )
+                            if hasattr(card, "root"):
+                                card = getattr(card.root, "result", None)
+                            _record_card(card, source)
+                        except Exception:
+                            logging.warning("Unable to capture returned A2A card")
+                        return result
+
+                    return wrapped
+
+                wrapper = result_wrapper()
+            else:
+                continue
+            self._card_methods.append((cls, method, original, method in cls.__dict__))
+            setattr(cls, method, wrapper)
 
     def _instrument_base_client(self):
         """Instrument the new A2AClient (BaseClient) pattern introduced in v0.3.0."""
@@ -1013,6 +1159,15 @@ class A2AInstrumentor(BaseInstrumentor):
 
     def _uninstrument(self, **kwargs):
         import importlib
+
+        for cls, method, original, owned in reversed(
+            getattr(self, "_card_methods", [])
+        ):
+            if owned:
+                setattr(cls, method, original)
+            else:
+                delattr(cls, method)
+        self._card_methods = []
 
         if importlib.util.find_spec("a2a") is None:
             raise ImportError("No module named 'a2a-sdk'. Please install it first.")

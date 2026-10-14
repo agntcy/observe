@@ -121,6 +121,48 @@ def test_patch_mcp_client_injects_realtime_protocol_metadata_and_events():
     assert snapshot["edges"][0]["status"] == "sent"
 
 
+@pytest.mark.parametrize("with_params", [True, False])
+def test_patch_mcp_client_preserves_list_tools_metadata(with_params):
+    types = pytest.importorskip("mcp.types")
+    request = types.ListToolsRequest(
+        params=(
+            types.PaginatedRequestParams(
+                cursor="next-page",
+                _meta={"progressToken": "progress-1", "custom": {"kept": True}},
+            )
+            if with_params
+            else None
+        )
+    )
+    sent = []
+    result = types.ListToolsResult(tools=[])
+
+    async def wrapped(argument):
+        sent.append(argument.model_dump(by_alias=True, exclude_none=True))
+        return result
+
+    provider = TracerProvider()
+    patched = McpInstrumentor().patch_mcp_client(provider.get_tracer(__name__))
+    token = attach(set_value("session.id", "list-tools-session"))
+    try:
+        assert (
+            asyncio.run(patched(wrapped, SimpleNamespace(), (request,), {})) is result
+        )
+    finally:
+        detach(token)
+        provider.shutdown()
+
+    assert len(sent) == 1
+    assert sent[0]["method"] == "tools/list"
+    meta = sent[0]["params"]["_meta"]
+    assert meta["session.id"] == "list-tools-session"
+    assert meta["traceparent"]
+    if with_params:
+        assert sent[0]["params"]["cursor"] == "next-page"
+        assert meta["progressToken"] == "progress-1"
+        assert meta["custom"] == {"kept": True}
+
+
 @pytest.mark.parametrize(
     "shape", ["typed", "ping", "jsonrpc", "empty", "missing", "dict"]
 )

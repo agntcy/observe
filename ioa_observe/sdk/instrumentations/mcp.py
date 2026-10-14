@@ -38,6 +38,7 @@ from ..tracing.context_utils import (
     _inject_outbound_context,
 )
 from ..tracing.topology import emit_topology_event, upsert_topology_edge
+from ..tracing.capability_capture import record_capability_event
 from ..version import __version__
 
 _instruments = ("mcp >= 1.6.0",)
@@ -86,7 +87,7 @@ def _set_request_meta(request, params, meta):
     if isinstance(params, dict):
         params["_meta"] = meta
     elif isinstance(params, RequestParams):
-        params.meta = RequestParams.Meta.model_validate(meta)
+        params.meta = RequestParams.model_validate({"_meta": meta}).meta
     else:
         params.meta = meta
 
@@ -242,6 +243,34 @@ class McpInstrumentor(BaseInstrumentor):
     def _instrument(self, **kwargs):
         tracer_provider = kwargs.get("tracer_provider")
         tracer = get_tracer(__name__, __version__, tracer_provider)
+        self._capture_server_tools = True
+        self._server_tools_wrapped = set()
+
+        def instrument_server_tools(module, class_name):
+            server_class = getattr(module, class_name, None)
+            target = (module.__name__, class_name)
+            if (
+                self._capture_server_tools
+                and target not in self._server_tools_wrapped
+                and hasattr(server_class, "list_tools")
+            ):
+                wrap_function_wrapper(
+                    module.__name__,
+                    f"{class_name}.list_tools",
+                    self._server_tools_wrapper,
+                )
+                self._server_tools_wrapped.add(target)
+
+        for module_name, class_name in (
+            ("mcp.server.fastmcp", "FastMCP"),
+            ("mcp.server.mcpserver", "MCPServer"),
+        ):
+            register_post_import_hook(
+                lambda module, class_name=class_name: instrument_server_tools(
+                    module, class_name
+                ),
+                module_name,
+            )
 
         def wrap_if_present(module_name, attribute, wrapper):
             module = __import__(module_name, fromlist=[attribute.split(".", 1)[0]])
@@ -324,6 +353,13 @@ class McpInstrumentor(BaseInstrumentor):
             )
 
     def _uninstrument(self, **kwargs):
+        self._capture_server_tools = False
+        from sys import modules
+
+        for module_name, class_name in self._server_tools_wrapped:
+            if module_name in modules:
+                unwrap(f"{module_name}.{class_name}", "list_tools")
+        self._server_tools_wrapped.clear()
         if find_spec("mcp.shared.session"):
             unwrap("mcp.shared.session.BaseSession", "send_request")
         elif find_spec("mcp.client.session"):
@@ -515,6 +551,13 @@ class McpInstrumentor(BaseInstrumentor):
 
                 try:
                     result = await wrapped(*args, **kwargs)
+                    if method == "tools/list":
+                        record_capability_event(
+                            "mcp.tools.discovered",
+                            result,
+                            provider_id=_extract_mcp_peer_name(instance),
+                            source="client-discovered",
+                        )
                     try:
                         span.set_attribute(
                             OBSERVE_ENTITY_OUTPUT,
@@ -543,6 +586,24 @@ class McpInstrumentor(BaseInstrumentor):
                     raise
 
         return traced_method
+
+    @staticmethod
+    async def _server_tools_wrapper(wrapped, instance, args, kwargs):
+        tools = await wrapped(*args, **kwargs)
+        try:
+            record_capability_event(
+                "mcp.tools.published",
+                {
+                    "tools": [
+                        tool.model_dump(mode="json", by_alias=True) for tool in tools
+                    ]
+                },
+                source="server-published",
+                attributes={"mcp.server.name": instance.name},
+            )
+        except Exception:
+            logging.warning("Unable to capture MCP server tool definitions")
+        return tools
 
 
 def get_error_type(error_message):

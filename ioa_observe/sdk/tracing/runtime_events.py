@@ -30,12 +30,25 @@ class RuntimeEventName(str, Enum):
     SLIM_MESSAGE_RECEIVED = "slim.message.received"
     MCP_MESSAGE_SENT = "mcp.message.sent"
     MCP_MESSAGE_RECEIVED = "mcp.message.received"
+    MCP_TOOLS_DISCOVERED = "mcp.tools.discovered"
+    MCP_TOOLS_PUBLISHED = "mcp.tools.published"
+    A2A_AGENT_CARD = "a2a.agent_card"
+
+
+CAPABILITY_EVENT_NAMES = frozenset(
+    {
+        RuntimeEventName.MCP_TOOLS_DISCOVERED.value,
+        RuntimeEventName.MCP_TOOLS_PUBLISHED.value,
+        RuntimeEventName.A2A_AGENT_CARD.value,
+    }
+)
 
 
 class RuntimeEventAttribute(str, Enum):
     EVENT_NAME = "event.name"
     EVENT_TIME = "event.time"
     SESSION_ID = "session.id"
+    APPLICATION_ID = "application_id"
     SNAPSHOT_VERSION = "snapshot.version"
     AGENT_NAME = "agent.name"
     AGENT_INPUT = "agent.input"
@@ -69,6 +82,11 @@ COMMON_REQUIRED_ATTRIBUTES = frozenset(
 
 
 EVENT_REQUIRED_ATTRIBUTES = {
+    **{
+        name: (COMMON_REQUIRED_ATTRIBUTES - {"session.id"})
+        | {"capability.source", "capability.capture.state"}
+        for name in CAPABILITY_EVENT_NAMES
+    },
     RuntimeEventName.TOPOLOGY_SESSION_STARTED.value: COMMON_REQUIRED_ATTRIBUTES,
     RuntimeEventName.TOPOLOGY_SESSION_COMPLETED.value: COMMON_REQUIRED_ATTRIBUTES,
     RuntimeEventName.TOPOLOGY_NODE_STARTED.value: COMMON_REQUIRED_ATTRIBUTES
@@ -127,7 +145,7 @@ OTEL_ATTRIBUTE_VALUE_TYPES = (str, bool, int, float)
 @dataclass(frozen=True)
 class RuntimeEvent:
     name: RuntimeEventName | str
-    session_id: str
+    session_id: str | None
     snapshot_version: int
     event_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     attributes: Mapping[str, Any] = field(default_factory=dict)
@@ -144,12 +162,13 @@ class RuntimeEvent:
         attributes: dict[str, str | bool | int | float] = {
             RuntimeEventAttribute.EVENT_NAME.value: event_name,
             RuntimeEventAttribute.EVENT_TIME.value: self.event_time.isoformat(),
-            RuntimeEventAttribute.SESSION_ID.value: self.session_id,
             RuntimeEventAttribute.SNAPSHOT_VERSION.value: self.snapshot_version,
             **span_correlation_attributes(
                 self.attributes, trace_id=self.trace_id, span_id=self.span_id
             ),
         }
+        if self.session_id is not None:
+            attributes[RuntimeEventAttribute.SESSION_ID.value] = self.session_id
 
         for key, value in self.attributes.items():
             if value is None:
@@ -168,7 +187,11 @@ def span_correlation_attributes(
 ) -> dict[str, str]:
     correlation = {
         key: value
-        for key in (OBSERVE_AGENT_SPAN_ID, OBSERVE_AGENT_TRACE_ID)
+        for key in (
+            RuntimeEventAttribute.APPLICATION_ID.value,
+            OBSERVE_AGENT_SPAN_ID,
+            OBSERVE_AGENT_TRACE_ID,
+        )
         if isinstance(value := attributes.get(key), str) and value
     }
     if trace_id:
@@ -180,7 +203,7 @@ def span_correlation_attributes(
 
 def build_runtime_event_attributes(
     name: RuntimeEventName | str,
-    session_id: str,
+    session_id: str | None,
     snapshot_version: int,
     **attributes: Any,
 ) -> dict[str, str | bool | int | float]:

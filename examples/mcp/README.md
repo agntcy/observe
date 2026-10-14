@@ -20,6 +20,12 @@ Install dependencies:
 uv sync --package mcp-examples
 ```
 
+Run these commands from `examples/mcp`. Use `uv run --package mcp-examples`
+to select the example's environment, which includes the local Observe SDK.
+Running `python server.py` directly uses your shell's Python environment and can
+fail with `ModuleNotFoundError: No module named 'ioa_observe'` if the SDK is not
+installed there.
+
 ## Running the Examples
 
 ### 1. Start the MCP Server
@@ -54,6 +60,10 @@ The `McpInstrumentor` automatically instruments all MCP transports (stdio, SSE, 
 
 - **Client-side spans** for each `send_request` call (e.g., `tools/call.mcp`) with input/output attributes
 - **Server-side spans** for stream reads/writes with request metadata
+- **Capability runtime events**: `mcp.tools.published` is emitted by the server
+  when it lists its tools; `mcp.tools.discovered` is emitted by the client when
+  it receives that list. Both events contain the tool definitions when content
+  tracing is enabled.
 - **Cross-process context propagation** via the `_meta` field in MCP requests:
   - W3C `traceparent` and `baggage` for distributed tracing
   - `session.id` for session tracking
