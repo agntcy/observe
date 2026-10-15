@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ioa_observe.sdk.tracing.runtime_events import (
+    CAPABILITY_EVENT_NAMES,
     RuntimeEventAttribute,
     RuntimeEventName,
 )
@@ -18,7 +19,7 @@ from ioa_observe.sdk.tracing.runtime_events import (
 @dataclass(frozen=True)
 class RuntimeEventRecord:
     name: str
-    session_id: str
+    session_id: str | None
     snapshot_version: int
     event_time: datetime
     attributes: Mapping[str, Any] = field(default_factory=dict)
@@ -34,7 +35,11 @@ class RuntimeEventRecord:
         service_name: str | None = None,
     ) -> "RuntimeEventRecord":
         event_name = str(attributes[RuntimeEventAttribute.EVENT_NAME.value])
-        session_id = str(attributes[RuntimeEventAttribute.SESSION_ID.value])
+        session_id = (
+            attributes.get(RuntimeEventAttribute.SESSION_ID.value)
+            if event_name in CAPABILITY_EVENT_NAMES
+            else str(attributes[RuntimeEventAttribute.SESSION_ID.value])
+        )
         snapshot_version = _coerce_int(
             attributes.get(RuntimeEventAttribute.SNAPSHOT_VERSION.value),
             RuntimeEventAttribute.SNAPSHOT_VERSION.value,
@@ -187,8 +192,17 @@ class SessionStateMaterializer:
 
     def apply_event(
         self, event: RuntimeEventRecord | Mapping[str, Any]
-    ) -> SessionState:
+    ) -> SessionState | None:
+        name = (
+            event.name
+            if isinstance(event, RuntimeEventRecord)
+            else event.get(RuntimeEventAttribute.EVENT_NAME.value)
+        )
+        if name in CAPABILITY_EVENT_NAMES:
+            return None
         record = self._to_record(event)
+        if record.session_id is None:
+            raise ValueError("Execution runtime events require session.id")
         event_name = RuntimeEventName(record.name)
 
         with self._lock:
@@ -247,7 +261,7 @@ class SessionStateMaterializer:
 
         for event in events:
             session = self.apply_event(event)
-            if session.session_id in seen_session_ids:
+            if session is None or session.session_id in seen_session_ids:
                 continue
             seen_session_ids.add(session.session_id)
             updated_sessions.append(session)

@@ -2,7 +2,8 @@
 MCP Server example with Observe SDK instrumentation.
 
 Start the server:
-    python server.py
+    uv sync --package mcp-examples
+    uv run --package mcp-examples python server.py
 
 The server will start on http://127.0.0.1:8000/mcp using Streamable HTTP transport.
 """

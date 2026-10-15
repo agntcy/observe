@@ -38,6 +38,7 @@ from ..tracing.context_utils import (
     _inject_outbound_context,
 )
 from ..tracing.topology import emit_topology_event, upsert_topology_edge
+from ..tracing.capability_capture import record_capability_event
 from ..version import __version__
 
 _instruments = ("mcp >= 1.6.0",)
@@ -86,9 +87,43 @@ def _set_request_meta(request, params, meta):
     if isinstance(params, dict):
         params["_meta"] = meta
     elif isinstance(params, RequestParams):
-        params.meta = RequestParams.Meta.model_validate(meta)
+        params.meta = RequestParams.model_validate({"_meta": meta}).meta
     else:
         params.meta = meta
+
+
+def _restore_mcp_session_context(meta, ctx):
+    from ioa_observe.sdk.client import kv_store
+
+    session_id = meta.get("session.id")
+    if not session_id or session_id == "None":
+        return ctx
+    ctx = context.set_value("session.id", session_id, context=ctx)
+    traceparent = meta.get("traceparent")
+    if traceparent:
+        ctx = context.set_value("current_traceparent", traceparent, context=ctx)
+    with _kv_lock:
+        if traceparent:
+            kv_store.set(f"execution.{traceparent}", session_id)
+        for key in (
+            "last_agent_span_id",
+            "last_agent_trace_id",
+            "last_agent_name",
+            "agent_sequence",
+        ):
+            if meta.get(key):
+                kv_store.set(f"session.{session_id}.{key}", meta[key])
+        if meta.get("fork_id") and meta.get("agent_sequence"):
+            sequence = int(meta["agent_sequence"])
+            prefix = f"session.{session_id}.agents.{sequence}"
+            kv_store.set(f"{prefix}.fork_id", meta["fork_id"])
+            for key, field in (
+                ("fork_parent_seq", "parent_seq"),
+                ("fork_branch_index", "branch_index"),
+            ):
+                if meta.get(key):
+                    kv_store.set(f"{prefix}.{field}", meta[key])
+    return ctx
 
 
 def _safe_stringify_mcp_peer(candidate) -> str | None:
@@ -242,6 +277,48 @@ class McpInstrumentor(BaseInstrumentor):
     def _instrument(self, **kwargs):
         tracer_provider = kwargs.get("tracer_provider")
         tracer = get_tracer(__name__, __version__, tracer_provider)
+        self._capture_server_tools = True
+        self._server_tools_wrapped = set()
+        self._server_context_wrapped = False
+        native_server_context = find_spec("mcp.server._otel") is not None
+
+        def instrument_server_context(module):
+            if self._capture_server_tools and not self._server_context_wrapped:
+                wrap_function_wrapper(
+                    module.__name__,
+                    "OpenTelemetryMiddleware.__call__",
+                    self._server_context_wrapper,
+                )
+                self._server_context_wrapped = True
+
+        if native_server_context:
+            register_post_import_hook(instrument_server_context, "mcp.server._otel")
+
+        def instrument_server_tools(module, class_name):
+            server_class = getattr(module, class_name, None)
+            target = (module.__name__, class_name)
+            if (
+                self._capture_server_tools
+                and target not in self._server_tools_wrapped
+                and hasattr(server_class, "list_tools")
+            ):
+                wrap_function_wrapper(
+                    module.__name__,
+                    f"{class_name}.list_tools",
+                    self._server_tools_wrapper,
+                )
+                self._server_tools_wrapped.add(target)
+
+        for module_name, class_name in (
+            ("mcp.server.fastmcp", "FastMCP"),
+            ("mcp.server.mcpserver", "MCPServer"),
+        ):
+            register_post_import_hook(
+                lambda module, class_name=class_name: instrument_server_tools(
+                    module, class_name
+                ),
+                module_name,
+            )
 
         def wrap_if_present(module_name, attribute, wrapper):
             module = __import__(module_name, fromlist=[attribute.split(".", 1)[0]])
@@ -262,7 +339,9 @@ class McpInstrumentor(BaseInstrumentor):
             lambda _: wrap_if_present(
                 "mcp.server.sse",
                 "SseServerTransport.connect_sse",
-                self._transport_wrapper(tracer),
+                self._transport_wrapper(
+                    tracer, capture_inbound_context=not native_server_context
+                ),
             ),
             "mcp.server.sse",
         )
@@ -274,7 +353,11 @@ class McpInstrumentor(BaseInstrumentor):
         )
         register_post_import_hook(
             lambda _: wrap_if_present(
-                "mcp.server.stdio", "stdio_server", self._transport_wrapper(tracer)
+                "mcp.server.stdio",
+                "stdio_server",
+                self._transport_wrapper(
+                    tracer, capture_inbound_context=not native_server_context
+                ),
             ),
             "mcp.server.stdio",
         )
@@ -306,7 +389,9 @@ class McpInstrumentor(BaseInstrumentor):
             lambda _: wrap_if_present(
                 "mcp.server.streamable_http",
                 "StreamableHTTPServerTransport.connect",
-                self._transport_wrapper(tracer),
+                self._transport_wrapper(
+                    tracer, capture_inbound_context=not native_server_context
+                ),
             ),
             "mcp.server.streamable_http",
         )
@@ -324,6 +409,16 @@ class McpInstrumentor(BaseInstrumentor):
             )
 
     def _uninstrument(self, **kwargs):
+        self._capture_server_tools = False
+        from sys import modules
+
+        if self._server_context_wrapped and "mcp.server._otel" in modules:
+            unwrap("mcp.server._otel.OpenTelemetryMiddleware", "__call__")
+        self._server_context_wrapped = False
+        for module_name, class_name in self._server_tools_wrapped:
+            if module_name in modules:
+                unwrap(f"{module_name}.{class_name}", "list_tools")
+        self._server_tools_wrapped.clear()
         if find_spec("mcp.shared.session"):
             unwrap("mcp.shared.session.BaseSession", "send_request")
         elif find_spec("mcp.client.session"):
@@ -360,7 +455,7 @@ class McpInstrumentor(BaseInstrumentor):
             except Exception:
                 pass
 
-    def _transport_wrapper(self, tracer):
+    def _transport_wrapper(self, tracer, *, capture_inbound_context=True):
         @asynccontextmanager
         async def traced_method(
             wrapped: Callable[..., Any], instance: Any, args: Any, kwargs: Any
@@ -376,8 +471,12 @@ class McpInstrumentor(BaseInstrumentor):
                 try:
                     read_stream, write_stream = result
                     yield (
-                        InstrumentedStreamReader(
-                            read_stream, tracer, peer_name=peer_name
+                        (
+                            InstrumentedStreamReader(
+                                read_stream, tracer, peer_name=peer_name
+                            )
+                            if capture_inbound_context
+                            else read_stream
                         ),
                         InstrumentedStreamWriter(
                             write_stream, tracer, peer_name=peer_name
@@ -387,8 +486,12 @@ class McpInstrumentor(BaseInstrumentor):
                     try:
                         read_stream, write_stream, get_session_id_callback = result
                         yield (
-                            InstrumentedStreamReader(
-                                read_stream, tracer, peer_name=peer_name
+                            (
+                                InstrumentedStreamReader(
+                                    read_stream, tracer, peer_name=peer_name
+                                )
+                                if capture_inbound_context
+                                else read_stream
                             ),
                             InstrumentedStreamWriter(
                                 write_stream, tracer, peer_name=peer_name
@@ -407,6 +510,33 @@ class McpInstrumentor(BaseInstrumentor):
                     yield result
 
         return traced_method
+
+    @staticmethod
+    async def _server_context_wrapper(wrapped, instance, args, kwargs):
+        request_context = args[0] if args else kwargs["ctx"]
+        call_next = args[1] if len(args) > 1 else kwargs["call_next"]
+
+        # Restore Observe context inside MCP's native request span.
+        async def call_with_context(request_context):
+            meta = _request_meta(request_context)
+            token = context.attach(
+                _restore_mcp_session_context(meta, context.get_current())
+            )
+            try:
+                _emit_mcp_receive_topology_event(
+                    meta,
+                    request_context.method,
+                    message_id=(
+                        str(request_context.request_id)
+                        if request_context.request_id is not None
+                        else None
+                    ),
+                )
+                return await call_next(request_context)
+            finally:
+                context.detach(token)
+
+        return await wrapped(request_context, call_with_context)
 
     def _base_session_init_wrapper(self, tracer):
         def traced_method(
@@ -515,6 +645,13 @@ class McpInstrumentor(BaseInstrumentor):
 
                 try:
                     result = await wrapped(*args, **kwargs)
+                    if method == "tools/list":
+                        record_capability_event(
+                            "mcp.tools.discovered",
+                            result,
+                            provider_id=_extract_mcp_peer_name(instance),
+                            source="client-discovered",
+                        )
                     try:
                         span.set_attribute(
                             OBSERVE_ENTITY_OUTPUT,
@@ -543,6 +680,24 @@ class McpInstrumentor(BaseInstrumentor):
                     raise
 
         return traced_method
+
+    @staticmethod
+    async def _server_tools_wrapper(wrapped, instance, args, kwargs):
+        tools = await wrapped(*args, **kwargs)
+        try:
+            record_capability_event(
+                "mcp.tools.published",
+                {
+                    "tools": [
+                        tool.model_dump(mode="json", by_alias=True) for tool in tools
+                    ]
+                },
+                source="server-published",
+                attributes={"mcp.server.name": instance.name},
+            )
+        except Exception:
+            logging.warning("Unable to capture MCP server tool definitions")
+        return tools
 
 
 def get_error_type(error_message):
@@ -604,7 +759,7 @@ def serialize(request, depth=0, max_depth=4):
 class InstrumentedStreamReader(ObjectProxy):  # type: ignore
     def __init__(self, wrapped, tracer, peer_name=None):
         super().__init__(wrapped)
-        self._tracer = tracer
+        self._self_tracer = tracer
         self._self_observe_peer_name = peer_name
 
     async def __aenter__(self) -> Any:
@@ -666,72 +821,7 @@ class InstrumentedStreamReader(ObjectProxy):  # type: ignore
                             carrier=carrier, context=ctx
                         )
 
-                        # Restore session_id and agent linking info (matching A2A server handler)
-                        if session_id and session_id != "None":
-                            from ioa_observe.sdk.client import kv_store
-                            from ioa_observe.sdk.tracing import set_session_id
-
-                            set_session_id(session_id, traceparent=traceparent)
-                            with _kv_lock:
-                                kv_store.set(f"execution.{traceparent}", session_id)
-
-                                # Restore agent linking info for cross-process span linking
-                                observe_meta = (
-                                    carrier if isinstance(carrier, dict) else {}
-                                )
-                                last_agent_span_id = observe_meta.get(
-                                    "last_agent_span_id"
-                                )
-                                last_agent_trace_id = observe_meta.get(
-                                    "last_agent_trace_id"
-                                )
-                                last_agent_name = observe_meta.get("last_agent_name")
-                                agent_sequence = observe_meta.get("agent_sequence")
-
-                                if last_agent_span_id:
-                                    kv_store.set(
-                                        f"session.{session_id}.last_agent_span_id",
-                                        last_agent_span_id,
-                                    )
-                                if last_agent_trace_id:
-                                    kv_store.set(
-                                        f"session.{session_id}.last_agent_trace_id",
-                                        last_agent_trace_id,
-                                    )
-                                if last_agent_name:
-                                    kv_store.set(
-                                        f"session.{session_id}.last_agent_name",
-                                        last_agent_name,
-                                    )
-                                if agent_sequence:
-                                    kv_store.set(
-                                        f"session.{session_id}.agent_sequence",
-                                        agent_sequence,
-                                    )
-
-                                # Restore fork context for cross-process fork detection
-                                fork_id = observe_meta.get("fork_id")
-                                fork_parent_seq = observe_meta.get("fork_parent_seq")
-                                fork_branch_index = observe_meta.get(
-                                    "fork_branch_index"
-                                )
-                                if fork_id and agent_sequence:
-                                    seq = int(agent_sequence)
-                                    kv_store.set(
-                                        f"session.{session_id}.agents.{seq}.fork_id",
-                                        fork_id,
-                                    )
-                                    if fork_parent_seq:
-                                        kv_store.set(
-                                            f"session.{session_id}.agents.{seq}.parent_seq",
-                                            fork_parent_seq,
-                                        )
-                                    if fork_branch_index:
-                                        kv_store.set(
-                                            f"session.{session_id}.agents.{seq}.branch_index",
-                                            fork_branch_index,
-                                        )
-
+                        ctx = _restore_mcp_session_context(observe_meta, ctx)
                         restore = context.attach(ctx)
                         try:
                             yield item
@@ -744,7 +834,7 @@ class InstrumentedStreamReader(ObjectProxy):  # type: ignore
 class InstrumentedStreamWriter(ObjectProxy):  # type: ignore
     def __init__(self, wrapped, tracer, peer_name=None):
         super().__init__(wrapped)
-        self._tracer = tracer
+        self._self_tracer = tracer
         self._self_observe_peer_name = peer_name
 
     async def __aenter__(self) -> Any:
@@ -768,7 +858,9 @@ class InstrumentedStreamWriter(ObjectProxy):  # type: ignore
         # must not replace the context used by the send event and wire request.
         outbound_context = context.get_current()
         try:
-            with self._tracer.start_as_current_span("ResponseStreamWriter") as span:
+            with self._self_tracer.start_as_current_span(
+                "ResponseStreamWriter"
+            ) as span:
                 if hasattr(request, "result"):
                     span.set_attribute(
                         MCP_RESPONSE_VALUE, f"{serialize(request.result)}"
@@ -824,7 +916,7 @@ class ItemWithContext:
 class ContextSavingStreamWriter(ObjectProxy):  # type: ignore
     def __init__(self, wrapped, tracer, peer_name=None):
         super().__init__(wrapped)
-        self._tracer = tracer
+        self._self_tracer = tracer
         self._self_observe_peer_name = peer_name
 
     async def __aenter__(self) -> Any:
@@ -835,7 +927,7 @@ class ContextSavingStreamWriter(ObjectProxy):  # type: ignore
 
     async def send(self, item: Any) -> Any:
         try:
-            with self._tracer.start_as_current_span("RequestStreamWriter") as span:
+            with self._self_tracer.start_as_current_span("RequestStreamWriter") as span:
                 if hasattr(item, "request_id"):
                     span.set_attribute(MCP_REQUEST_ID, f"{item.request_id}")
                 if hasattr(item, "request"):
@@ -861,7 +953,7 @@ class ContextSavingStreamWriter(ObjectProxy):  # type: ignore
 class ContextAttachingStreamReader(ObjectProxy):  # type: ignore
     def __init__(self, wrapped, tracer, peer_name=None):
         super().__init__(wrapped)
-        self._tracer = tracer
+        self._self_tracer = tracer
         self._self_observe_peer_name = peer_name
 
     async def __aenter__(self) -> Any:

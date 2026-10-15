@@ -127,6 +127,7 @@ def test_genai_events_retain_enclosing_agent_correlation(
     lifecycle, operation_attributes
 ):
     references = {
+        RuntimeEventAttribute.APPLICATION_ID.value: "app-123",
         OBSERVE_AGENT_SPAN_ID: "0000000000000123",
         OBSERVE_AGENT_TRACE_ID: "00000000000000000000000000000456",
     }

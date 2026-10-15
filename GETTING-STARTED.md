@@ -159,6 +159,66 @@ ORDER BY Timestamp ASC;
 
 Source events must have been emitted and ingested for this lookup to return rows.
 
+#### Capturing MCP tool definitions and A2A cards
+
+The existing MCP and A2A instrumentors automatically emit structured definitions
+through the **runtime-log stream**, alongside message and topology events. No new
+decorators or application mapping code are required:
+
+| Runtime event | Captured content |
+|------------|------------------|
+| `mcp.tools.discovered` | Full `tools/list` response, including schemas, annotations, metadata, and pagination cursor |
+| `mcp.tools.published` | FastMCP's published tool definitions |
+| `a2a.agent_card` | Registered or discovered agent card, including skills and supported authenticated/extended card responses |
+
+Event attributes contain `capability.content` (JSON), `capability.source`
+(`server-published` or `client-discovered`), `capability.provider.id` when available,
+and `capability.capture.state`. When available, the current session and local span
+are preserved. Registration/discovery before a session has no `session.id`;
+capture never creates a synthetic session or span. These definitions use
+`snapshot.version=0` and do not advance execution-state counters.
+Existing message metadata and trace correlation are unchanged.
+
+For A2A, the instrumentor also emits the client's stored target card when sending
+and the handler's stored local card when receiving, when those cards are available.
+These additional `a2a.agent_card` events share the message event's real session and
+current trace/span context, plus `message.id` and `operation.name`. Startup and
+discovery observations are retained separately; their absent execution IDs are
+not replaced with guessed IDs. No full cards are added to transport metadata.
+
+`OBSERVE_TRACE_CONTENT=false` omits content (`disabled`);
+`OBSERVE_TRACING_ENABLED=false` disables capture, and
+`OBSERVE_REALTIME_OBSERVABILITY_ENABLED=false` disables runtime-event delivery.
+Credential metadata and URL
+credentials/query strings are redacted (`redacted`). Declared input/output schemas
+are preserved, so secrets in schema defaults or arbitrary free text require content
+capture to be disabled. Payloads exceeding `OBSERVE_CAPABILITY_MAX_PAYLOAD_BYTES`
+(default 262144 UTF-8 bytes) are omitted and marked `truncated`, never labeled complete.
+
+These are OTel log records emitted under `ioa_observe.runtime_events`, not span
+events. They travel through the existing Collector log pipeline to `otel_logs`
+and the configured event exporter.
+The A2A event name is `a2a.agent_card` (with an underscore), not `a2a.agent.card`.
+Capture supports both A2A 0.3 Pydantic cards and A2A 1.x protobuf cards, including
+the examples' `DefaultRequestHandler` registration and extended-card methods.
+
+```sql
+SELECT Timestamp, ServiceName, TraceId, SpanId,
+       LogAttributes['capability.source'] AS source,
+       LogAttributes['capability.capture.state'] AS capture_state,
+       LogAttributes['capability.content'] AS card_json
+FROM otel_logs
+WHERE EventName = 'a2a.agent_card'
+ORDER BY Timestamp DESC;
+```
+
+External normalizers must accept these event names, decode `capability.content`,
+and allow session-independent definitions; this repository does not own their
+`normalized_events` projection. The execution materializer reads but ignores
+capability definitions rather than treating them as topology or tool activity.
+This capture does not map definitions to LLM presentations or add a separate
+evidence store.
+
 #### In-process (no backend) consumption
 
 For local development or a quick demo, you can feed runtime events straight into
