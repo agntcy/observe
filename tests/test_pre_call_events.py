@@ -541,3 +541,42 @@ def test_raw_openai_client_emits_llm_started_with_the_prompt_before_the_request_
         e["event.name"] for e in realtime_events if e.get("llm.call.id") == call_id
     ]
     assert names.index("llm.started") < names.index("llm.completed")
+
+
+def test_mcp_list_request_is_told_apart_from_a_tool_call(realtime_events):
+    """``tools/list`` emits ``mcp.message.sent`` with its method in ``operation.name`` and no ``tool.started``."""
+    pytest.importorskip("mcp.types")
+    session_id = "session-123"
+    kv_store.set(f"execution.{TRACEPARENT}", session_id)
+
+    class Params:
+        meta = None
+
+        def model_dump(self, **kwargs):
+            return {}
+
+    root = SimpleNamespace(method="tools/list", params=Params(), id="req-2")
+    session = SimpleNamespace(
+        _write_stream=SimpleNamespace(observe_peer_name="mcp://math-server")
+    )
+
+    async def wrapped(*args, **kwargs):
+        mcp_instrumentation.McpInstrumentor._inject_with_staged_tool_call(
+            lambda: None, None, (), {}
+        )
+        return SimpleNamespace(isError=False, tools=[])
+
+    instrumented = mcp_instrumentation.McpInstrumentor().patch_mcp_client(
+        trace.get_tracer(__name__)
+    )
+    ctx = context.set_value("current_traceparent", TRACEPARENT)
+    ctx = context.set_value("session.id", session_id, context=ctx)
+    token = context.attach(context.set_value("workflow_name", "planner", context=ctx))
+    try:
+        asyncio.run(instrumented(wrapped, session, (SimpleNamespace(root=root),), {}))
+    finally:
+        context.detach(token)
+
+    [sent] = [e for e in realtime_events if e["event.name"] == "mcp.message.sent"]
+    assert sent["operation.name"] == "tools/list"
+    assert tool_started(realtime_events) == []
