@@ -338,6 +338,7 @@ def test_session_start_emits_span(exporter_with_custom_span_processor):
     spans = exporter_with_custom_span_processor.get_finished_spans()
     session_span = next(span for span in spans if span.name == "session.start")
     assert session_span.attributes["application.id"] == TracerWrapper.app_name
+    assert session_span.attributes["application_id"] == TracerWrapper.app_name
     assert session_span.attributes["session.id"] == metadata["executionID"]
     assert session_span.attributes["session.started_at"] is not None
 

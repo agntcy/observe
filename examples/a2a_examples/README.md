@@ -18,10 +18,6 @@ Install the locked environment:
 
 `uv sync`
 
-For integration scope, current gaps, and acceptance evidence, see the
-[Phase 1 event subscription and span correlation plan](EVENT_STREAM_POC_PLAN.md)
-and the [Phase 2 A2A Enforcement and Cognition Store plan](A2A_ENFORCEMENT_POC_PLAN.md).
-
 ## Plain A2A example
 
 Start the server:

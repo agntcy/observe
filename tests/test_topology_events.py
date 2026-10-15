@@ -5,6 +5,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from opentelemetry import trace
 from opentelemetry import context as context_api
 from opentelemetry.context import set_value
 from opentelemetry.sdk.trace import TracerProvider
@@ -39,6 +40,7 @@ from ioa_observe.sdk.tracing.topology import (
 )
 from ioa_observe.sdk.tracing.tracing import TracerWrapper
 from ioa_observe.sdk.tracing import runtime_event_emitter
+from ioa_observe.sdk.tracing.runtime_events import identify_runtime_event
 from ioa_observe.sdk.utils.const import (
     OBSERVE_AGENT_SPAN_ID,
     OBSERVE_AGENT_TRACE_ID,
@@ -372,7 +374,7 @@ def test_mcp_send_and_receive_emit_live_edge_events(topology_events):
     assert snapshot["version"] >= 2
 
 
-@pytest.mark.parametrize("protocol", ["a2a", "mcp"])
+@pytest.mark.parametrize("protocol", ["a2a", "mcp", "slim"])
 @pytest.mark.parametrize("direction", ["sent", "received"])
 @pytest.mark.parametrize(
     "source_ids",
@@ -384,6 +386,7 @@ def test_mcp_send_and_receive_emit_live_edge_events(topology_events):
         {},
         {"last_agent_span_id": "", "last_agent_trace_id": None},
         {"last_agent_span_id": "0000000000000123"},
+        {"last_agent_span_id": 123, "last_agent_trace_id": 456},
     ],
 )
 def test_transport_events_preserve_source_ids_and_local_log_context(
@@ -399,7 +402,7 @@ def test_transport_events_preserve_source_ids_and_local_log_context(
     )
     set_realtime_observability_enabled(True)
     observe_meta = {
-        "session_id" if protocol == "a2a" else "session.id": "session-123",
+        "session.id" if protocol == "mcp" else "session_id": "session-123",
         "last_agent_name": "planner",
         "target_agent": "executor",
         "traceparent": "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
@@ -425,13 +428,21 @@ def test_transport_events_preserve_source_ids_and_local_log_context(
                     _emit_a2a_receive_topology_event(
                         params, SimpleNamespace(name="executor"), "on_message_send"
                     )
-            else:
+            elif protocol == "mcp":
                 emit = (
                     _emit_mcp_send_topology_event
                     if direction == "sent"
                     else _emit_mcp_receive_topology_event
                 )
                 emit(observe_meta, "tools/call", message_id="msg-123")
+            else:
+                observe_meta["message_id"] = "msg-123"
+                emit = (
+                    _emit_slim_send_topology_event
+                    if direction == "sent"
+                    else _emit_slim_receive_topology_event
+                )
+                emit(observe_meta, "publish" if direction == "sent" else "receive")
     finally:
         provider.shutdown()
 
@@ -444,15 +455,96 @@ def test_transport_events_preserve_source_ids_and_local_log_context(
     assert record.attributes["session.id"] == "session-123"
     assert record.attributes["message.id"] == "msg-123"
     event = next(event for event in topology_events if event["type"] == event_name)
+    edge_record = next(
+        record for record in records if record.event_name == "topology.edge.updated"
+    )
+    edge_event = next(
+        event for event in topology_events if event["type"] == "topology.edge.updated"
+    )
+    assert edge_record.trace_id == local_context.trace_id
+    assert edge_record.span_id == local_context.span_id
+    assert (
+        edge_record.attributes["event.id"]
+        == identify_runtime_event(edge_record.attributes)["event.id"]
+    )
     for kind in ("span", "trace"):
         source_id = source_ids.get(f"last_agent_{kind}_id")
         attribute = f"source.agent.{kind}.id"
-        if source_id:
-            assert record.attributes[attribute] == source_id
-            assert event[f"source_agent_{kind}_id"] == source_id
-            assert record.attributes[attribute] != record.attributes[f"{kind}.id"]
+        if isinstance(source_id, str) and source_id:
+            assert edge_record.attributes[attribute] == source_id
+            assert edge_event[f"source_agent_{kind}_id"] == source_id
+            assert (
+                edge_record.attributes[attribute]
+                != edge_record.attributes[f"{kind}.id"]
+            )
+            if protocol != "slim":
+                assert record.attributes[attribute] == source_id
+                assert event[f"source_agent_{kind}_id"] == source_id
+                assert record.attributes[attribute] != record.attributes[f"{kind}.id"]
         else:
             assert attribute not in record.attributes
+            assert attribute not in edge_record.attributes
+
+
+@pytest.mark.parametrize("mode", ["temporal", "parent_span", "framework"])
+def test_handoff_edge_references_source_agent_span(monkeypatch, topology_events, mode):
+    records = []
+    monkeypatch.setattr(
+        runtime_event_emitter, "_ensure_runtime_event_logger", lambda: None
+    )
+    monkeypatch.setattr(
+        "opentelemetry._logs.get_logger",
+        lambda name: SimpleNamespace(emit=records.append),
+    )
+    contexts = {}
+
+    @agent(name="source_agent")
+    def source_agent():
+        contexts["source"] = trace.get_current_span().get_span_context()
+        if mode == "parent_span":
+            target_agent()
+        if mode == "framework":
+            command_type = type("Command", (), {"__module__": "langgraph.types"})
+            command = command_type()
+            command.goto = "target_agent"
+            return command
+
+    @agent(name="target_agent")
+    def target_agent():
+        contexts["target"] = trace.get_current_span().get_span_context()
+
+    @agent(name="unrelated_agent")
+    def unrelated_agent():
+        pass
+
+    with session_start():
+        source_agent()
+        if mode == "framework":
+            unrelated_agent()
+        if mode != "parent_span":
+            target_agent()
+
+    record = next(
+        record
+        for record in records
+        if record.event_name == "topology.edge.updated"
+        and record.attributes["source.agent"] == "source_agent"
+        and record.attributes["target.agent"] == "target_agent"
+    )
+    assert record.attributes["source.agent.span.id"] == (
+        f"{contexts['source'].span_id:016x}"
+    )
+    assert record.attributes["source.agent.trace.id"] == (
+        f"{contexts['source'].trace_id:032x}"
+    )
+    assert record.attributes["span.id"] == f"{contexts['target'].span_id:016x}"
+    event = next(
+        event
+        for event in topology_events
+        if event.get("edge_id") == "agent_handoff:source_agent->target_agent"
+    )
+    assert event["source_agent_span_id"] == record.attributes["source.agent.span.id"]
+    assert event["source_agent_trace_id"] == record.attributes["source.agent.trace.id"]
 
 
 def test_observe_init_can_disable_realtime_topology_events(topology_events):

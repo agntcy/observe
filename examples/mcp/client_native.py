@@ -33,6 +33,7 @@ McpInstrumentor().instrument()
 @agent(
     name="math_agent",
     description="An agent that calls MCP tools to perform math operations.",
+    application_id="MCP app",
 )
 async def math_agent(url: str):
     """Connect to an MCP server and call its tools."""

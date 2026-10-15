@@ -110,6 +110,8 @@ def _emit_slim_send_topology_event(headers, operation):
         kind="slim_message",
         evidence="transport:slim",
         confidence=1.0,
+        source_agent_span_id=headers.get("last_agent_span_id"),
+        source_agent_trace_id=headers.get("last_agent_trace_id"),
     )
     emit_topology_event(
         RuntimeEventName.SLIM_MESSAGE_SENT.value,
@@ -153,6 +155,8 @@ def _emit_slim_receive_topology_event(headers, operation):
         kind="slim_message",
         evidence="transport:slim",
         confidence=1.0,
+        source_agent_span_id=headers.get("last_agent_span_id"),
+        source_agent_trace_id=headers.get("last_agent_trace_id"),
     )
     emit_topology_event(
         RuntimeEventName.SLIM_MESSAGE_RECEIVED.value,

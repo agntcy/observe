@@ -151,6 +151,82 @@ def test_genai_events_retain_enclosing_agent_correlation(
         assert attributes[key] == value
 
 
+@pytest.mark.parametrize("lifecycle", [SpanLifecycle.START, SpanLifecycle.END])
+@pytest.mark.parametrize(
+    ("kind", "provider_attributes"),
+    [
+        (SpanKind.INTERNAL, {}),
+        (SpanKind.CLIENT, {"gen_ai.provider.name": "openai"}),
+    ],
+)
+def test_genai_agent_events_map_input_messages(lifecycle, kind, provider_attributes):
+    agent_input = '[{"role":"user","parts":[{"type":"text","content":"Weather?"}]}]'
+    event = GenAIRuntimeEventMapper()(
+        observation(
+            lifecycle,
+            {
+                "gen_ai.operation.name": "invoke_agent",
+                "gen_ai.conversation.id": "conversation-123",
+                "gen_ai.agent.name": "Weather Agent",
+                "gen_ai.input.messages": agent_input,
+                **provider_attributes,
+            },
+            kind=kind,
+        ),
+        1,
+    )[0]
+
+    assert event.to_otel_attributes()[RuntimeEventAttribute.AGENT_INPUT.value] == (
+        agent_input
+    )
+    assert RuntimeEventAttribute.AGENT_OUTPUT.value not in event.to_otel_attributes()
+
+
+@pytest.mark.parametrize("lifecycle", [SpanLifecycle.START, SpanLifecycle.END])
+@pytest.mark.parametrize(
+    "operation_attributes",
+    [
+        {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "lookup",
+        },
+        *[
+            {
+                "gen_ai.operation.name": operation,
+                "gen_ai.provider.name": "openai",
+                "gen_ai.request.model": "gpt-5",
+            }
+            for operation in ("chat", "generate_content", "text_completion")
+        ],
+    ],
+)
+@pytest.mark.parametrize("agent_name", ["Weather Agent", None, "", 123])
+def test_genai_tool_and_model_events_map_optional_agent_name(
+    lifecycle, operation_attributes, agent_name
+):
+    attributes = {
+        **operation_attributes,
+        "gen_ai.conversation.id": "conversation-123",
+    }
+    if agent_name is not None:
+        attributes["gen_ai.agent.name"] = agent_name
+    event = GenAIRuntimeEventMapper()(
+        observation(lifecycle, attributes),
+        1,
+    )[0]
+    mapped = event.to_otel_attributes()
+
+    if isinstance(agent_name, str) and agent_name:
+        assert mapped[RuntimeEventAttribute.AGENT_NAME.value] == agent_name
+    else:
+        assert RuntimeEventAttribute.AGENT_NAME.value not in mapped
+    if (
+        operation_attributes["gen_ai.operation.name"] == "execute_tool"
+        and agent_name is not None
+    ):
+        assert mapped["gen_ai.agent.name"] == agent_name
+
+
 def test_genai_tool_execution_maps_standardized_input_and_output():
     mapper = GenAIRuntimeEventMapper()
     attributes = {

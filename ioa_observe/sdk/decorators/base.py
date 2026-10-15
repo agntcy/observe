@@ -464,6 +464,16 @@ def _setup_span(
                 register_active_span(session_id, new_seq, span)
                 record_node_started(session_id, entity_name, agent_input=entity_input)
                 if previous_agent_name:
+                    source_context = next(
+                        (
+                            link.context
+                            for link in links
+                            if (link.attributes or {}).get("link.from_agent")
+                            == previous_agent_name
+                            and link.context.is_valid
+                        ),
+                        None,
+                    )
                     upsert_topology_edge(
                         session_id,
                         previous_agent_name,
@@ -478,6 +488,16 @@ def _setup_span(
                         kind="agent_handoff",
                         evidence=handoff_evidence,
                         confidence=handoff_confidence,
+                        source_agent_span_id=(
+                            format(source_context.span_id, "016x")
+                            if source_context is not None
+                            else None
+                        ),
+                        source_agent_trace_id=(
+                            format(source_context.trace_id, "032x")
+                            if source_context is not None
+                            else None
+                        ),
                     )
 
             # Annotate fork attributes if this agent is a fork branch
@@ -756,6 +776,9 @@ def _cleanup_span(span, ctx_token):
         is_error = span.status.status_code is trace.StatusCode.ERROR
         tool_attributes = {
             RuntimeEventAttribute.TOOL_NAME.value: tool_name,
+            RuntimeEventAttribute.TOOL_INPUT.value: span.attributes.get(
+                OBSERVE_ENTITY_INPUT
+            ),
             RuntimeEventAttribute.TOOL_OUTPUT.value: tool_output,
             RuntimeEventAttribute.TOOL_STATUS.value: (
                 "error" if is_error else "success"

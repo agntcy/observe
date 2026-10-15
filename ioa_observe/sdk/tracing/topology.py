@@ -9,6 +9,9 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from opentelemetry import trace
+
+from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.config import (
     is_realtime_observability_enabled,
     realtime_max_sessions,
@@ -89,8 +92,20 @@ def clear_topology_listeners() -> None:
         _session_graphs.clear()
 
 
-def record_session_started(session_id: str) -> None:
+def record_session_started(
+    session_id: str, *, application_id: str | None = None
+) -> None:
+    if application_id is None:
+        application_id = (
+            getattr(trace.get_current_span(), "attributes", None) or {}
+        ).get(RuntimeEventAttribute.APPLICATION_ID.value)
+    if application_id is not None and (
+        not isinstance(application_id, str) or not application_id
+    ):
+        raise ValueError("application_id must be a non-empty string")
     with _lock:
+        if application_id is not None:
+            kv_store.set(f"session.{session_id}.application_id", application_id)
         graph = _get_or_create_graph(session_id)
         graph.version += 1
         _touch_graph(graph)
@@ -105,6 +120,7 @@ def record_session_started(session_id: str) -> None:
             RuntimeEventName.TOPOLOGY_SESSION_STARTED,
             session_id=session_id,
             snapshot_version=graph.version,
+            application_id=application_id,
         )
 
     _publish(event, runtime_attributes)
@@ -125,6 +141,7 @@ def record_session_completed(session_id: str) -> None:
             RuntimeEventName.TOPOLOGY_SESSION_COMPLETED,
             session_id=session_id,
             snapshot_version=graph.version,
+            application_id=kv_store.get(f"session.{session_id}.application_id"),
         )
 
     _publish(event, runtime_attributes)
@@ -226,6 +243,8 @@ def upsert_topology_edge(
     kind: str = "agent_handoff",
     evidence: str | None = None,
     confidence: float | None = None,
+    source_agent_span_id: str | None = None,
+    source_agent_trace_id: str | None = None,
 ) -> None:
     edge_id = f"{transport}:{source}->{target}"
     if kind == "agent_handoff":
@@ -257,6 +276,8 @@ def upsert_topology_edge(
             "edge_id": edge_id,
             "snapshot_version": graph.version,
             "snapshot": graph.snapshot(),
+            "source_agent_span_id": source_agent_span_id,
+            "source_agent_trace_id": source_agent_trace_id,
         }
         runtime_attributes = build_runtime_event_attributes(
             RuntimeEventName.TOPOLOGY_EDGE_UPDATED,
@@ -275,6 +296,7 @@ def upsert_topology_edge(
                 "topology.edge.status": status,
                 "network.protocol.name": transport,
                 "operation.name": operation,
+                **_source_agent_attributes(event),
             },
         )
 
@@ -332,6 +354,17 @@ def next_session_event_version(session_id: str) -> int:
         return graph.version
 
 
+def _source_agent_attributes(attributes: dict[str, Any]) -> dict[str, str]:
+    return {
+        attribute.value: value
+        for key, attribute in (
+            ("source_agent_span_id", RuntimeEventAttribute.SOURCE_AGENT_SPAN_ID),
+            ("source_agent_trace_id", RuntimeEventAttribute.SOURCE_AGENT_TRACE_ID),
+        )
+        if isinstance(value := attributes.get(key), str) and value
+    }
+
+
 def _runtime_attributes_for_event(
     event_type: str,
     session_id: str,
@@ -344,13 +377,7 @@ def _runtime_attributes_for_event(
         payload[RuntimeEventAttribute.AGENT_NAME.value] = attributes["agent_name"]
     if "source" in attributes:
         payload[RuntimeEventAttribute.SOURCE_AGENT.value] = attributes["source"]
-    for key, attribute in (
-        ("source_agent_span_id", RuntimeEventAttribute.SOURCE_AGENT_SPAN_ID),
-        ("source_agent_trace_id", RuntimeEventAttribute.SOURCE_AGENT_TRACE_ID),
-    ):
-        value = attributes.get(key)
-        if isinstance(value, str) and value:
-            payload[attribute.value] = value
+    payload.update(_source_agent_attributes(attributes))
     if "target" in attributes:
         payload[RuntimeEventAttribute.TARGET_AGENT.value] = attributes["target"]
     if "message_id" in attributes:

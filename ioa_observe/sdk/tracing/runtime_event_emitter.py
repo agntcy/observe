@@ -63,6 +63,10 @@ def emit_runtime_event(
     )
     event = dict(attributes)
     event.update(correlation)
+    application_id = attributes.get("application_id")
+    if isinstance(application_id, str) and application_id:
+        # Stored session identity takes precedence over an unrelated current span.
+        event["application_id"] = application_id
     event = identify_runtime_event(event)
     _emit_to_listeners(event)
     _emit_to_otel_logs(event, span_context)

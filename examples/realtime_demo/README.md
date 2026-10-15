@@ -60,6 +60,21 @@ provider.add_span_processor(
 )
 ```
 
+The default mapper reads `gen_ai.conversation.id` as the session ID and maps
+`invoke_agent`, `execute_tool`, `chat`, `generate_content`, and `text_completion`
+spans to runtime events. Agent `gen_ai.input.messages` becomes `agent.input`
+on both start and completion events when available; `gen_ai.output.messages`
+becomes `agent.output` on completion. A non-empty `gen_ai.agent.name` on an
+agent, model, or tool span becomes `agent.name`. Tool events also retain the
+existing `gen_ai.agent.name` attribute for compatibility.
+
+Message content is forwarded only when the source instrumentation records it;
+the processor does not enable content capture or infer agent names from parent
+spans. Attributes needed for start events must be supplied at span creation.
+Attributes added later are available only on completion events. Protocol and
+capability events, session lifecycle events, and topology edges are not inferred
+by this mapper.
+
 ## How it maps to production
 
 In production the materializer lives **downstream** and consumes the same OTel

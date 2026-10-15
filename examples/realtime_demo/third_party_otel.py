@@ -28,6 +28,14 @@ def run_weather_agent(tracer: Tracer) -> None:
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.conversation.id": conversation_id,
             "gen_ai.agent.name": "Weather Agent",
+            "gen_ai.input.messages": json.dumps(
+                [
+                    {
+                        "role": "user",
+                        "parts": [{"type": "text", "content": "Weather?"}],
+                    }
+                ]
+            ),
         },
     ):
         with tracer.start_as_current_span(
@@ -37,6 +45,7 @@ def run_weather_agent(tracer: Tracer) -> None:
                 "gen_ai.operation.name": "chat",
                 "gen_ai.provider.name": "openai",
                 "gen_ai.conversation.id": conversation_id,
+                "gen_ai.agent.name": "Weather Agent",
                 "gen_ai.request.model": "gpt-5",
                 "gen_ai.input.messages": json.dumps(
                     [
