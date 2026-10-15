@@ -187,6 +187,7 @@ def test_a2a_outbound_wire_matches_send_event_and_restores_methods(
     metadata = a2a._safe_get_metadata(received[0][0])
     observe = metadata["observe"]
     sent = next(event for event in events if event["event.name"] == "a2a.message.sent")
+    assert observe["event.id"] == sent["event.id"]
     assert observe["traceparent"] != INCOMING
     _, trace_id, span_id, flags = observe["traceparent"].split("-")
     assert sent["trace.id"] == trace_id

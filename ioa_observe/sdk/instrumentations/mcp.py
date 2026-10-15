@@ -208,7 +208,7 @@ def _emit_mcp_send_topology_event(
         evidence="transport:mcp",
         confidence=1.0,
     )
-    emit_topology_event(
+    event = emit_topology_event(
         RuntimeEventName.MCP_MESSAGE_SENT.value,
         session_id=session_id,
         include_snapshot=True,
@@ -222,6 +222,8 @@ def _emit_mcp_send_topology_event(
         source_agent_span_id=observe_meta.get("last_agent_span_id"),
         source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
     )
+    if event is not None:
+        observe_meta["event.id"] = event["event.id"]
 
 
 def _emit_mcp_receive_topology_event(
@@ -267,6 +269,7 @@ def _emit_mcp_receive_topology_event(
         protocol="mcp",
         source_agent_span_id=observe_meta.get("last_agent_span_id"),
         source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
+        parent_event_id=observe_meta.get("event.id"),
     )
 
 
@@ -633,15 +636,15 @@ class McpInstrumentor(BaseInstrumentor):
                 if target_agent:
                     observe_meta["target_agent"] = target_agent
 
-                # Inject observe metadata into request params._meta
-                if observe_meta and request_root is not None:
-                    _set_request_meta(request_root, params, observe_meta)
-
                 _emit_mcp_send_topology_event(
                     observe_meta,
                     str(method or "send_request"),
                     message_id=str(request_id) if request_id is not None else None,
                 )
+
+                # Inject observe metadata into request params._meta
+                if observe_meta and request_root is not None:
+                    _set_request_meta(request_root, params, observe_meta)
 
                 try:
                     result = await wrapped(*args, **kwargs)

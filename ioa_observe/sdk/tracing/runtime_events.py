@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -45,6 +47,8 @@ CAPABILITY_EVENT_NAMES = frozenset(
 
 
 class RuntimeEventAttribute(str, Enum):
+    EVENT_ID = "event.id"
+    EVENT_PARENT_ID = "event.parent.id"
     EVENT_NAME = "event.name"
     EVENT_TIME = "event.time"
     SESSION_ID = "session.id"
@@ -177,6 +181,21 @@ class RuntimeEvent:
 
         validate_runtime_event_attributes(event_name, attributes)
         return attributes
+
+
+def identify_runtime_event(
+    attributes: Mapping[str, str | bool | int | float],
+) -> dict[str, str | bool | int | float]:
+    event = {
+        key: value
+        for key, value in attributes.items()
+        if key != RuntimeEventAttribute.EVENT_ID.value
+    }
+    payload = json.dumps(
+        event, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    ).encode("utf-8")
+    event[RuntimeEventAttribute.EVENT_ID.value] = hashlib.sha256(payload).hexdigest()
+    return event
 
 
 def span_correlation_attributes(

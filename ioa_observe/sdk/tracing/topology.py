@@ -287,7 +287,7 @@ def emit_topology_event(
     session_id: str,
     include_snapshot: bool = False,
     **attributes: Any,
-) -> None:
+) -> dict[str, str | bool | int | float] | None:
     with _lock:
         graph = _get_or_create_graph(session_id)
         _touch_graph(graph)
@@ -307,7 +307,7 @@ def emit_topology_event(
             attributes,
         )
 
-    _publish(event, runtime_attributes)
+    return _publish(event, runtime_attributes)
 
 
 def get_live_topology_snapshot(session_id: str) -> dict[str, Any]:
@@ -363,6 +363,10 @@ def _runtime_attributes_for_event(
         payload["network.protocol.name"] = attributes["protocol"]
     if "operation" in attributes:
         payload["operation.name"] = attributes["operation"]
+    if "parent_event_id" in attributes:
+        payload[RuntimeEventAttribute.EVENT_PARENT_ID.value] = attributes[
+            "parent_event_id"
+        ]
 
     return build_runtime_event_attributes(
         event_name,
@@ -375,11 +379,12 @@ def _runtime_attributes_for_event(
 def _publish(
     event: dict[str, Any],
     runtime_attributes: dict[str, str | bool | int | float],
-) -> None:
+) -> dict[str, str | bool | int | float] | None:
     if not is_realtime_observability_enabled():
         return
-    emit_runtime_event(runtime_attributes)
+    emitted = emit_runtime_event(runtime_attributes)
     _notify_listeners(event)
+    return emitted
 
 
 def _notify_listeners(event: dict[str, Any]) -> None:

@@ -14,6 +14,7 @@ from ioa_observe.sdk.tracing import (
     RuntimeEventName,
     RuntimeEventSpanProcessor,
 )
+from ioa_observe.sdk.tracing.runtime_events import identify_runtime_event
 from ioa_observe.sdk.utils.const import OBSERVE_AGENT_SPAN_ID, OBSERVE_AGENT_TRACE_ID
 
 
@@ -83,6 +84,13 @@ def test_processor_exports_correlated_event_logs_without_replacing_global_provid
     assert all(
         record.resource.attributes["service.name"] == "third-party-agent"
         for record in exporter.records
+    )
+    for record in exporter.records:
+        attributes = record.log_record.attributes
+        assert attributes["event.id"] == identify_runtime_event(attributes)["event.id"]
+    assert (
+        len({record.log_record.attributes["event.id"] for record in exporter.records})
+        == 2
     )
 
     provider.shutdown()

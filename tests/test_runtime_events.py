@@ -1,6 +1,7 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -37,6 +38,7 @@ from ioa_observe.sdk.tracing import (
 )
 from ioa_observe.sdk.config import set_realtime_observability_enabled
 from ioa_observe.sdk.tracing.runtime_events import (
+    identify_runtime_event,
     span_correlation_attributes,
     validate_runtime_event_attributes,
 )
@@ -100,6 +102,55 @@ def test_builds_session_started_runtime_event_attributes():
     assert attributes[RuntimeEventAttribute.SESSION_ID.value] == "session-123"
     assert attributes[RuntimeEventAttribute.SNAPSHOT_VERSION.value] == 1
     assert RuntimeEventAttribute.EVENT_TIME.value in attributes
+
+
+def test_event_identity_is_canonical_and_excludes_itself():
+    attributes = {
+        "event.name": "tool.started",
+        "tool.input": "caf\u00e9",
+        "sequence": 1,
+    }
+    expected = hashlib.sha256(
+        b'{"event.name":"tool.started","sequence":1,"tool.input":"caf\\u00e9"}'
+    ).hexdigest()
+    identified = identify_runtime_event(attributes)
+    assert identified["event.id"] == expected
+    assert "event.id" not in attributes
+    assert (
+        identify_runtime_event(dict(reversed(list(attributes.items())))) == identified
+    )
+    assert identify_runtime_event({**attributes, "event.id": "stale"}) == identified
+    assert identify_runtime_event(identified) == identified
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("event.name", "tool.completed"),
+        ("event.time", "2026-10-15T12:00:01+00:00"),
+        ("session.id", "other-session"),
+        ("snapshot.version", 2),
+        ("tool.input", '{"x":2}'),
+        ("trace.id", "other-trace"),
+        ("span.id", "other-span"),
+        ("sequence", "1"),
+    ],
+)
+def test_event_identity_includes_final_attributes(field, value):
+    attributes = {
+        "event.name": "tool.started",
+        "event.time": "2026-10-15T12:00:00+00:00",
+        "session.id": "session-123",
+        "snapshot.version": 1,
+        "tool.input": '{"x":1}',
+        "trace.id": "trace",
+        "span.id": "span",
+        "sequence": 1,
+    }
+    assert (
+        identify_runtime_event(attributes)["event.id"]
+        != identify_runtime_event({**attributes, field: value})["event.id"]
+    )
 
 
 @pytest.mark.parametrize("application_id", [None, "", 123])
@@ -299,6 +350,9 @@ def test_a2a_helpers_push_runtime_events(runtime_events):
     assert sent[RuntimeEventAttribute.SEQUENCE.value] == 2
     assert received[RuntimeEventAttribute.SOURCE_AGENT.value] == "planner"
     assert received[RuntimeEventAttribute.TARGET_AGENT.value] == "executor"
+    assert request.params.metadata["observe"]["event.id"] == sent["event.id"]
+    assert received["event.parent.id"] == sent["event.id"]
+    assert received["event.id"] != sent["event.id"]
 
 
 def test_slim_helpers_push_runtime_events(runtime_events):
@@ -372,6 +426,9 @@ def test_mcp_helpers_push_runtime_events(runtime_events):
     assert received[RuntimeEventAttribute.SOURCE_AGENT.value] == "planner"
     assert received[RuntimeEventAttribute.TARGET_AGENT.value] == "mcp://math-server"
     assert received[RuntimeEventAttribute.MESSAGE_ID.value] == "req-1"
+    assert observe_meta["event.id"] == sent["event.id"]
+    assert received["event.parent.id"] == sent["event.id"]
+    assert received["event.id"] != sent["event.id"]
 
 
 def test_tool_lifecycle_pushes_runtime_events(runtime_events):
@@ -855,6 +912,11 @@ def test_event_log_uses_source_span_instead_of_ambient_context(
     )
     assert runtime_events[0]["span.id"] == f"{context.span_id:016x}"
     assert runtime_events[0]["trace.id"] == f"{context.trace_id:032x}"
+    assert dict(record.attributes) == runtime_events[0]
+    assert (
+        identify_runtime_event(record.attributes)["event.id"]
+        == (record.attributes["event.id"])
+    )
     provider.shutdown()
 
 

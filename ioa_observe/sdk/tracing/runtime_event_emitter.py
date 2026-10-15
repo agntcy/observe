@@ -14,7 +14,10 @@ from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.trace import Span, SpanContext
 
 from ioa_observe.sdk.config import is_realtime_observability_enabled
-from ioa_observe.sdk.tracing.runtime_events import span_correlation_attributes
+from ioa_observe.sdk.tracing.runtime_events import (
+    identify_runtime_event,
+    span_correlation_attributes,
+)
 
 
 RuntimeEventListener = Callable[[dict[str, Any]], None]
@@ -47,7 +50,7 @@ def emit_runtime_event(
     attributes: Mapping[str, str | bool | int | float],
     *,
     span: Span | ReadableSpan | None = None,
-) -> None:
+) -> dict[str, str | bool | int | float] | None:
     if not is_realtime_observability_enabled():
         return
     if span is None:
@@ -60,8 +63,10 @@ def emit_runtime_event(
     )
     event = dict(attributes)
     event.update(correlation)
+    event = identify_runtime_event(event)
     _emit_to_listeners(event)
     _emit_to_otel_logs(event, span_context)
+    return event
 
 
 def _emit_to_listeners(event: dict[str, Any]) -> None:
