@@ -30,6 +30,7 @@ from ioa_observe.sdk.tracing.runtime_events import (
     RuntimeEvent,
     RuntimeEventAttribute,
     RuntimeEventName,
+    identify_runtime_event,
     span_correlation_attributes,
 )
 from ioa_observe.sdk.tracing.tool_results import tool_error_message
@@ -195,7 +196,7 @@ class OtelLogRuntimeEventEmitter:
                 severity_text="INFO",
                 severity_number=SeverityNumber.INFO,
                 body=event_name,
-                attributes=event.to_otel_attributes(),
+                attributes=identify_runtime_event(event.to_otel_attributes()),
                 event_name=event_name,
             )
         )

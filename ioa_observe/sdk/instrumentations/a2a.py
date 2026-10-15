@@ -192,7 +192,7 @@ def _emit_a2a_send_topology_event(request, client_instance, operation: str) -> N
         evidence="transport:a2a",
         confidence=1.0,
     )
-    emit_topology_event(
+    event = emit_topology_event(
         "a2a.message.sent",
         session_id=session_id,
         include_snapshot=True,
@@ -206,6 +206,11 @@ def _emit_a2a_send_topology_event(request, client_instance, operation: str) -> N
         source_agent_span_id=observe_meta.get("last_agent_span_id"),
         source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
     )
+    if event is not None:
+        metadata = dict(_safe_get_metadata(request))
+        observe_meta["event.id"] = event["event.id"]
+        metadata["observe"] = observe_meta
+        _set_metadata(request, metadata)
 
 
 def _emit_a2a_receive_topology_event(params, handler_instance, operation: str) -> None:
@@ -255,6 +260,7 @@ def _emit_a2a_receive_topology_event(params, handler_instance, operation: str) -
         protocol="a2a",
         source_agent_span_id=observe_meta.get("last_agent_span_id"),
         source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
+        parent_event_id=observe_meta.get("event.id"),
     )
 
 
