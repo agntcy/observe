@@ -221,6 +221,11 @@ evidence store.
 
 #### In-process (no backend) consumption
 
+Tool runtime events include the captured `tool.input` on both `tool.started`
+and `tool.completed`, including failed completions. Decorated tools reuse the
+input serialized before execution, subject to the existing content-capture
+setting and size limit; completion does not serialize the arguments again.
+
 For local development or a quick demo, you can feed runtime events straight into
 the materializer in-process via a listener — no Collector or ClickHouse required:
 
@@ -235,6 +240,13 @@ register_runtime_event_listener(materializer.apply_event)
 
 A runnable end-to-end example lives in [`examples/realtime_demo/`](examples/realtime_demo/)
 (`./run.sh`), which renders the live topology as a multi-agent workflow executes.
+
+`topology.edge.updated` runtime events include `source.agent.span.id` and
+`source.agent.trace.id` when the source reference is available. Protocol edges
+use the sender's propagated agent metadata; agent handoff edges use the source
+agent's OTel link. These identify the source agent, whereas `span.id` and
+`trace.id` identify the span emitting the update. Missing source references are
+omitted rather than replaced with the emitting span's IDs.
 
 #### Bounding live-state memory
 
@@ -305,6 +317,14 @@ def main():
         result = graph.invoke(inputs)
         print(result)
 ```
+
+The `topology.session.started` and `topology.session.completed` runtime events
+carry `application_id`, captured at session start from the tracing context or,
+if unset, the configured application name (default: `observe`). Completion
+reuses that stored ID, including during idle expiry and shutdown. The
+`session.start` span carries `application_id` alongside its existing
+`application.id` attribute. A decorator application ID set after session start
+does not change the session's application ID.
 
 **Manual Session Propagation via HTTP (Agent-to-Agent Communication):**
 

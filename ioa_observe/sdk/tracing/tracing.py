@@ -775,6 +775,11 @@ def session_start(apply_transform: bool = False):
                                Can be overridden by
                                SPAN_TRANSFORMER_RULES_ENABLED env var.
     """
+    application_id = get_value("application_id")
+    if application_id is None:
+        application_id = TracerWrapper.app_name or "observe"
+    if not isinstance(application_id, str) or not application_id:
+        raise ValueError("application_id must be a non-empty string")
     session_id = (TracerWrapper.app_name or "observe") + "_" + str(uuid.uuid4())
     set_session_id(session_id)
     started_at = time.time()
@@ -786,9 +791,10 @@ def session_start(apply_transform: bool = False):
     tracer = TracerWrapper().get_tracer()
     with tracer.start_as_current_span("session.start") as span:
         span.set_attribute("application.id", TracerWrapper.app_name or "observe")
+        span.set_attribute("application_id", application_id)
         span.set_attribute("session.id", session_id)
         span.set_attribute("session.started_at", started_at)
-        record_session_started(session_id)
+        record_session_started(session_id, application_id=application_id)
 
     # Check if environment variable overrides the apply_transform parameter
     transformer_enabled_env = os.getenv("SPAN_TRANSFORMER_RULES_ENABLED")

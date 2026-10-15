@@ -207,6 +207,8 @@ def _emit_mcp_send_topology_event(
         kind="mcp_message",
         evidence="transport:mcp",
         confidence=1.0,
+        source_agent_span_id=observe_meta.get("last_agent_span_id"),
+        source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
     )
     event = emit_topology_event(
         RuntimeEventName.MCP_MESSAGE_SENT.value,
@@ -255,6 +257,8 @@ def _emit_mcp_receive_topology_event(
         kind="mcp_message",
         evidence="transport:mcp",
         confidence=1.0,
+        source_agent_span_id=observe_meta.get("last_agent_span_id"),
+        source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
     )
     emit_topology_event(
         RuntimeEventName.MCP_MESSAGE_RECEIVED.value,

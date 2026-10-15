@@ -1,13 +1,16 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import hashlib
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from opentelemetry import trace
+from opentelemetry import context as context_api
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.semconv_ai import SpanAttributes
 
@@ -42,7 +45,12 @@ from ioa_observe.sdk.tracing.runtime_events import (
     span_correlation_attributes,
     validate_runtime_event_attributes,
 )
-from ioa_observe.sdk.tracing.topology import clear_topology_listeners
+from ioa_observe.sdk.tracing.topology import (
+    clear_topology_listeners,
+    record_session_completed,
+    record_session_started,
+)
+from ioa_observe.sdk.tracing.tracing import TracerWrapper
 from ioa_observe.sdk.utils.const import OBSERVE_AGENT_SPAN_ID, OBSERVE_AGENT_TRACE_ID
 
 
@@ -67,6 +75,114 @@ def runtime_events():
     register_runtime_event_listener(events.append)
     yield events
     unregister_runtime_event_listener(events.append)
+
+
+@pytest.mark.parametrize(
+    ("app_name", "context_application_id", "expected"),
+    [
+        ("session-app", None, "session-app"),
+        (None, None, "observe"),
+        ("session-app", "context-app", "context-app"),
+    ],
+)
+def test_session_events_retain_application_id(
+    monkeypatch, runtime_events, app_name, context_application_id, expected, exporter
+):
+    from ioa_observe.sdk.tracing import runtime_event_emitter
+
+    records = []
+    monkeypatch.setattr(
+        runtime_event_emitter, "_ensure_runtime_event_logger", lambda: None
+    )
+    monkeypatch.setattr(
+        "opentelemetry._logs.get_logger",
+        lambda name: SimpleNamespace(emit=records.append),
+    )
+    monkeypatch.setattr(TracerWrapper, "app_name", app_name)
+    token = context_api.attach(
+        context_api.set_value("application_id", context_application_id)
+    )
+    try:
+        with session_start() as metadata:
+            with trace.get_tracer(__name__).start_as_current_span(
+                "different-application", attributes={"application_id": "other-app"}
+            ):
+                record_session_completed(metadata["executionID"])
+    finally:
+        context_api.detach(token)
+
+    session_events = [
+        event
+        for event in runtime_events
+        if event["event.name"]
+        in {
+            RuntimeEventName.TOPOLOGY_SESSION_STARTED.value,
+            RuntimeEventName.TOPOLOGY_SESSION_COMPLETED.value,
+        }
+    ]
+    assert len(session_events) == 3
+    for event in session_events:
+        assert event["application_id"] == expected
+        assert event["event.id"] == identify_runtime_event(event)["event.id"]
+    assert [dict(record.attributes) for record in records] == session_events
+    TracerWrapper().flush()
+    session_span = next(
+        span
+        for span in exporter.get_finished_spans()
+        if span.name == "session.start"
+        and span.attributes["session.id"] == metadata["executionID"]
+    )
+    assert session_span.attributes["application.id"] == (app_name or "observe")
+    assert session_span.attributes["application_id"] == expected
+
+
+def test_session_completion_retains_application_id_without_context_or_topology(
+    monkeypatch, runtime_events
+):
+    monkeypatch.setenv("OBSERVE_REALTIME_MAX_SESSIONS", "1")
+    record_session_started("session-a", application_id="app-a")
+    record_session_started("session-b", application_id="app-b")
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        for session_id in ("session-a", "session-b"):
+            executor.submit(record_session_completed, session_id).result()
+
+    assert [
+        (event["session.id"], event["application_id"]) for event in runtime_events
+    ] == [
+        ("session-a", "app-a"),
+        ("session-b", "app-b"),
+        ("session-a", "app-a"),
+        ("session-b", "app-b"),
+    ]
+
+
+def test_direct_session_start_captures_current_span_application_id(runtime_events):
+    with trace.get_tracer(__name__).start_as_current_span(
+        "application", attributes={"application_id": "span-app"}
+    ):
+        record_session_started("session-123")
+    record_session_completed("session-123")
+
+    assert [event["application_id"] for event in runtime_events] == [
+        "span-app",
+        "span-app",
+    ]
+
+
+@pytest.mark.parametrize("application_id", ["", 123])
+def test_session_start_rejects_invalid_application_id(application_id, runtime_events):
+    with pytest.raises(ValueError, match="application_id must be a non-empty string"):
+        record_session_started("session-123", application_id=application_id)
+    token = context_api.attach(context_api.set_value("application_id", application_id))
+    try:
+        with pytest.raises(
+            ValueError, match="application_id must be a non-empty string"
+        ):
+            session_start()
+    finally:
+        context_api.detach(token)
+    assert runtime_events == []
 
 
 @agent(name="runtime_planner", description="Plans tasks")
@@ -466,6 +582,10 @@ def test_tool_lifecycle_pushes_runtime_events(runtime_events):
     assert json.loads(completed[RuntimeEventAttribute.TOOL_OUTPUT.value]) == {
         "tool_result": "lookup"
     }
+    assert (
+        completed[RuntimeEventAttribute.TOOL_INPUT.value]
+        == (started[RuntimeEventAttribute.TOOL_INPUT.value])
+    )
 
     # Tool events must carry a non-zero, monotonically increasing per-session
     # version so downstream materializers can order them deterministically.
@@ -481,6 +601,76 @@ def test_tool_lifecycle_pushes_runtime_events(runtime_events):
     assert all(version > 0 for version in tool_versions)
     assert tool_versions == sorted(tool_versions)
     assert len(set(tool_versions)) == len(tool_versions)
+
+
+@pytest.mark.parametrize("is_async", [False, True])
+@pytest.mark.parametrize("fails", [False, True])
+@pytest.mark.parametrize("capture_content", [False, True])
+def test_tool_completion_reuses_captured_input(
+    runtime_events, monkeypatch, is_async, fails, capture_content
+):
+    monkeypatch.setenv("OBSERVE_TRACE_CONTENT", str(capture_content).lower())
+
+    def execute(payload):
+        payload["task"] = "mutated"
+        if fails:
+            raise ValueError("tool failed")
+        return "done"
+
+    async def execute_async(payload):
+        return execute(payload)
+
+    instrumented_tool = tool(name="input_capture_tool")(
+        execute_async if is_async else execute
+    )
+
+    def invoke():
+        result = instrumented_tool({"task": "lookup"})
+        return asyncio.run(result) if is_async else result
+
+    with session_start():
+        if fails:
+            with pytest.raises(ValueError, match="tool failed"):
+                invoke()
+        else:
+            assert invoke() == "done"
+
+    started, completed = [
+        event
+        for event in runtime_events
+        if event.get("tool.name") == "input_capture_tool"
+    ]
+    assert completed["event.name"] == RuntimeEventName.TOOL_COMPLETED.value
+    assert completed["tool.status"] == ("error" if fails else "success")
+    if capture_content:
+        assert completed["tool.input"] == started["tool.input"]
+        assert json.loads(completed["tool.input"]) == {
+            "args": [{"task": "lookup"}],
+            "kwargs": {},
+        }
+    else:
+        assert "tool.input" not in started
+        assert "tool.input" not in completed
+    assert completed["event.id"] == identify_runtime_event(completed)["event.id"]
+
+
+def test_tool_completion_omits_oversized_input(runtime_events, monkeypatch):
+    monkeypatch.setenv("OBSERVE_TRACE_CONTENT", "true")
+
+    @tool(name="large_input_tool")
+    def large_input_tool(payload):
+        return "done"
+
+    with session_start():
+        assert large_input_tool("x" * 1_000_000) == "done"
+
+    tool_events = [
+        event
+        for event in runtime_events
+        if event.get("tool.name") == "large_input_tool"
+    ]
+    assert len(tool_events) == 2
+    assert all("tool.input" not in event for event in tool_events)
 
 
 def test_tool_completion_classifies_content_only_failures(runtime_events):

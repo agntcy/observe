@@ -191,6 +191,8 @@ def _emit_a2a_send_topology_event(request, client_instance, operation: str) -> N
         kind="a2a_message",
         evidence="transport:a2a",
         confidence=1.0,
+        source_agent_span_id=observe_meta.get("last_agent_span_id"),
+        source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
     )
     event = emit_topology_event(
         "a2a.message.sent",
@@ -246,6 +248,8 @@ def _emit_a2a_receive_topology_event(params, handler_instance, operation: str) -
         kind="a2a_message",
         evidence="transport:a2a",
         confidence=1.0,
+        source_agent_span_id=observe_meta.get("last_agent_span_id"),
+        source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
     )
     emit_topology_event(
         "a2a.message.received",

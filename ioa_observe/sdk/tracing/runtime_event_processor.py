@@ -339,6 +339,9 @@ class GenAIRuntimeEventMapper:
         else:
             return ()
         correlation = span_correlation_attributes(observation.attributes)
+        agent_name = observation.attributes.get("gen_ai.agent.name")
+        if isinstance(agent_name, str) and agent_name:
+            correlation[RuntimeEventAttribute.AGENT_NAME.value] = agent_name
         return tuple(
             replace(event, attributes={**event.attributes, **correlation})
             for event in events
@@ -370,6 +373,9 @@ class GenAIRuntimeEventMapper:
             RuntimeEventAttribute.AGENT_NAME.value: agent_name,
             "gen_ai.operation.name": "invoke_agent",
         }
+        agent_input = observation.attributes.get("gen_ai.input.messages")
+        if agent_input is not None:
+            attributes[RuntimeEventAttribute.AGENT_INPUT.value] = agent_input
         if observation.lifecycle is SpanLifecycle.END:
             agent_output = observation.attributes.get("gen_ai.output.messages")
             if agent_output is not None:
