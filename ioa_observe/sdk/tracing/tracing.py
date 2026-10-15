@@ -425,7 +425,7 @@ class TracerWrapper(object):
         if application_id is not None:
             span.set_attribute("application_id", application_id)
 
-        if is_llm_span(span):
+        if is_llm_span(span) and span.name not in _PRE_CALL_LLM_SPAN_NAMES:
             self.llm_call_counter.add(1, attributes=span.attributes)
             if session_id is not None:
                 llm_runtime_context = _llm_runtime_context(
@@ -1276,6 +1276,7 @@ def init_openai_instrumentor(
             )
             if not instrumentor.is_instrumented_by_opentelemetry:
                 instrumentor.instrument()
+                _emit_llm_started_after_openai_request()
         return True
 
     except Exception as e:
@@ -1362,6 +1363,55 @@ def init_langchain_instrumentor():
         logging.error(f"Error initializing LangChain instrumentor: {e}")
         Telemetry().log_exception(e)
         return False
+
+
+# Spans whose instrumentation sets the request on them right after they start. For these the span processor
+# does not emit ``llm.started`` when the span starts (the prompt is not there yet); the instrumentation is
+# wrapped to emit it once the request is on the span, and the end of the span emits it if that never happened.
+_PRE_CALL_LLM_SPAN_NAMES: set[str] = set()
+
+
+def _emit_llm_started_after_openai_request() -> None:
+    """Make the OpenAI instrumentation emit ``llm.started`` as soon as it has the request on the span."""
+    try:
+        import inspect
+
+        from opentelemetry.instrumentation.openai.shared import (
+            chat_wrappers,
+            completion_wrappers,
+        )
+        from wrapt import wrap_function_wrapper
+
+        def emit_started(span) -> None:
+            try:
+                emit_llm_started_for(span)
+            except Exception:
+                logging.getLogger(__name__).exception("pre-call llm.started failed")
+
+        def after_request(wrapped, instance, args, kwargs):
+            result = wrapped(*args, **kwargs)
+            span = args[0] if args else kwargs.get("span")
+            if inspect.isawaitable(result):
+
+                async def finish():
+                    value = await result
+                    emit_started(span)
+                    return value
+
+                return finish()
+            emit_started(span)
+            return result
+
+        for module, span_name in (
+            (chat_wrappers, chat_wrappers.SPAN_NAME),
+            (completion_wrappers, completion_wrappers.SPAN_NAME),
+        ):
+            if span_name in _PRE_CALL_LLM_SPAN_NAMES:
+                continue
+            wrap_function_wrapper(module.__name__, "_handle_request", after_request)
+            _PRE_CALL_LLM_SPAN_NAMES.add(span_name)
+    except Exception:
+        logging.getLogger(__name__).exception("could not enable pre-call llm.started")
 
 
 def emit_llm_started_for(span) -> None:

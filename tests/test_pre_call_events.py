@@ -3,6 +3,7 @@
 
 import asyncio
 import contextlib
+import http.server
 import json
 import threading
 from types import SimpleNamespace
@@ -171,6 +172,7 @@ def test_mcp_tool_call_event_points_to_the_outgoing_sent_event(realtime_events):
 def test_mcp_client_wrapper_stages_the_call_with_the_id_of_its_sent_event(
     realtime_events,
 ):
+    pytest.importorskip("mcp.types")
     traceparent = TRACEPARENT
     session_id = "session-123"
     kv_store.set(f"execution.{traceparent}", session_id)
@@ -445,3 +447,97 @@ def test_a_failing_llm_started_does_not_break_the_langchain_callback(
     )
 
     assert result == "original-result"
+
+
+def serve_chat_completions(on_request):
+    """A local OpenAI-compatible server; ``on_request`` is called when a request arrives, before it is answered."""
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("content-length", 0)))
+            on_request()
+            body = json.dumps(
+                {
+                    "id": "x",
+                    "object": "chat.completion",
+                    "model": "m",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "finish_reason": "stop",
+                            "message": {"role": "assistant", "content": "ok"},
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
+                    },
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+@pytest.mark.parametrize("use_async_client", [True, False], ids=["async", "sync"])
+def test_raw_openai_client_emits_llm_started_with_the_prompt_before_the_request_is_sent(
+    realtime_events, use_async_client
+):
+    openai = pytest.importorskip("openai")
+    pytest.importorskip("opentelemetry.instrumentation.openai")
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from ioa_observe.sdk import Observe
+    from ioa_observe.sdk.tracing import session_start
+
+    events_at_the_server = []
+    server = serve_chat_completions(
+        lambda: events_at_the_server.append([dict(e) for e in realtime_events])
+    )
+    base_url = f"http://127.0.0.1:{server.server_address[1]}/v1"
+    messages = [{"role": "user", "content": "Where is the train to Luminos?"}]
+    try:
+        Observe.init(
+            app_name="pre-call-openai",
+            exporter=InMemorySpanExporter(),
+            realtime_observability_enabled=True,
+        )
+        with session_start():
+            if use_async_client:
+
+                async def call():
+                    client = openai.AsyncOpenAI(
+                        base_url=base_url, api_key="k", max_retries=0
+                    )
+                    await client.chat.completions.create(model="m", messages=messages)
+
+                asyncio.run(call())
+            else:
+                client = openai.OpenAI(base_url=base_url, api_key="k", max_retries=0)
+                client.chat.completions.create(model="m", messages=messages)
+    finally:
+        server.shutdown()
+
+    [at_arrival] = events_at_the_server
+    started_before = [e for e in at_arrival if e["event.name"] == "llm.started"]
+    assert len(started_before) == 1
+    assert "Where is the train to Luminos?" in started_before[0]["llm.input"]
+    # Span processors left over from other tests in the same process each add their own events at the end of
+    # the span, so only the order for this call is asserted, not how many times each event appears.
+    call_id = started_before[0]["llm.call.id"]
+    names = [
+        e["event.name"] for e in realtime_events if e.get("llm.call.id") == call_id
+    ]
+    assert names.index("llm.started") < names.index("llm.completed")
