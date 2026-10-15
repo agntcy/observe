@@ -23,6 +23,7 @@ from ioa_observe.sdk.tracing.context_utils import (
     _get_outbound_session_id,
     _inject_outbound_context,
 )
+from ioa_observe.sdk.tracing.pre_call_events import emit_tool_started_before_send
 from ioa_observe.sdk.tracing.topology import emit_topology_event, upsert_topology_edge
 from ioa_observe.sdk.tracing.capability_capture import record_capability_event
 
@@ -154,6 +155,22 @@ def _safe_get_target_name(container=None, fallback=None) -> str | None:
     return None
 
 
+def _safe_get_message_text(request) -> str:
+    params = getattr(request, "params", None)
+    message = (
+        getattr(request, "message", None) or getattr(params, "message", None) or request
+    )
+    parts = getattr(message, "parts", None) or []
+    texts = []
+    for part in parts:
+        text = (
+            part.get("text") if isinstance(part, dict) else getattr(part, "text", None)
+        )
+        if isinstance(text, str) and text:
+            texts.append(text)
+    return "\n".join(texts)
+
+
 def _safe_get_current_actor_name() -> str:
     return str(get_value("workflow_name") or TracerWrapper.app_name or "unknown")
 
@@ -213,6 +230,15 @@ def _emit_a2a_send_topology_event(request, client_instance, operation: str) -> N
         observe_meta["event.id"] = event["event.id"]
         metadata["observe"] = observe_meta
         _set_metadata(request, metadata)
+    # The text of the message, on the span that the outgoing trace context carries, before it is sent.
+    emit_tool_started_before_send(
+        session_id,
+        f"a2a_message:{target}",
+        {"text": _safe_get_message_text(request)},
+        call_id=message_id,
+        agent_name=sender,
+        parent_event_id=event["event.id"] if event is not None else None,
+    )
 
 
 def _emit_a2a_receive_topology_event(params, handler_instance, operation: str) -> None:

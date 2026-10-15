@@ -104,6 +104,7 @@ def test_patch_mcp_client_injects_realtime_protocol_metadata_and_events():
     assert sent[RuntimeEventAttribute.SOURCE_AGENT.value] == "planner"
     assert sent[RuntimeEventAttribute.TARGET_AGENT.value] == "mcp://math-server"
     assert sent[RuntimeEventAttribute.MESSAGE_ID.value] == "req-1"
+    assert sent["operation.name"] == "tools/call"
     assert request.root.params.meta["event.id"] == sent["event.id"]
     assert sent[RuntimeEventAttribute.SEQUENCE.value] == 2
     assert sent[RuntimeEventAttribute.FORK_ID.value] == "fork-1"
