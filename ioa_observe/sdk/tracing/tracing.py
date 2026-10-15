@@ -1356,11 +1356,79 @@ def init_langchain_instrumentor():
             )
             if not instrumentor.is_instrumented_by_opentelemetry:
                 instrumentor.instrument()
+                _emit_llm_started_before_the_call()
         return True
     except Exception as e:
         logging.error(f"Error initializing LangChain instrumentor: {e}")
         Telemetry().log_exception(e)
         return False
+
+
+def emit_llm_started_for(span) -> None:
+    """Emit ``llm.started`` with the prompt for an LLM span whose request attributes are already set.
+
+    The span processor sees the span when it starts, before an instrumentation has set the request on it,
+    so it can only emit ``llm.started`` without the prompt, or, when it cannot tell the span is an LLM
+    one, not until the call has ended. This is called once the request is on the span and before it is
+    sent; the span is recorded as active so that the end of the call only emits ``llm.completed``.
+    """
+    wrapper = TracerWrapper.instance if hasattr(TracerWrapper, "instance") else None
+    if wrapper is None or not is_llm_span(span):
+        return
+    session_id = span.attributes.get("session.id")
+    if not session_id:
+        return
+    with wrapper._active_llm_spans_lock:
+        if span.context.span_id in wrapper._active_llm_spans:
+            return
+        runtime_context = _llm_runtime_context(
+            span,
+            session_id=str(session_id),
+            agent_name=span.attributes.get(OBSERVE_WORKFLOW_NAME),
+        )
+        wrapper._active_llm_spans[span.context.span_id] = runtime_context
+    wrapper.llm_call_counter.add(1, attributes=span.attributes)
+    _emit_llm_started_runtime_event(
+        span, runtime_context, capture_content=wrapper._should_capture_content()
+    )
+
+
+def _emit_llm_started_before_the_call() -> None:
+    """Make the LangChain instrumentation emit ``llm.started`` as soon as it has the request on the span."""
+    try:
+        import functools
+
+        from opentelemetry.instrumentation.langchain.callback_handler import (
+            TraceloopCallbackHandler,
+        )
+
+        for method in ("on_chat_model_start", "on_llm_start"):
+            original = getattr(TraceloopCallbackHandler, method, None)
+            if original is None or getattr(original, "_observe_pre_call", False):
+                continue
+
+            def make(original):
+                @functools.wraps(original)
+                def patched(self, serialized, messages, *args, run_id=None, **kwargs):
+                    result = original(
+                        self, serialized, messages, *args, run_id=run_id, **kwargs
+                    )
+                    try:
+                        holder = self.spans.get(run_id)
+                        if holder is not None:
+                            emit_llm_started_for(holder.span)
+                    except Exception:
+                        logging.getLogger(__name__).exception(
+                            "pre-call llm.started failed"
+                        )
+                    return result
+
+                patched._observe_pre_call = True
+                return patched
+
+            setattr(TraceloopCallbackHandler, method, make(original))
+    except Exception:
+        logging.getLogger(__name__).exception("could not enable pre-call llm.started")
 
 
 def init_mistralai_instrumentor():

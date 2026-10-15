@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from importlib.util import find_spec
 from typing import Any, AsyncGenerator, Callable, Collection, Tuple, cast, Union
+import contextvars
 import json
 import logging
 import re
@@ -32,6 +33,7 @@ from ..utils.const import (
     OBSERVE_ENTITY_INPUT,
 )
 from ..tracing.runtime_events import RuntimeEventName
+from ..tracing.pre_call_events import emit_tool_started_before_send
 from ..tracing.context_utils import (
     _get_agent_linking_info,
     _get_outbound_session_id,
@@ -228,6 +230,47 @@ def _emit_mcp_send_topology_event(
         observe_meta["event.id"] = event["event.id"]
 
 
+_PENDING_TOOL_CALL: contextvars.ContextVar = contextvars.ContextVar(
+    "observe_pending_mcp_tool_call", default=None
+)
+
+
+def _stage_mcp_tool_call_started(
+    params, session_id: str, request_id, parent_event_id: str | None = None
+) -> None:
+    """Remember the tool and its arguments until the MCP library injects its trace context.
+
+    The library opens its own ``MCP send`` span and injects the traceparent that the request carries
+    inside it, so the event has to be emitted there for its span to be the one on the wire.
+    """
+    data = params
+    if not isinstance(data, dict):
+        dump = getattr(params, "model_dump", None)
+        data = dump(mode="json", by_alias=True) if callable(dump) else {}
+    name = data.get("name")
+    if isinstance(name, str) and name:
+        _PENDING_TOOL_CALL.set(
+            (
+                session_id,
+                name,
+                data.get("arguments") or {},
+                str(request_id) if request_id is not None else None,
+                parent_event_id,
+            )
+        )
+
+
+def _emit_staged_mcp_tool_call_started() -> None:
+    pending = _PENDING_TOOL_CALL.get(None)
+    if not pending:
+        return
+    _PENDING_TOOL_CALL.set(None)
+    session_id, name, arguments, call_id, parent_event_id = pending
+    emit_tool_started_before_send(
+        session_id, name, arguments, call_id=call_id, parent_event_id=parent_event_id
+    )
+
+
 def _emit_mcp_receive_topology_event(
     observe_meta, operation: str, message_id=None
 ) -> None:
@@ -300,6 +343,19 @@ class McpInstrumentor(BaseInstrumentor):
 
         if native_server_context:
             register_post_import_hook(instrument_server_context, "mcp.server._otel")
+
+        def instrument_dispatcher(module):
+            # The library owns the span of an outgoing request and injects its trace context inside it.
+            if hasattr(module, "inject_trace_context"):
+                wrap_function_wrapper(
+                    module.__name__,
+                    "inject_trace_context",
+                    self._inject_with_staged_tool_call,
+                )
+
+        register_post_import_hook(
+            instrument_dispatcher, "mcp.shared.jsonrpc_dispatcher"
+        )
 
         def instrument_server_tools(module, class_name):
             server_class = getattr(module, class_name, None)
@@ -646,6 +702,11 @@ class McpInstrumentor(BaseInstrumentor):
                     message_id=str(request_id) if request_id is not None else None,
                 )
 
+                if method == "tools/call" and session_id:
+                    _stage_mcp_tool_call_started(
+                        params, session_id, request_id, observe_meta.get("event.id")
+                    )
+
                 # Inject observe metadata into request params._meta
                 if observe_meta and request_root is not None:
                     _set_request_meta(request_root, params, observe_meta)
@@ -687,6 +748,12 @@ class McpInstrumentor(BaseInstrumentor):
                     raise
 
         return traced_method
+
+    @staticmethod
+    def _inject_with_staged_tool_call(wrapped, instance, args, kwargs):
+        result = wrapped(*args, **kwargs)
+        _emit_staged_mcp_tool_call_started()
+        return result
 
     @staticmethod
     async def _server_tools_wrapper(wrapped, instance, args, kwargs):
