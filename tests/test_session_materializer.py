@@ -83,6 +83,7 @@ def test_materializer_builds_live_session_state_from_runtime_events():
             snapshot_version=5,
             **{
                 RuntimeEventAttribute.AGENT_NAME.value: "planner",
+                RuntimeEventAttribute.AGENT_INPUT.value: "request",
                 RuntimeEventAttribute.AGENT_OUTPUT.value: "plan",
             },
         ),
@@ -129,6 +130,7 @@ def test_materializer_builds_live_session_state_from_runtime_events():
     nodes = {node["id"]: node for node in snapshot["nodes"]}
     assert nodes["planner"]["status"] == "completed"
     assert nodes["planner"]["version"] == 5
+    assert nodes["planner"]["input"] == "request"
     assert nodes["planner"]["output"] == "plan"
 
     edges = {edge["id"]: edge for edge in snapshot["edges"]}

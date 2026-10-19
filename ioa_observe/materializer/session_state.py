@@ -327,15 +327,15 @@ class SessionStateMaterializer:
         session.topology_version = max(
             session.topology_version, record.snapshot_version
         )
+        agent_input = _optional_attribute(
+            record, RuntimeEventAttribute.AGENT_INPUT.value
+        )
+        if agent_input is not None:
+            node.input = agent_input
         if event_name == RuntimeEventName.TOPOLOGY_NODE_STARTED:
             node.status = "started"
             node.started_at = record.event_time
             node.completed_at = None
-            agent_input = _optional_attribute(
-                record, RuntimeEventAttribute.AGENT_INPUT.value
-            )
-            if agent_input is not None:
-                node.input = agent_input
         else:
             node.status = "completed"
             node.started_at = node.started_at or record.event_time

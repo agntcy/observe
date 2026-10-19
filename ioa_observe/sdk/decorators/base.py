@@ -762,6 +762,7 @@ def _cleanup_span(span, ctx_token):
                 session_id,
                 agent_name,
                 agent_output=span.attributes.get(OBSERVE_ENTITY_OUTPUT),
+                agent_input=span.attributes.get(OBSERVE_ENTITY_INPUT),
             )
 
     # Mark tool as no longer in-flight for tool-level fork detection
