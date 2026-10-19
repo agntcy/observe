@@ -33,6 +33,7 @@ class RuntimeEventName(str, Enum):
     SLIM_MESSAGE_RECEIVED = "slim.message.received"
     MCP_MESSAGE_SENT = "mcp.message.sent"
     MCP_MESSAGE_RECEIVED = "mcp.message.received"
+    MCP_MESSAGE_COMPLETED = "mcp.message.completed"
     MCP_TOOLS_DISCOVERED = "mcp.tools.discovered"
     MCP_TOOLS_PUBLISHED = "mcp.tools.published"
     A2A_AGENT_CARD = "a2a.agent_card"
@@ -144,6 +145,11 @@ EVENT_REQUIRED_ATTRIBUTES = {
         RuntimeEventAttribute.TARGET_AGENT.value,
     },
     RuntimeEventName.MCP_MESSAGE_RECEIVED.value: COMMON_REQUIRED_ATTRIBUTES
+    | {
+        RuntimeEventAttribute.SOURCE_AGENT.value,
+        RuntimeEventAttribute.TARGET_AGENT.value,
+    },
+    RuntimeEventName.MCP_MESSAGE_COMPLETED.value: COMMON_REQUIRED_ATTRIBUTES
     | {
         RuntimeEventAttribute.SOURCE_AGENT.value,
         RuntimeEventAttribute.TARGET_AGENT.value,

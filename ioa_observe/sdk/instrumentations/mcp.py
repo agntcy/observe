@@ -24,6 +24,7 @@ from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.semconv.attributes.error_attributes import ERROR_TYPE
 
 from ioa_observe.sdk import TracerWrapper
+from ..config import is_content_tracing_enabled
 from ..utils.const import (
     MCP_REQUEST_ID,
     MCP_METHOD_NAME,
@@ -34,6 +35,7 @@ from ..utils.const import (
 )
 from ..tracing.runtime_events import RuntimeEventName
 from ..tracing.pre_call_events import emit_tool_started_before_send
+from ..tracing.message_payloads import serialize_message_payload
 from ..tracing.context_utils import (
     _get_agent_linking_info,
     _get_outbound_session_id,
@@ -180,9 +182,21 @@ def _extract_mcp_peer_name(instance) -> str | None:
     return None
 
 
+def _mcp_message_input(params) -> str | None:
+    payload = serialize_message_payload(params, protocol="MCP")
+    if payload is None:
+        return None
+    data = json.loads(payload)
+    if isinstance(data, dict):
+        # Request metadata contains propagation state rather than call arguments.
+        data.pop("_meta", None)
+        data.pop("meta", None)
+    return json.dumps(data, sort_keys=True)
+
+
 def _emit_mcp_send_topology_event(
-    observe_meta, operation: str, message_id=None
-) -> None:
+    observe_meta, operation: str, message_id=None, *, message_input=None
+) -> dict[str, str | bool | int | float] | None:
     session_id = observe_meta.get("session.id")
     target = observe_meta.get("target_agent")
     if not session_id or not target:
@@ -223,11 +237,13 @@ def _emit_mcp_send_topology_event(
         sequence=sequence,
         fork_id=fork_id,
         protocol="mcp",
+        message_input=message_input,
         source_agent_span_id=observe_meta.get("last_agent_span_id"),
         source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
     )
     if event is not None:
         observe_meta["event.id"] = event["event.id"]
+    return event
 
 
 _PENDING_TOOL_CALL: contextvars.ContextVar = contextvars.ContextVar(
@@ -244,6 +260,9 @@ def _stage_mcp_tool_call_started(
     inside it, so the event has to be emitted there for its span to be the one on the wire.
     """
     data = params
+    if not is_content_tracing_enabled():
+        _PENDING_TOOL_CALL.set(None)
+        return
     if not isinstance(data, dict):
         dump = getattr(params, "model_dump", None)
         data = dump(mode="json", by_alias=True) if callable(dump) else {}
@@ -265,6 +284,8 @@ def _emit_staged_mcp_tool_call_started() -> None:
     if not pending:
         return
     _PENDING_TOOL_CALL.set(None)
+    if not is_content_tracing_enabled():
+        return
     session_id, name, arguments, call_id, parent_event_id = pending
     emit_tool_started_before_send(
         session_id, name, arguments, call_id=call_id, parent_event_id=parent_event_id
@@ -272,7 +293,7 @@ def _emit_staged_mcp_tool_call_started() -> None:
 
 
 def _emit_mcp_receive_topology_event(
-    observe_meta, operation: str, message_id=None
+    observe_meta, operation: str, message_id=None, *, message_input=None
 ) -> None:
     session_id = observe_meta.get("session.id")
     if not session_id:
@@ -314,9 +335,31 @@ def _emit_mcp_receive_topology_event(
         sequence=sequence,
         fork_id=fork_id,
         protocol="mcp",
+        message_input=message_input,
         source_agent_span_id=observe_meta.get("last_agent_span_id"),
         source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
         parent_event_id=observe_meta.get("event.id"),
+    )
+
+
+def _emit_mcp_completed_event(sent, message_input, result) -> None:
+    if sent is None:
+        return
+    emit_topology_event(
+        RuntimeEventName.MCP_MESSAGE_COMPLETED.value,
+        session_id=sent["session.id"],
+        source=sent["source.agent"],
+        target=sent["target.agent"],
+        operation=sent["operation.name"],
+        message_id=sent.get("message.id"),
+        sequence=sent.get("sequence"),
+        fork_id=sent.get("fork.id"),
+        protocol="mcp",
+        source_agent_span_id=sent.get("source.agent.span.id"),
+        source_agent_trace_id=sent.get("source.agent.trace.id"),
+        parent_event_id=sent["event.id"],
+        message_input=message_input if is_content_tracing_enabled() else None,
+        message_output=serialize_message_payload(result, protocol="MCP"),
     )
 
 
@@ -594,6 +637,7 @@ class McpInstrumentor(BaseInstrumentor):
                         if request_context.request_id is not None
                         else None
                     ),
+                    message_input=_mcp_message_input(request_context.params),
                 )
                 return await call_next(request_context)
             finally:
@@ -696,10 +740,12 @@ class McpInstrumentor(BaseInstrumentor):
                 if target_agent:
                     observe_meta["target_agent"] = target_agent
 
-                _emit_mcp_send_topology_event(
+                message_input = _mcp_message_input(params if params is not None else {})
+                sent = _emit_mcp_send_topology_event(
                     observe_meta,
                     str(method or "send_request"),
                     message_id=str(request_id) if request_id is not None else None,
+                    message_input=message_input,
                 )
 
                 if method == "tools/call" and session_id:
@@ -740,6 +786,7 @@ class McpInstrumentor(BaseInstrumentor):
                                 span.set_attribute(ERROR_TYPE, error_type)
                     else:
                         span.set_status(Status(StatusCode.OK))
+                    _emit_mcp_completed_event(sent, message_input, result)
                     return result
                 except Exception as e:
                     span.set_attribute(ERROR_TYPE, type(e).__name__)
@@ -886,6 +933,7 @@ class InstrumentedStreamReader(ObjectProxy):  # type: ignore
                         message_id=str(getattr(request, "id", None))
                         if getattr(request, "id", None) is not None
                         else None,
+                        message_input=_mcp_message_input(request.params),
                     )
 
                     if carrier and traceparent:

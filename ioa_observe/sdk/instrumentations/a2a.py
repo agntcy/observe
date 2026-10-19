@@ -28,6 +28,7 @@ from ioa_observe.sdk.tracing.context_utils import (
     _inject_outbound_context,
 )
 from ioa_observe.sdk.tracing.pre_call_events import emit_tool_started_before_send
+from ioa_observe.sdk.tracing.message_payloads import serialize_message_payload
 from ioa_observe.sdk.tracing.topology import emit_topology_event, upsert_topology_edge
 from ioa_observe.sdk.tracing.capability_capture import record_capability_event
 
@@ -180,25 +181,7 @@ def _safe_get_current_actor_name() -> str:
 
 
 def _serialize_message_payload(value) -> str | None:
-    if value is None or not is_content_tracing_enabled():
-        return None
-
-    def encode(item):
-        if hasattr(item, "DESCRIPTOR"):
-            from google.protobuf.json_format import MessageToDict
-
-            return MessageToDict(item)
-        if hasattr(item, "model_dump"):
-            return item.model_dump(mode="json", by_alias=True)
-        if hasattr(item, "__dict__"):
-            return vars(item)
-        raise TypeError(f"Unsupported A2A payload type: {type(item).__name__}")
-
-    try:
-        return json.dumps(value, default=encode, sort_keys=True)
-    except (TypeError, ValueError):
-        logging.warning("Unable to serialize A2A message payload", exc_info=True)
-        return None
+    return serialize_message_payload(value, protocol="A2A")
 
 
 def _message_input(request) -> str | None:

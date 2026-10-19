@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -18,6 +19,7 @@ from ioa_observe.sdk.instrumentations.mcp import (
     McpInstrumentor,
     InstrumentedStreamReader,
     InstrumentedStreamWriter,
+    _PENDING_TOOL_CALL,
 )
 from ioa_observe.sdk.tracing import (
     RuntimeEventAttribute,
@@ -118,10 +120,205 @@ def test_patch_mcp_client_injects_realtime_protocol_metadata_and_events():
         sent["source.agent.trace.id"] == request.root.params.meta["last_agent_trace_id"]
     )
     assert sent["source.agent.span.id"] != sent["span.id"]
+    [completed] = [
+        event
+        for event in runtime_events
+        if event["event.name"] == "mcp.message.completed"
+    ]
+    assert completed["event.parent.id"] == sent["event.id"]
+    assert completed["trace.id"] == sent["trace.id"]
+    assert completed["span.id"] == sent["span.id"]
+    assert completed["message.input"] == sent["message.input"]
+    assert json.loads(completed["message.output"]) == {
+        "isError": False,
+        "content": [],
+    }
 
     snapshot = get_live_topology_snapshot(session_id)
     assert snapshot["edges"][0]["id"] == "mcp:planner->mcp://math-server"
     assert snapshot["edges"][0]["status"] == "sent"
+
+
+@pytest.mark.parametrize("capture_content", [True, False])
+@pytest.mark.parametrize("outcome", ["success", "tool_error", "exception", "cancelled"])
+def test_mcp_message_payloads_and_completion(monkeypatch, capture_content, outcome):
+    types = pytest.importorskip("mcp.types")
+    monkeypatch.setenv("OBSERVE_TRACE_CONTENT", str(capture_content).lower())
+    events = []
+    register_runtime_event_listener(events.append)
+    request = types.JSONRPCMessage(
+        types.JSONRPCRequest(
+            method="tools/call",
+            jsonrpc="2.0",
+            id="req-payload",
+            params={
+                "name": "lookup",
+                "arguments": {"query": "hello", "filters": {"limit": 2}},
+                "_meta": {"custom": "kept", "progressToken": "progress-1"},
+            },
+        )
+    )
+    result = types.CallToolResult(
+        isError=outcome == "tool_error",
+        content=[types.TextContent(type="text", text="result")],
+    )
+    session = SimpleNamespace(
+        _write_stream=SimpleNamespace(observe_peer_name="mcp://lookup")
+    )
+
+    async def wrapped(argument):
+        assert argument is request
+        McpInstrumentor._inject_with_staged_tool_call(lambda: None, None, (), {})
+        if outcome == "exception":
+            raise RuntimeError("remote failed")
+        if outcome == "cancelled":
+            raise asyncio.CancelledError()
+        return result
+
+    provider = TracerProvider()
+    patched = McpInstrumentor().patch_mcp_client(provider.get_tracer(__name__))
+    token = attach(set_value("session.id", "payload-session"))
+    try:
+        if outcome in ("exception", "cancelled"):
+            error = RuntimeError if outcome == "exception" else asyncio.CancelledError
+            with pytest.raises(error):
+                asyncio.run(patched(wrapped, session, (request,), {}))
+        else:
+            assert asyncio.run(patched(wrapped, session, (request,), {})) is result
+    finally:
+        detach(token)
+        provider.shutdown()
+
+    [sent] = [event for event in events if event["event.name"] == "mcp.message.sent"]
+    completed = [
+        event for event in events if event["event.name"] == "mcp.message.completed"
+    ]
+    assert len(completed) == (0 if outcome in ("exception", "cancelled") else 1)
+    params = request.root.params
+    assert params["_meta"]["custom"] == "kept"
+    assert params["_meta"]["event.id"] == sent["event.id"]
+    for event in [sent, *completed]:
+        assert ("message.input" in event) is capture_content
+        if capture_content:
+            assert json.loads(event["message.input"]) == {
+                "name": "lookup",
+                "arguments": {"query": "hello", "filters": {"limit": 2}},
+            }
+        else:
+            assert "message.output" not in event
+    if completed:
+        assert completed[0]["event.parent.id"] == sent["event.id"]
+        assert completed[0]["message.id"] == sent["message.id"] == "req-payload"
+        assert completed[0]["trace.id"] == sent["trace.id"]
+        assert completed[0]["span.id"] == sent["span.id"]
+        if capture_content:
+            assert json.loads(completed[0]["message.output"]) == result.model_dump(
+                mode="json", by_alias=True
+            )
+    tool_events = [event for event in events if event["event.name"] == "tool.started"]
+    assert len(tool_events) == (1 if capture_content else 0)
+
+
+@pytest.mark.parametrize("capture_content", [True, False])
+def test_mcp_native_server_receive_payload(monkeypatch, capture_content):
+    monkeypatch.setenv("OBSERVE_TRACE_CONTENT", str(capture_content).lower())
+    events = []
+    register_runtime_event_listener(events.append)
+    request_context = SimpleNamespace(
+        method="tools/call",
+        request_id="req-1",
+        params={"name": "lookup", "arguments": {"x": 3}},
+        meta={
+            "session.id": "server-session",
+            "source_agent": "planner",
+            "target_agent": "mcp://server",
+            "event.id": "sent-event",
+        },
+    )
+
+    async def call_next(ctx):
+        assert ctx is request_context
+        assert get_value("session.id") == "server-session"
+        return "response"
+
+    async def middleware(ctx, handler):
+        return await handler(ctx)
+
+    token = attach(Context())
+    try:
+        result = asyncio.run(
+            McpInstrumentor._server_context_wrapper(
+                middleware, None, (request_context, call_next), {}
+            )
+        )
+        assert result == "response"
+        assert get_value("session.id") is None
+    finally:
+        detach(token)
+    [received] = [
+        event for event in events if event["event.name"] == "mcp.message.received"
+    ]
+    assert received["event.parent.id"] == "sent-event"
+    assert ("message.input" in received) is capture_content
+    if capture_content:
+        assert json.loads(received["message.input"]) == request_context.params
+    assert "message.output" not in received
+
+
+def test_mcp_disabled_content_clears_staged_tool_input(monkeypatch):
+    from ioa_observe.sdk.instrumentations.mcp import _stage_mcp_tool_call_started
+
+    token = _PENDING_TOOL_CALL.set(("stale input",))
+    monkeypatch.setenv("OBSERVE_TRACE_CONTENT", "false")
+    try:
+        _stage_mcp_tool_call_started({"name": "lookup"}, "session", "req")
+        assert _PENDING_TOOL_CALL.get() is None
+    finally:
+        _PENDING_TOOL_CALL.reset(token)
+
+
+@pytest.mark.parametrize("invalid_payload", ["input", "output"])
+def test_mcp_payload_serialization_failure_preserves_call(
+    monkeypatch, caplog, invalid_payload
+):
+    pytest.importorskip("mcp.types")
+    monkeypatch.setenv("OBSERVE_TRACE_CONTENT", "true")
+    events = []
+    register_runtime_event_listener(events.append)
+    request = {
+        "method": "ping",
+        "id": "req-1",
+        "params": {"value": object() if invalid_payload == "input" else "input"},
+    }
+    result = SimpleNamespace(
+        isError=False,
+        content=[],
+        value=object() if invalid_payload == "output" else "output",
+    )
+    session = SimpleNamespace(
+        _write_stream=SimpleNamespace(observe_peer_name="mcp://server")
+    )
+
+    async def wrapped(*, request):
+        return result
+
+    provider = TracerProvider()
+    patched = McpInstrumentor().patch_mcp_client(provider.get_tracer(__name__))
+    token = attach(set_value("session.id", "serialization-session"))
+    try:
+        assert (
+            asyncio.run(patched(wrapped, session, (), {"request": request})) is result
+        )
+    finally:
+        detach(token)
+        provider.shutdown()
+    [sent] = [event for event in events if event["event.name"] == "mcp.message.sent"]
+    [completed] = [
+        event for event in events if event["event.name"] == "mcp.message.completed"
+    ]
+    assert completed["event.parent.id"] == sent["event.id"]
+    assert f"message.{invalid_payload}" not in completed
+    assert "Unable to serialize MCP message payload" in caplog.text
 
 
 @pytest.mark.parametrize("with_params", [True, False])
@@ -308,10 +505,14 @@ def test_mcp_http_tool_lifecycle_preserves_request_session_and_trace(
         assert format(record.span_id, "016x") == event["span.id"]
 
 
-def test_mcp_stream_reader_restores_tool_session_without_leaking_context():
+@pytest.mark.parametrize("capture_content", [True, False])
+def test_mcp_stream_reader_restores_tool_session_without_leaking_context(
+    monkeypatch, capture_content
+):
     types = pytest.importorskip("mcp.types")
     from ioa_observe.sdk.decorators import tool
 
+    monkeypatch.setenv("OBSERVE_TRACE_CONTENT", str(capture_content).lower())
     events = []
     register_runtime_event_listener(events.append)
     traceparent = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
@@ -325,7 +526,10 @@ def test_mcp_stream_reader_restores_tool_session_without_leaking_context():
         "fork_branch_index": "1",
     }
     request = types.JSONRPCRequest(
-        method="tools/call", jsonrpc="2.0", id=1, params={"_meta": meta}
+        method="tools/call",
+        jsonrpc="2.0",
+        id=1,
+        params={"name": "stream tool", "arguments": {"x": 1}, "_meta": meta},
     )
 
     class Stream:
@@ -364,6 +568,15 @@ def test_mcp_stream_reader_restores_tool_session_without_leaking_context():
     assert kv_store.get("session.stream-session.agents.2.fork_id") == "fork-one"
     assert kv_store.get("session.stream-session.agents.2.parent_seq") == "1"
     assert kv_store.get("session.stream-session.agents.2.branch_index") == "1"
+    [received] = [
+        event for event in events if event["event.name"] == "mcp.message.received"
+    ]
+    assert ("message.input" in received) is capture_content
+    if capture_content:
+        assert json.loads(received["message.input"]) == {
+            "name": "stream tool",
+            "arguments": {"x": 1},
+        }
 
 
 @pytest.mark.parametrize(
@@ -452,6 +665,16 @@ def test_mcp_sdk_metadata_shapes_and_writer_preserve_request_span(
 
     meta = wire[0]["params"]["_meta"]
     sent = next(event for event in events if event["event.name"] == "mcp.message.sent")
+    [completed] = [
+        event for event in events if event["event.name"] == "mcp.message.completed"
+    ]
+    assert completed["event.parent.id"] == sent["event.id"]
+    assert completed["trace.id"] == sent["trace.id"]
+    assert completed["span.id"] == sent["span.id"]
+    assert completed["message.input"] == sent["message.input"]
+    if shape == "typed":
+        assert json.loads(sent["message.input"])["arguments"] == {"x": 2}
+    assert "_meta" not in json.loads(sent["message.input"])
     _, trace_id, span_id, flags = meta["traceparent"].split("-")
     assert meta["traceparent"] != incoming
     assert sent["trace.id"] == trace_id
