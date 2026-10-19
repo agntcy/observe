@@ -28,10 +28,12 @@ class RuntimeEventName(str, Enum):
     LLM_COMPLETED = "llm.completed"
     A2A_MESSAGE_SENT = "a2a.message.sent"
     A2A_MESSAGE_RECEIVED = "a2a.message.received"
+    A2A_MESSAGE_COMPLETED = "a2a.message.completed"
     SLIM_MESSAGE_SENT = "slim.message.sent"
     SLIM_MESSAGE_RECEIVED = "slim.message.received"
     MCP_MESSAGE_SENT = "mcp.message.sent"
     MCP_MESSAGE_RECEIVED = "mcp.message.received"
+    MCP_MESSAGE_COMPLETED = "mcp.message.completed"
     MCP_TOOLS_DISCOVERED = "mcp.tools.discovered"
     MCP_TOOLS_PUBLISHED = "mcp.tools.published"
     A2A_AGENT_CARD = "a2a.agent_card"
@@ -71,6 +73,8 @@ class RuntimeEventAttribute(str, Enum):
     SOURCE_AGENT_TRACE_ID = "source.agent.trace.id"
     TARGET_AGENT = "target.agent"
     MESSAGE_ID = "message.id"
+    MESSAGE_INPUT = "message.input"
+    MESSAGE_OUTPUT = "message.output"
     FORK_ID = "fork.id"
     SEQUENCE = "sequence"
 
@@ -120,6 +124,11 @@ EVENT_REQUIRED_ATTRIBUTES = {
         RuntimeEventAttribute.SOURCE_AGENT.value,
         RuntimeEventAttribute.TARGET_AGENT.value,
     },
+    RuntimeEventName.A2A_MESSAGE_COMPLETED.value: COMMON_REQUIRED_ATTRIBUTES
+    | {
+        RuntimeEventAttribute.SOURCE_AGENT.value,
+        RuntimeEventAttribute.TARGET_AGENT.value,
+    },
     RuntimeEventName.SLIM_MESSAGE_SENT.value: COMMON_REQUIRED_ATTRIBUTES
     | {
         RuntimeEventAttribute.SOURCE_AGENT.value,
@@ -136,6 +145,11 @@ EVENT_REQUIRED_ATTRIBUTES = {
         RuntimeEventAttribute.TARGET_AGENT.value,
     },
     RuntimeEventName.MCP_MESSAGE_RECEIVED.value: COMMON_REQUIRED_ATTRIBUTES
+    | {
+        RuntimeEventAttribute.SOURCE_AGENT.value,
+        RuntimeEventAttribute.TARGET_AGENT.value,
+    },
+    RuntimeEventName.MCP_MESSAGE_COMPLETED.value: COMMON_REQUIRED_ATTRIBUTES
     | {
         RuntimeEventAttribute.SOURCE_AGENT.value,
         RuntimeEventAttribute.TARGET_AGENT.value,

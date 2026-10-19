@@ -3,6 +3,7 @@
 
 import asyncio
 import inspect
+import json
 import sys
 from types import ModuleType, SimpleNamespace
 
@@ -188,6 +189,16 @@ def test_a2a_outbound_wire_matches_send_event_and_restores_methods(
     observe = metadata["observe"]
     sent = next(event for event in events if event["event.name"] == "a2a.message.sent")
     assert observe["event.id"] == sent["event.id"]
+    [completed] = [
+        event for event in events if event["event.name"] == "a2a.message.completed"
+    ]
+    assert completed["event.parent.id"] == sent["event.id"]
+    assert completed["trace.id"] == sent["trace.id"]
+    assert completed["span.id"] == sent["span.id"]
+    assert completed["message.input"] == sent["message.input"]
+    assert json.loads(completed["message.output"]) == (
+        "second" if streaming else "response"
+    )
     assert observe["traceparent"] != INCOMING
     _, trace_id, span_id, flags = observe["traceparent"].split("-")
     assert sent["trace.id"] == trace_id

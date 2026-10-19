@@ -388,7 +388,11 @@ def test_session_start_pushes_runtime_event(runtime_events):
     assert session_event[RuntimeEventAttribute.SNAPSHOT_VERSION.value] >= 1
 
 
-def test_agent_lifecycle_pushes_runtime_events(runtime_events):
+@pytest.mark.parametrize("capture_content", [True, False])
+def test_agent_lifecycle_pushes_runtime_events(
+    runtime_events, monkeypatch, capture_content
+):
+    monkeypatch.setenv("OBSERVE_TRACE_CONTENT", str(capture_content).lower())
     with session_start():
         plan = runtime_planner({"task": "draft"})
         result = runtime_executor(plan)
@@ -418,12 +422,29 @@ def test_agent_lifecycle_pushes_runtime_events(runtime_events):
         if event[RuntimeEventAttribute.EVENT_NAME.value]
         == RuntimeEventName.TOPOLOGY_NODE_COMPLETED.value
     }
-    assert json.loads(
-        completed_events["runtime_planner"][RuntimeEventAttribute.AGENT_OUTPUT.value]
-    ) == {"planned": "draft"}
-    assert json.loads(
-        completed_events["runtime_executor"][RuntimeEventAttribute.AGENT_OUTPUT.value]
-    ) == {"result": "draft"}
+    if capture_content:
+        assert json.loads(
+            completed_events["runtime_planner"][
+                RuntimeEventAttribute.AGENT_OUTPUT.value
+            ]
+        ) == {"planned": "draft"}
+        assert json.loads(
+            completed_events["runtime_executor"][
+                RuntimeEventAttribute.AGENT_OUTPUT.value
+            ]
+        ) == {"result": "draft"}
+    started_events = {
+        event[RuntimeEventAttribute.AGENT_NAME.value]: event
+        for event in runtime_events
+        if event[RuntimeEventAttribute.EVENT_NAME.value]
+        == RuntimeEventName.TOPOLOGY_NODE_STARTED.value
+    }
+    for name, event in completed_events.items():
+        if capture_content:
+            assert event["agent.input"] == started_events[name]["agent.input"]
+        else:
+            assert "agent.input" not in event
+            assert "agent.output" not in event
 
 
 def test_a2a_helpers_push_runtime_events(runtime_events):

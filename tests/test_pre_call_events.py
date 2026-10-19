@@ -15,7 +15,12 @@ from opentelemetry.sdk.trace import TracerProvider
 from ioa_observe.sdk.client import kv_store
 from ioa_observe.sdk.config import set_realtime_observability_enabled
 from ioa_observe.sdk.instrumentations import mcp as mcp_instrumentation
-from ioa_observe.sdk.instrumentations.a2a import _emit_a2a_send_topology_event
+from ioa_observe.sdk.instrumentations.a2a import (
+    _capture_a2a_response,
+    _emit_a2a_receive_topology_event,
+    _emit_a2a_send_topology_event,
+    _serialize_message_payload,
+)
 from ioa_observe.sdk.tracing import (
     clear_runtime_event_listeners,
     pre_call_events,
@@ -116,6 +121,137 @@ def test_a2a_send_emits_the_message_text_with_the_message_id_as_call_id(
     assert event["agent.name"] == "planner"
     [sent] = [e for e in realtime_events if e["event.name"] == "a2a.message.sent"]
     assert event["event.parent.id"] == sent["event.id"]
+    assert json.loads(sent["message.input"]) == {
+        "messageId": "msg-123",
+        "parts": [{"text": "export the data"}, {"text": "second line"}],
+    }
+    assert "message.output" not in sent
+
+
+@pytest.mark.parametrize("capture_content", [True, False])
+def test_a2a_request_response_payloads_respect_content_capture(
+    realtime_events, monkeypatch, capture_content
+):
+    monkeypatch.setenv("OBSERVE_TRACE_CONTENT", str(capture_content).lower())
+    request = a2a_request("hello")
+    client = SimpleNamespace(name="executor")
+    _emit_a2a_send_topology_event(request, client, "send_message")
+    _emit_a2a_receive_topology_event(request.params, client, "on_message_send")
+    result = {"parts": [{"text": "answer"}, {"data": {"value": 42}}]}
+
+    async def send(instance, request):
+        return result
+
+    wrapped = _capture_a2a_response(send, "send_message")
+    assert asyncio.run(wrapped(client, request)) is result
+    messages = [
+        e for e in realtime_events if e["event.name"].startswith("a2a.message.")
+    ]
+    assert [e["event.name"] for e in messages] == [
+        "a2a.message.sent",
+        "a2a.message.received",
+        "a2a.message.completed",
+    ]
+    for event in messages:
+        assert ("message.input" in event) is capture_content
+    if capture_content:
+        assert json.loads(messages[-1]["message.output"]) == result
+        assert messages[-1]["message.input"] == messages[0]["message.input"]
+    else:
+        assert all("message.output" not in event for event in messages)
+        assert tool_started(realtime_events) == []
+    assert messages[-1]["event.parent.id"] == messages[0]["event.id"]
+
+
+def test_a2a_payload_serializer_preserves_pydantic_and_protobuf_content():
+    from google.protobuf.struct_pb2 import Struct
+    from pydantic import BaseModel
+
+    class Response(BaseModel):
+        parts: list[dict]
+
+    content = {"parts": [{"text": "hello"}, {"data": {"answer": 42}}]}
+    protobuf = Struct()
+    protobuf.update(content)
+    for response in (Response(**content), protobuf):
+        assert json.loads(_serialize_message_payload(response)) == content
+
+
+def test_a2a_unserializable_output_is_logged_without_breaking_call(
+    realtime_events, caplog
+):
+    request = a2a_request("hello")
+    client = SimpleNamespace(name="executor")
+    _emit_a2a_send_topology_event(request, client, "send_message")
+    response = object()
+
+    async def send(instance, request):
+        return response
+
+    wrapped = _capture_a2a_response(send, "send_message")
+    assert asyncio.run(wrapped(client, request)) is response
+    [completed] = [
+        e for e in realtime_events if e["event.name"] == "a2a.message.completed"
+    ]
+    assert "message.output" not in completed
+    assert "Unable to serialize A2A message payload" in caplog.text
+
+
+@pytest.mark.parametrize("streaming", [True, False])
+def test_a2a_failed_calls_do_not_emit_completion(realtime_events, streaming):
+    request = a2a_request("hello")
+    client = SimpleNamespace(name="executor")
+    _emit_a2a_send_topology_event(request, client, "send_message")
+
+    async def send(instance, request):
+        raise RuntimeError("remote failed")
+
+    async def stream(instance, request):
+        yield {"text": "partial"}
+        raise RuntimeError("remote failed")
+
+    wrapped = _capture_a2a_response(
+        stream if streaming else send, "send_message", streaming=streaming
+    )
+
+    async def invoke():
+        if streaming:
+            return [item async for item in wrapped(client, request)]
+        return await wrapped(client, request)
+
+    with pytest.raises(RuntimeError, match="remote failed"):
+        asyncio.run(invoke())
+    assert not any(e["event.name"] == "a2a.message.completed" for e in realtime_events)
+
+
+@pytest.mark.parametrize("abandoned", [True, False])
+def test_a2a_empty_and_abandoned_streams(realtime_events, abandoned):
+    request = a2a_request("hello")
+    client = SimpleNamespace(name="executor")
+    _emit_a2a_send_topology_event(request, client, "send_message")
+
+    async def stream(instance, request):
+        if abandoned:
+            yield "partial"
+            yield "unread"
+
+    async def invoke():
+        wrapped = _capture_a2a_response(stream, "send_message", streaming=True)(
+            client, request
+        )
+        if abandoned:
+            assert await anext(wrapped) == "partial"
+            await wrapped.aclose()
+        else:
+            assert [item async for item in wrapped] == []
+
+    asyncio.run(invoke())
+    completed = [
+        e for e in realtime_events if e["event.name"] == "a2a.message.completed"
+    ]
+    assert len(completed) == (0 if abandoned else 1)
+    if completed:
+        assert "message.output" not in completed[0]
 
 
 def test_a2a_send_emits_the_text_event_after_a2a_message_sent_on_the_same_span(

@@ -10,13 +10,17 @@ import logging
 import threading
 
 from opentelemetry.context import get_value
-from opentelemetry import baggage
+from opentelemetry import baggage, trace
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from ioa_observe.sdk import TracerWrapper
 from ioa_observe.sdk.client import kv_store
+from ioa_observe.sdk.config import (
+    is_content_tracing_enabled,
+    is_realtime_observability_enabled,
+)
 from ioa_observe.sdk.tracing import set_session_id
 from ioa_observe.sdk.tracing.context_utils import (
     _get_agent_linking_info,
@@ -24,6 +28,7 @@ from ioa_observe.sdk.tracing.context_utils import (
     _inject_outbound_context,
 )
 from ioa_observe.sdk.tracing.pre_call_events import emit_tool_started_before_send
+from ioa_observe.sdk.tracing.message_payloads import serialize_message_payload
 from ioa_observe.sdk.tracing.topology import emit_topology_event, upsert_topology_edge
 from ioa_observe.sdk.tracing.capability_capture import record_capability_event
 
@@ -175,6 +180,83 @@ def _safe_get_current_actor_name() -> str:
     return str(get_value("workflow_name") or TracerWrapper.app_name or "unknown")
 
 
+def _serialize_message_payload(value) -> str | None:
+    return serialize_message_payload(value, protocol="A2A")
+
+
+def _message_input(request) -> str | None:
+    params = getattr(request, "params", request)
+    message = getattr(params, "message", None)
+    payload = _serialize_message_payload(message)
+    if payload is None:
+        return None
+    decoded = json.loads(payload)
+    if isinstance(decoded, dict) and isinstance(decoded.get("metadata"), dict):
+        # Propagation metadata changes after emission and is not message content.
+        decoded["metadata"].pop("observe", None)
+    return json.dumps(decoded, sort_keys=True)
+
+
+def _capture_a2a_response(original, operation: str, *, streaming: bool = False):
+    def capture_request(request, instance):
+        metadata = _safe_get_observe_meta(request)
+        if not is_realtime_observability_enabled() or not metadata.get("session_id"):
+            return None
+        return {
+            "session_id": metadata["session_id"],
+            "source": metadata.get("last_agent_name") or _safe_get_current_actor_name(),
+            "target": _safe_get_target_name(request, instance) or "unknown",
+            "message_id": _safe_get_message_id(request),
+            "message_input": _message_input(request),
+            "parent_event_id": metadata.get("event.id"),
+            "source_agent_span_id": metadata.get("last_agent_span_id"),
+            "source_agent_trace_id": metadata.get("last_agent_trace_id"),
+            "fork_id": metadata.get("fork_id"),
+            "sequence": (
+                int(metadata["agent_sequence"])
+                if str(metadata.get("agent_sequence")).isdigit()
+                else None
+            ),
+            "context": TraceContextTextMapPropagator().extract(metadata),
+        }
+
+    def complete(captured, response):
+        if captured is None:
+            return
+        context = captured.pop("context")
+        # Reuse the outgoing span identity without extending its network lifetime.
+        with trace.use_span(trace.get_current_span(context), end_on_exit=False):
+            emit_topology_event(
+                "a2a.message.completed",
+                **captured,
+                protocol="a2a",
+                operation=operation,
+                message_output=_serialize_message_payload(response),
+            )
+
+    if streaming:
+
+        @functools.wraps(original)
+        async def stream(instance, request, *args, **kwargs):
+            captured = capture_request(request, instance)
+            last_response = None
+            async for response in original(instance, request, *args, **kwargs):
+                last_response = response
+                yield response
+            complete(captured, last_response)
+
+        return stream
+
+    @functools.wraps(original)
+    async def send(instance, request, *args, **kwargs):
+        captured = capture_request(request, instance)
+        response = await original(instance, request, *args, **kwargs)
+        complete(captured, response)
+        return response
+
+    return send
+
+
 def _emit_a2a_send_topology_event(request, client_instance, operation: str) -> None:
     observe_meta = _safe_get_observe_meta(request)
     session_id = observe_meta.get("session_id")
@@ -222,6 +304,7 @@ def _emit_a2a_send_topology_event(request, client_instance, operation: str) -> N
         sequence=sequence,
         fork_id=fork_id,
         protocol="a2a",
+        message_input=_message_input(request),
         source_agent_span_id=observe_meta.get("last_agent_span_id"),
         source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
     )
@@ -231,14 +314,15 @@ def _emit_a2a_send_topology_event(request, client_instance, operation: str) -> N
         metadata["observe"] = observe_meta
         _set_metadata(request, metadata)
     # The text of the message, on the span that the outgoing trace context carries, before it is sent.
-    emit_tool_started_before_send(
-        session_id,
-        f"a2a_message:{target}",
-        {"text": _safe_get_message_text(request)},
-        call_id=message_id,
-        agent_name=sender,
-        parent_event_id=event["event.id"] if event is not None else None,
-    )
+    if is_content_tracing_enabled():
+        emit_tool_started_before_send(
+            session_id,
+            f"a2a_message:{target}",
+            {"text": _safe_get_message_text(request)},
+            call_id=message_id,
+            agent_name=sender,
+            parent_event_id=event["event.id"] if event is not None else None,
+        )
 
 
 def _emit_a2a_receive_topology_event(params, handler_instance, operation: str) -> None:
@@ -288,6 +372,7 @@ def _emit_a2a_receive_topology_event(params, handler_instance, operation: str) -
         sequence=sequence,
         fork_id=fork_id,
         protocol="a2a",
+        message_input=_message_input(params),
         source_agent_span_id=observe_meta.get("last_agent_span_id"),
         source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
         parent_event_id=observe_meta.get("event.id"),
@@ -495,6 +580,11 @@ class A2AInstrumentor(BaseInstrumentor):
         if hasattr(BaseA2AClient, "send_message"):
             original_send_message = BaseA2AClient.send_message
             _original_methods["BaseA2AClient.send_message"] = original_send_message
+            original_send_message = _capture_a2a_response(
+                original_send_message,
+                "send_message",
+                streaming=inspect.isasyncgenfunction(original_send_message),
+            )
 
             if inspect.isasyncgenfunction(original_send_message):
 
@@ -532,6 +622,11 @@ class A2AInstrumentor(BaseInstrumentor):
             original_send_message_streaming = BaseA2AClient.send_message_streaming
             _original_methods["BaseA2AClient.send_message_streaming"] = (
                 original_send_message_streaming
+            )
+            original_send_message_streaming = _capture_a2a_response(
+                original_send_message_streaming,
+                "send_message_streaming",
+                streaming=True,
             )
 
             @functools.wraps(original_send_message_streaming)
@@ -587,6 +682,9 @@ class A2AInstrumentor(BaseInstrumentor):
         original_send_message = legacy_client.send_message
         _original_methods[f"{legacy_module_path}.A2AClient.send_message"] = (
             original_send_message
+        )
+        original_send_message = _capture_a2a_response(
+            original_send_message, "send_message"
         )
 
         @functools.wraps(original_send_message)
@@ -687,6 +785,9 @@ class A2AInstrumentor(BaseInstrumentor):
             original_broadcast_message = legacy_client.broadcast_message
             _original_methods[f"{legacy_module_path}.A2AClient.broadcast_message"] = (
                 original_broadcast_message
+            )
+            original_broadcast_message = _capture_a2a_response(
+                original_broadcast_message, "broadcast_message"
             )
 
             @functools.wraps(original_broadcast_message)
@@ -1017,6 +1118,9 @@ class A2AInstrumentor(BaseInstrumentor):
         _original_methods["SRPCTransport.send_message"] = (
             original_srpc_transport_send_message
         )
+        original_srpc_transport_send_message = _capture_a2a_response(
+            original_srpc_transport_send_message, "slima2a.send_message"
+        )
 
         @functools.wraps(original_srpc_transport_send_message)
         async def instrumented_srpc_transport_send_message(
@@ -1106,6 +1210,11 @@ class A2AInstrumentor(BaseInstrumentor):
         )
         _original_methods["SRPCTransport.send_message_streaming"] = (
             original_srpc_transport_send_message_streaming
+        )
+        original_srpc_transport_send_message_streaming = _capture_a2a_response(
+            original_srpc_transport_send_message_streaming,
+            "slima2a.send_message_streaming",
+            streaming=True,
         )
 
         @functools.wraps(original_srpc_transport_send_message_streaming)

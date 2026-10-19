@@ -188,7 +188,11 @@ def record_node_started(
 
 
 def record_node_completed(
-    session_id: str, agent_name: str, agent_output: str | None = None
+    session_id: str,
+    agent_name: str,
+    agent_output: str | None = None,
+    *,
+    agent_input: str | None = None,
 ) -> None:
     now_ms = _now_ms()
     with _lock:
@@ -212,6 +216,7 @@ def record_node_completed(
             "type": RuntimeEventName.TOPOLOGY_NODE_COMPLETED.value,
             "session_id": session_id,
             "agent_name": agent_name,
+            "agent_input": agent_input,
             "agent_output": agent_output,
             "snapshot_version": graph.version,
             "snapshot": graph.snapshot(),
@@ -222,6 +227,7 @@ def record_node_completed(
             snapshot_version=graph.version,
             **{
                 RuntimeEventAttribute.AGENT_NAME.value: agent_name,
+                RuntimeEventAttribute.AGENT_INPUT.value: agent_input,
                 RuntimeEventAttribute.AGENT_OUTPUT.value: agent_output,
             },
         )
@@ -382,6 +388,12 @@ def _runtime_attributes_for_event(
         payload[RuntimeEventAttribute.TARGET_AGENT.value] = attributes["target"]
     if "message_id" in attributes:
         payload[RuntimeEventAttribute.MESSAGE_ID.value] = attributes["message_id"]
+    for key, attribute in (
+        ("message_input", RuntimeEventAttribute.MESSAGE_INPUT),
+        ("message_output", RuntimeEventAttribute.MESSAGE_OUTPUT),
+    ):
+        if key in attributes:
+            payload[attribute.value] = attributes[key]
     if "fork_id" in attributes:
         payload[RuntimeEventAttribute.FORK_ID.value] = attributes["fork_id"]
     if "sequence" in attributes:
