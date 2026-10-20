@@ -33,7 +33,10 @@ TRACEPARENT = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
 
 
 @pytest.fixture(autouse=True)
-def realtime_events():
+def realtime_events(monkeypatch):
+    from ioa_observe.sdk.tracing import runtime_event_emitter
+
+    monkeypatch.setattr(runtime_event_emitter, "_emit_to_otel_logs", lambda *args: None)
     clear_runtime_event_listeners()
     clear_topology_listeners()
     set_realtime_observability_enabled(True)
@@ -102,6 +105,179 @@ def a2a_request(text):
             ),
         )
     )
+
+
+def test_a2a_receive_uses_handler_private_agent_card(realtime_events):
+    request = a2a_request("hello")
+    handler = SimpleNamespace(_agent_card=SimpleNamespace(name="executor"))
+
+    _emit_a2a_receive_topology_event(request.params, handler, "on_message_send")
+
+    [received] = [
+        event
+        for event in realtime_events
+        if event["event.name"] == "a2a.message.received"
+    ]
+    assert received["target.agent"] == "executor"
+
+
+@pytest.mark.parametrize(
+    "source_span_id,source_trace_id",
+    [
+        ("0000000000000123", "00000000000000000000000000000456"),
+        ("0", "0"),
+        ("not-a-span", "not-a-trace"),
+        ("fffffffffffffffff", "fffffffffffffffffffffffffffffffff"),
+    ],
+)
+def test_a2a_incoming_handoff_is_validated_consumed_and_request_local(
+    realtime_events, source_span_id, source_trace_id
+):
+    from ioa_observe.sdk.decorators.base import _get_previous_agent_link
+    from ioa_observe.sdk.instrumentations.a2a import _receive_agent_scope
+    from ioa_observe.sdk.tracing.handoffs import INCOMING_HANDOFF, incoming_handoff
+
+    handler = SimpleNamespace(_agent_card=SimpleNamespace(name="executor"))
+    valid = source_span_id == "0000000000000123"
+
+    async def receive(message_id):
+        request = a2a_request("hello")
+        request.params.message.messageId = message_id
+        request.params.metadata["observe"].update(
+            {
+                "last_agent_span_id": source_span_id,
+                "last_agent_trace_id": source_trace_id,
+            }
+        )
+        with _receive_agent_scope(request.params, handler, "on_message_send"):
+            reference = incoming_handoff("session-123", "executor")
+            assert (reference is not None) is valid
+            await asyncio.sleep(0)
+            if valid:
+                assert incoming_handoff("session-123", "executor") is reference
+                assert incoming_handoff("session-123", "unrelated-agent") is None
+                links, source, *_, evidence, confidence = _get_previous_agent_link(
+                    "session-123", "executor"
+                )
+                assert len(links) == 1
+                assert source == "planner"
+                assert evidence == "transport:a2a"
+                assert confidence == 1.0
+                assert incoming_handoff("session-123", "executor") is None
+        assert context.get_value(INCOMING_HANDOFF) is None
+        return reference
+
+    async def invoke():
+        first, second = await asyncio.gather(receive("one"), receive("two"))
+        if valid:
+            assert first is not second
+            assert first["event_id"] != second["event_id"]
+
+    asyncio.run(invoke())
+
+
+def test_a2a_synthetic_tool_start_has_matching_completion(realtime_events):
+    request = a2a_request("hello")
+    client = SimpleNamespace(name="executor")
+
+    async def send(instance, request):
+        return {"answer": "done"}
+
+    from opentelemetry.trace.propagation.tracecontext import (
+        TraceContextTextMapPropagator,
+    )
+
+    with TracerProvider().get_tracer(__name__).start_as_current_span("send"):
+        TraceContextTextMapPropagator().inject(request.params.metadata["observe"])
+        _emit_a2a_send_topology_event(request, client, "send_message")
+        asyncio.run(_capture_a2a_response(send, "send_message")(client, request))
+
+    [started] = tool_started(realtime_events)
+    [completed] = [
+        event for event in realtime_events if event["event.name"] == "tool.completed"
+    ]
+    assert completed["tool.call.id"] == started["tool.call.id"]
+    assert completed["span.id"] == started["span.id"]
+    assert completed["trace.id"] == started["trace.id"]
+    assert completed["tool.status"] == "success"
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_a2a_receive_links_the_target_agent_to_the_sender(
+    realtime_events, monkeypatch, streaming
+):
+    pytest.importorskip("a2a")
+    from a2a.server.request_handlers import DefaultRequestHandler
+    from ioa_observe.sdk.decorators import agent
+    from ioa_observe.sdk.instrumentations import a2a
+
+    request = a2a_request("hello")
+    request.params.metadata["observe"].update(
+        {
+            "last_agent_span_id": "0000000000000123",
+            "last_agent_trace_id": "00000000000000000000000000000456",
+        }
+    )
+
+    @agent(name="executor")
+    async def executor():
+        return "done"
+
+    async def receive(self, params, context):
+        return await executor()
+
+    async def receive_stream(self, params, context):
+        yield "ready"
+        yield await executor()
+
+    monkeypatch.setattr(DefaultRequestHandler, "on_message_send", receive)
+    monkeypatch.setattr(
+        DefaultRequestHandler, "on_message_send_stream", receive_stream, raising=False
+    )
+    monkeypatch.setattr(a2a, "_original_methods", {})
+    instrumentor = a2a.A2AInstrumentor()
+    instrumentor._instrument_server_handler()
+    method = (
+        DefaultRequestHandler.on_message_send_stream
+        if streaming
+        else DefaultRequestHandler.on_message_send
+    )
+    handler = SimpleNamespace(_agent_card=SimpleNamespace(name="executor"))
+
+    async def invoke():
+        result = method(handler, request.params, None)
+        if streaming:
+            from ioa_observe.sdk.tracing.handoffs import INCOMING_HANDOFF
+
+            assert await anext(result) == "ready"
+            assert context.get_value(INCOMING_HANDOFF) is None
+            return [item async for item in result]
+        return await result
+
+    try:
+        asyncio.run(invoke())
+    finally:
+        instrumentor._uninstrument()
+    [received] = [
+        event
+        for event in realtime_events
+        if event["event.name"] == "a2a.message.received"
+    ]
+    [started] = [
+        event
+        for event in realtime_events
+        if event["event.name"] == "topology.node.started"
+    ]
+    [edge] = [
+        event
+        for event in realtime_events
+        if event["event.name"] == "topology.edge.updated"
+        and event["topology.edge.kind"] == "agent_handoff"
+    ]
+    assert edge["topology.edge.evidence"] == "transport:a2a"
+    assert edge["topology.edge.confidence"] == 1.0
+    assert edge["source.agent.span.id"] == "0000000000000123"
+    assert started["event.parent.id"] == received["event.id"]
 
 
 def test_a2a_send_emits_the_message_text_with_the_message_id_as_call_id(
@@ -198,17 +374,20 @@ def test_a2a_unserializable_output_is_logged_without_breaking_call(
 
 
 @pytest.mark.parametrize("streaming", [True, False])
-def test_a2a_failed_calls_do_not_emit_completion(realtime_events, streaming):
+@pytest.mark.parametrize("error_type", [RuntimeError, asyncio.CancelledError])
+def test_a2a_failed_calls_do_not_emit_completion(
+    realtime_events, streaming, error_type
+):
     request = a2a_request("hello")
     client = SimpleNamespace(name="executor")
     _emit_a2a_send_topology_event(request, client, "send_message")
 
     async def send(instance, request):
-        raise RuntimeError("remote failed")
+        raise error_type("remote failed")
 
     async def stream(instance, request):
         yield {"text": "partial"}
-        raise RuntimeError("remote failed")
+        raise error_type("remote failed")
 
     wrapped = _capture_a2a_response(
         stream if streaming else send, "send_message", streaming=streaming
@@ -219,9 +398,14 @@ def test_a2a_failed_calls_do_not_emit_completion(realtime_events, streaming):
             return [item async for item in wrapped(client, request)]
         return await wrapped(client, request)
 
-    with pytest.raises(RuntimeError, match="remote failed"):
+    with pytest.raises(error_type, match="remote failed"):
         asyncio.run(invoke())
     assert not any(e["event.name"] == "a2a.message.completed" for e in realtime_events)
+    [started] = tool_started(realtime_events)
+    [completed] = [e for e in realtime_events if e["event.name"] == "tool.completed"]
+    assert completed["event.parent.id"] == started["event.id"]
+    assert completed["tool.status"] == "error"
+    assert completed["error.type"] == error_type.__name__
 
 
 @pytest.mark.parametrize("abandoned", [True, False])
@@ -252,6 +436,12 @@ def test_a2a_empty_and_abandoned_streams(realtime_events, abandoned):
     assert len(completed) == (0 if abandoned else 1)
     if completed:
         assert "message.output" not in completed[0]
+    [started] = tool_started(realtime_events)
+    [tool_completed] = [
+        e for e in realtime_events if e["event.name"] == "tool.completed"
+    ]
+    assert tool_completed["event.parent.id"] == started["event.id"]
+    assert tool_completed["tool.status"] == ("error" if abandoned else "success")
 
 
 def test_a2a_send_emits_the_text_event_after_a2a_message_sent_on_the_same_span(

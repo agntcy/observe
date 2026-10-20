@@ -148,7 +148,11 @@ def record_session_completed(session_id: str) -> None:
 
 
 def record_node_started(
-    session_id: str, agent_name: str, agent_input: str | None = None
+    session_id: str,
+    agent_name: str,
+    agent_input: str | None = None,
+    *,
+    parent_event_id: str | None = None,
 ) -> None:
     now_ms = _now_ms()
     with _lock:
@@ -181,8 +185,11 @@ def record_node_started(
             **{
                 RuntimeEventAttribute.AGENT_NAME.value: agent_name,
                 RuntimeEventAttribute.AGENT_INPUT.value: agent_input,
+                RuntimeEventAttribute.EVENT_PARENT_ID.value: parent_event_id,
             },
         )
+        if parent_event_id:
+            event["parent_event_id"] = parent_event_id
 
     _publish(event, runtime_attributes)
 

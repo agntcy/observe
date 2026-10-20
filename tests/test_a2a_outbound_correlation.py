@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import copy
 import inspect
 import json
 import sys
@@ -40,8 +41,139 @@ PATHS = (
 )
 
 
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("copied", [False, True])
+def test_nested_a2a_client_transport_emits_one_message_lifecycle(
+    monkeypatch, streaming, copied
+):
+    pytest.importorskip("slima2a")
+    from slima2a.client_transport import SRPCTransport
+
+    provider = TracerProvider()
+    instrumentor = a2a.A2AInstrumentor()
+    monkeypatch.setattr(a2a, "_global_tracer", provider.get_tracer(__name__))
+    monkeypatch.setattr(a2a, "_original_methods", {})
+    events = []
+    register_runtime_event_listener(events.append)
+    transport = SimpleNamespace(_card=SimpleNamespace(name="executor"))
+
+    async def send(self, request, *args, **kwargs):
+        return {"answer": "done"}
+
+    async def stream(self, request, *args, **kwargs):
+        yield {"answer": "done"}
+
+    async def outer_send(self, request, *args, **kwargs):
+        if copied:
+            request = copy.deepcopy(request)
+        return await SRPCTransport.send_message(transport, request, *args, **kwargs)
+
+    async def outer_stream(self, request, *args, **kwargs):
+        if copied:
+            request = copy.deepcopy(request)
+        async for item in SRPCTransport.send_message_streaming(
+            transport, request, *args, **kwargs
+        ):
+            yield item
+
+    monkeypatch.setattr(SRPCTransport, "send_message", send)
+    monkeypatch.setattr(SRPCTransport, "send_message_streaming", stream)
+    monkeypatch.setattr(
+        BaseClient, "send_message", outer_stream if streaming else outer_send
+    )
+    instrumentor._instrument_base_client()
+    instrumentor._instrument_slima2a()
+
+    async def invoke():
+        token = context.attach(context.set_value("session.id", "nested-session"))
+        try:
+            result = BaseClient.send_message(
+                SimpleNamespace(_card=SimpleNamespace(name="executor")),
+                make_request(False, "nested-message"),
+            )
+            return [item async for item in result] if streaming else await result
+        finally:
+            context.detach(token)
+
+    try:
+        assert asyncio.run(invoke()) == (
+            [{"answer": "done"}] if streaming else {"answer": "done"}
+        )
+        names = [event["event.name"] for event in events]
+        assert names.count("a2a.message.sent") == 1
+        assert names.count("a2a.message.completed") == 1
+        assert names.count("a2a.agent_card") == 1
+        [card] = [event for event in events if event["event.name"] == "a2a.agent_card"]
+        assert card["capability.observation.kind"] == "message-context"
+    finally:
+        instrumentor._uninstrument()
+        provider.shutdown()
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_nested_guard_does_not_suppress_retries_or_concurrent_calls(streaming):
+    calls = []
+    client = SimpleNamespace(name="executor")
+
+    async def raw_send(instance, request):
+        await asyncio.sleep(0)
+        raise RuntimeError("retry")
+
+    async def raw_stream(instance, request):
+        await asyncio.sleep(0)
+        yield "partial"
+
+    async def send(instance, request):
+        calls.append(request)
+        return await raw_send(instance, request)
+
+    async def stream(instance, request):
+        calls.append(request)
+        async for item in raw_stream(instance, request):
+            yield item
+
+    wrapped = a2a._guard_nested_send(
+        raw_stream if streaming else raw_send,
+        stream if streaming else send,
+        streaming=streaming,
+    )
+    request = make_request(False, "reused-message")
+
+    async def invoke():
+        if streaming:
+            pending = wrapped(client, request)
+            assert await anext(pending) == "partial"
+            assert [item async for item in wrapped(client, request)] == ["partial"]
+            await pending.aclose()
+
+            async def consume():
+                return [item async for item in wrapped(client, copy.deepcopy(request))]
+
+            await asyncio.gather(
+                consume(),
+                consume(),
+            )
+        else:
+            for _ in range(2):
+                with pytest.raises(RuntimeError, match="retry"):
+                    await wrapped(client, request)
+            results = await asyncio.gather(
+                wrapped(client, copy.deepcopy(request)),
+                wrapped(client, copy.deepcopy(request)),
+                return_exceptions=True,
+            )
+            assert all(isinstance(result, RuntimeError) for result in results)
+        assert a2a._active_sends.get() == ()
+
+    asyncio.run(invoke())
+    assert len(calls) == 4
+
+
 @pytest.fixture(autouse=True)
 def reset_state(monkeypatch):
+    from ioa_observe.sdk.tracing import runtime_event_emitter
+
+    monkeypatch.setattr(runtime_event_emitter, "_emit_to_otel_logs", lambda *args: None)
     monkeypatch.setattr(TracerWrapper, "endpoint", None)
     clear_runtime_event_listeners()
     clear_topology_listeners()

@@ -3,6 +3,8 @@
 
 from typing import Collection
 import functools
+import contextvars
+from contextlib import contextmanager
 import importlib
 import inspect
 import json
@@ -38,6 +40,52 @@ _kv_lock = threading.RLock()  # Add thread-safety for kv_store operations
 
 # Track original methods for uninstrumentation
 _original_methods = {}
+_active_sends = contextvars.ContextVar("observe_a2a_active_sends", default=())
+
+
+def _guard_nested_send(original, instrumented, *, streaming=False):
+    def key(instance, request):
+        return (
+            _get_outbound_session_id(),
+            _safe_get_target_name(instance),
+            _safe_get_message_id(request) or id(request),
+        )
+
+    if streaming:
+
+        @functools.wraps(original)
+        async def stream(instance, request, *args, **kwargs):
+            identity = key(instance, request)
+            active = _active_sends.get()
+            method = original if identity in active else instrumented
+            iterator = method(instance, request, *args, **kwargs)
+            try:
+                while True:
+                    token = _active_sends.set((*active, identity))
+                    try:
+                        item = await anext(iterator)
+                    except StopAsyncIteration:
+                        break
+                    finally:
+                        _active_sends.reset(token)
+                    yield item
+            finally:
+                await iterator.aclose()
+
+        return stream
+
+    @functools.wraps(original)
+    async def send(instance, request, *args, **kwargs):
+        identity = key(instance, request)
+        active = _active_sends.get()
+        method = original if identity in active else instrumented
+        token = _active_sends.set((*active, identity))
+        try:
+            return await method(instance, request, *args, **kwargs)
+        finally:
+            _active_sends.reset(token)
+
+    return send
 
 
 def _record_card(card, source, *, session_id=None, attributes=None):
@@ -74,6 +122,7 @@ def _record_message_card(instance, observe_meta, source, message_id, operation):
                         "message.id": message_id,
                         "operation.name": operation,
                         "network.protocol.name": "a2a",
+                        "capability.observation.kind": "message-context",
                     },
                 )
                 return
@@ -133,6 +182,10 @@ def _safe_get_message_id(container) -> str | None:
         message = getattr(params, "message", None) or getattr(
             container, "message", None
         )
+        if message is None and (
+            hasattr(container, "messageId") or hasattr(container, "message_id")
+        ):
+            message = container
         if message is not None:
             return (
                 getattr(message, "messageId", None)
@@ -145,16 +198,37 @@ def _safe_get_message_id(container) -> str | None:
 
 
 def _safe_get_target_name(container=None, fallback=None) -> str | None:
-    candidates = [container, fallback]
+    candidates = [fallback, container]
+    visited = set()
     for candidate in candidates:
-        if candidate is None:
+        if candidate is None or id(candidate) in visited:
             continue
-        for attr in ("agent_card", "_card", "agent", "target_agent", "target"):
+        visited.add(id(candidate))
+        for attr in (
+            "agent_card",
+            "_agent_card",
+            "_card",
+            "agent",
+            "target_agent",
+            "target",
+        ):
             nested = getattr(candidate, attr, None)
             if nested is not None:
+                for name_attr in ("name", "agent_id", "agent_name"):
+                    value = (
+                        nested.get(name_attr)
+                        if isinstance(nested, dict)
+                        else getattr(nested, name_attr, None)
+                    )
+                    if isinstance(value, str) and value:
+                        return value
                 candidates.append(nested)
         for attr in ("name", "id", "agent_id", "agent_name"):
-            value = getattr(candidate, attr, None)
+            value = (
+                candidate.get(attr)
+                if isinstance(candidate, dict)
+                else getattr(candidate, attr, None)
+            )
             if value:
                 return str(value)
     return None
@@ -218,17 +292,49 @@ def _capture_a2a_response(original, operation: str, *, streaming: bool = False):
                 else None
             ),
             "context": TraceContextTextMapPropagator().extract(metadata),
+            "tool_event_id": metadata.get("tool.event.id"),
         }
+
+    def finish_tool(captured, response=None, error=None):
+        if captured is None or not captured.get("tool_event_id"):
+            return
+        from ioa_observe.sdk.tracing.pre_call_events import (
+            emit_tool_completed_after_send,
+        )
+
+        started = {
+            "event.id": captured["tool_event_id"],
+            "session.id": captured["session_id"],
+            "tool.name": f"a2a_message:{captured['target']}",
+            "tool.call.id": captured["message_id"] or captured["parent_event_id"],
+            "agent.name": captured["source"],
+            "tool.execution.kind": "client",
+        }
+        if captured["source_agent_span_id"]:
+            started["ioa_observe.agent.span_id"] = captured["source_agent_span_id"]
+        if captured["source_agent_trace_id"]:
+            started["ioa_observe.agent.trace_id"] = captured["source_agent_trace_id"]
+        emit_tool_completed_after_send(
+            started,
+            result=response,
+            error=error,
+            span=trace.get_current_span(captured["context"]),
+        )
 
     def complete(captured, response):
         if captured is None:
             return
-        context = captured.pop("context")
+        finish_tool(captured, response)
+        context = captured["context"]
         # Reuse the outgoing span identity without extending its network lifetime.
         with trace.use_span(trace.get_current_span(context), end_on_exit=False):
             emit_topology_event(
                 "a2a.message.completed",
-                **captured,
+                **{
+                    key: value
+                    for key, value in captured.items()
+                    if key not in {"context", "tool_event_id"}
+                },
                 protocol="a2a",
                 operation=operation,
                 message_output=_serialize_message_payload(response),
@@ -240,9 +346,16 @@ def _capture_a2a_response(original, operation: str, *, streaming: bool = False):
         async def stream(instance, request, *args, **kwargs):
             captured = capture_request(request, instance)
             last_response = None
-            async for response in original(instance, request, *args, **kwargs):
-                last_response = response
-                yield response
+            iterator = original(instance, request, *args, **kwargs)
+            try:
+                async for response in iterator:
+                    last_response = response
+                    yield response
+            except BaseException as error:
+                finish_tool(captured, error=error)
+                raise
+            finally:
+                await iterator.aclose()
             complete(captured, last_response)
 
         return stream
@@ -250,7 +363,11 @@ def _capture_a2a_response(original, operation: str, *, streaming: bool = False):
     @functools.wraps(original)
     async def send(instance, request, *args, **kwargs):
         captured = capture_request(request, instance)
-        response = await original(instance, request, *args, **kwargs)
+        try:
+            response = await original(instance, request, *args, **kwargs)
+        except BaseException as error:
+            finish_tool(captured, error=error)
+            raise
         complete(captured, response)
         return response
 
@@ -314,18 +431,26 @@ def _emit_a2a_send_topology_event(request, client_instance, operation: str) -> N
         metadata["observe"] = observe_meta
         _set_metadata(request, metadata)
     # The text of the message, on the span that the outgoing trace context carries, before it is sent.
+    observe_meta.pop("tool.event.id", None)
     if is_content_tracing_enabled():
-        emit_tool_started_before_send(
+        started = emit_tool_started_before_send(
             session_id,
             f"a2a_message:{target}",
             {"text": _safe_get_message_text(request)},
-            call_id=message_id,
+            call_id=message_id or (event["event.id"] if event is not None else None),
             agent_name=sender,
             parent_event_id=event["event.id"] if event is not None else None,
         )
+        if started is not None:
+            observe_meta["tool.event.id"] = started["event.id"]
+    metadata = dict(_safe_get_metadata(request))
+    metadata["observe"] = observe_meta
+    _set_metadata(request, metadata)
 
 
-def _emit_a2a_receive_topology_event(params, handler_instance, operation: str) -> None:
+def _emit_a2a_receive_topology_event(
+    params, handler_instance, operation: str
+) -> dict | None:
     observe_meta = _safe_get_observe_meta(params)
     session_id = observe_meta.get("session_id")
     if not session_id:
@@ -361,7 +486,7 @@ def _emit_a2a_receive_topology_event(params, handler_instance, operation: str) -
         source_agent_span_id=observe_meta.get("last_agent_span_id"),
         source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
     )
-    emit_topology_event(
+    return emit_topology_event(
         "a2a.message.received",
         session_id=session_id,
         include_snapshot=True,
@@ -377,6 +502,50 @@ def _emit_a2a_receive_topology_event(params, handler_instance, operation: str) -
         source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
         parent_event_id=observe_meta.get("event.id"),
     )
+
+
+@contextmanager
+def _receive_agent_scope(params, handler, operation):
+    from opentelemetry import context
+    from ioa_observe.sdk.tracing.handoffs import INCOMING_HANDOFF
+
+    event = _emit_a2a_receive_topology_event(params, handler, operation)
+    metadata = _safe_get_observe_meta(params)
+    reference = {
+        "session_id": metadata.get("session_id"),
+        "target_agent": _safe_get_target_name(handler)
+        or _safe_get_current_actor_name(),
+        "source_agent": metadata.get("last_agent_name"),
+        "source_span_id": metadata.get("last_agent_span_id"),
+        "source_trace_id": metadata.get("last_agent_trace_id"),
+        "event_id": event.get("event.id") if event else None,
+        "consumed": False,
+    }
+    # An untraced sender cannot establish an exact invocation link.
+    if not all(
+        reference[key] for key in ("source_agent", "source_span_id", "source_trace_id")
+    ):
+        yield
+        return
+    try:
+        source_context = trace.SpanContext(
+            trace_id=int(reference["source_trace_id"], 16),
+            span_id=int(reference["source_span_id"], 16),
+            is_remote=True,
+        )
+    except (TypeError, ValueError):
+        source_context = trace.INVALID_SPAN_CONTEXT
+    if not source_context.is_valid:
+        logging.warning(
+            "Unable to link A2A receiver: invalid source agent span context"
+        )
+        yield
+        return
+    token = context.attach(context.set_value(INCOMING_HANDOFF, reference))
+    try:
+        yield
+    finally:
+        context.detach(token)
 
 
 def _inject_observe_metadata(request, span_name: str):
@@ -615,7 +784,11 @@ class A2AInstrumentor(BaseInstrumentor):
                         _emit_a2a_send_topology_event(request, self, "send_message")
                     return await original_send_message(self, request, *args, **kwargs)
 
-            BaseA2AClient.send_message = instrumented_send_message
+            BaseA2AClient.send_message = _guard_nested_send(
+                _original_methods["BaseA2AClient.send_message"],
+                instrumented_send_message,
+                streaming=inspect.isasyncgenfunction(original_send_message),
+            )
 
         # Instrument send_message_streaming
         if hasattr(BaseA2AClient, "send_message_streaming"):
@@ -649,7 +822,11 @@ class A2AInstrumentor(BaseInstrumentor):
                 ):
                     yield response
 
-            BaseA2AClient.send_message_streaming = instrumented_send_message_streaming
+            BaseA2AClient.send_message_streaming = _guard_nested_send(
+                _original_methods["BaseA2AClient.send_message_streaming"],
+                instrumented_send_message_streaming,
+                streaming=True,
+            )
 
     def _instrument_legacy_client(self):
         """Instrument the legacy A2AClient for backward compatibility."""
@@ -778,7 +955,10 @@ class A2AInstrumentor(BaseInstrumentor):
             # Call through without transport-specific kwargs
             return await original_send_message(self, request, *args, **kwargs)
 
-        legacy_client.send_message = instrumented_send_message
+        legacy_client.send_message = _guard_nested_send(
+            _original_methods[f"{legacy_module_path}.A2AClient.send_message"],
+            instrumented_send_message,
+        )
 
         # Instrument broadcast_message if it exists
         if hasattr(legacy_client, "broadcast_message"):
@@ -884,7 +1064,10 @@ class A2AInstrumentor(BaseInstrumentor):
                 # Call through without transport-specific kwargs
                 return await original_broadcast_message(self, request, *args, **kwargs)
 
-            legacy_client.broadcast_message = instrumented_broadcast_message
+            legacy_client.broadcast_message = _guard_nested_send(
+                _original_methods[f"{legacy_module_path}.A2AClient.broadcast_message"],
+                instrumented_broadcast_message,
+            )
 
     def _instrument_server_handler(self):
         """Instrument the server-side request handlers."""
@@ -975,8 +1158,8 @@ class A2AInstrumentor(BaseInstrumentor):
                                 )
 
             try:
-                _emit_a2a_receive_topology_event(params, self, "on_message_send")
-                return await original_server_on_message_send(self, params, context)
+                with _receive_agent_scope(params, self, "on_message_send"):
+                    return await original_server_on_message_send(self, params, context)
             finally:
                 if token is not None:
                     try:
@@ -1083,14 +1266,27 @@ class A2AInstrumentor(BaseInstrumentor):
                                     )
 
                 try:
-                    _emit_a2a_receive_topology_event(
-                        params, self, "on_message_send_stream"
-                    )
-                    # This is an async generator
-                    async for event in original_on_message_send_stream(
-                        self, params, context
-                    ):
-                        yield event
+                    from opentelemetry import context as otel_ctx
+
+                    with _receive_agent_scope(params, self, "on_message_send_stream"):
+                        request_context = otel_ctx.get_current()
+                    iterator = original_on_message_send_stream(self, params, context)
+                    try:
+                        while True:
+                            request_token = otel_ctx.attach(request_context)
+                            try:
+                                event = await anext(iterator)
+                            except StopAsyncIteration:
+                                break
+                            finally:
+                                otel_ctx.detach(request_token)
+                            yield event
+                    finally:
+                        request_token = otel_ctx.attach(request_context)
+                        try:
+                            await iterator.aclose()
+                        finally:
+                            otel_ctx.detach(request_token)
                 finally:
                     if token is not None:
                         try:
@@ -1202,7 +1398,10 @@ class A2AInstrumentor(BaseInstrumentor):
                 self, request, *args, **kwargs
             )
 
-        SRPCTransport.send_message = instrumented_srpc_transport_send_message
+        SRPCTransport.send_message = _guard_nested_send(
+            _original_methods["SRPCTransport.send_message"],
+            instrumented_srpc_transport_send_message,
+        )
 
         # send_message_streaming
         original_srpc_transport_send_message_streaming = (
@@ -1298,8 +1497,10 @@ class A2AInstrumentor(BaseInstrumentor):
             ):
                 yield response
 
-        SRPCTransport.send_message_streaming = (
-            instrumented_srpc_transport_send_message_streaming
+        SRPCTransport.send_message_streaming = _guard_nested_send(
+            _original_methods["SRPCTransport.send_message_streaming"],
+            instrumented_srpc_transport_send_message_streaming,
+            streaming=True,
         )
 
     def _uninstrument(self, **kwargs):

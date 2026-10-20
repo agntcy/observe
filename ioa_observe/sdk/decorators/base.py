@@ -50,6 +50,7 @@ from ioa_observe.sdk.tracing.runtime_event_emitter import emit_runtime_event
 from ioa_observe.sdk.tracing.handoffs import (
     consume_handoff_signals,
     extract_handoff_signal,
+    incoming_handoff,
     record_handoff_signal,
 )
 from ioa_observe.sdk.tracing.runtime_events import (
@@ -202,6 +203,24 @@ def _get_previous_agent_link(session_id: str, entity_name: str) -> tuple:
     sequence_str = kv_store.get(_get_session_span_key(session_id, "agent_sequence"))
     sequence = int(sequence_str) if sequence_str else 0
 
+    received = incoming_handoff(session_id, entity_name)
+    if received is not None:
+        received["consumed"] = True
+        return (
+            make_single_link(
+                received["source_span_id"],
+                received["source_trace_id"],
+                received["source_agent"],
+                "agent_handoff",
+            ),
+            received["source_agent"],
+            sequence,
+            None,
+            0,
+            "transport:a2a",
+            1.0,
+        )
+
     pending_handoffs = consume_handoff_signals(session_id, entity_name)
     if pending_handoffs:
         links = []
@@ -337,6 +356,7 @@ def _setup_span(
     true_parent_seq = 0
     handoff_evidence = None
     handoff_confidence = None
+    received_handoff = incoming_handoff(session_id, entity_name) if session_id else None
 
     if tlp_span_kind == ObserveSpanKindValues.AGENT and session_id:
         (
@@ -462,7 +482,14 @@ def _setup_span(
                 span._ioa_agent_name = entity_name
                 # Register live span ref for retroactive fork annotation
                 register_active_span(session_id, new_seq, span)
-                record_node_started(session_id, entity_name, agent_input=entity_input)
+                record_node_started(
+                    session_id,
+                    entity_name,
+                    agent_input=entity_input,
+                    parent_event_id=(
+                        received_handoff.get("event_id") if received_handoff else None
+                    ),
+                )
                 if previous_agent_name:
                     source_context = next(
                         (

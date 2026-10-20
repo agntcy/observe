@@ -15,6 +15,11 @@ import json
 import logging
 from typing import Any
 
+from opentelemetry import trace
+
+from ioa_observe.sdk.config import is_content_tracing_enabled
+from ioa_observe.sdk.tracing.message_payloads import serialize_message_payload
+from ioa_observe.sdk.tracing.tool_results import tool_error_message
 from ioa_observe.sdk.tracing.runtime_event_emitter import emit_runtime_event
 from ioa_observe.sdk.tracing.runtime_events import (
     RuntimeEventAttribute,
@@ -34,7 +39,7 @@ def emit_tool_started_before_send(
     call_id: str | None = None,
     agent_name: str | None = None,
     parent_event_id: str | None = None,
-) -> None:
+) -> dict[str, Any] | None:
     """Emit ``tool.started`` with the input of a call that has not been sent yet. Never raises."""
     try:
         attributes: dict[str, Any] = {
@@ -50,7 +55,8 @@ def emit_tool_started_before_send(
         if parent_event_id:
             # The outgoing ``*.message.sent`` event of the same request, emitted just before this one.
             attributes[RuntimeEventAttribute.EVENT_PARENT_ID.value] = parent_event_id
-        emit_runtime_event(
+        attributes["tool.execution.kind"] = "client"
+        return emit_runtime_event(
             build_runtime_event_attributes(
                 RuntimeEventName.TOOL_STARTED,
                 session_id=session_id,
@@ -60,3 +66,64 @@ def emit_tool_started_before_send(
         )
     except Exception:  # an event must never break the request it describes
         logger.exception("pre-call tool.started event failed")
+
+
+def emit_tool_completed_after_send(
+    started: dict[str, Any] | None,
+    *,
+    result: Any = None,
+    error: BaseException | None = None,
+    span: trace.Span | None = None,
+) -> None:
+    """Close a client-side tool invocation on the same span as its start."""
+    if started is None:
+        return
+    try:
+        error_message = (
+            (str(error) or type(error).__name__)
+            if error is not None
+            else tool_error_message(result)
+        )
+        explicit_error = (
+            result.get("isError", result.get("is_error", False))
+            if isinstance(result, dict)
+            else getattr(result, "isError", getattr(result, "is_error", False))
+        )
+        attributes = {
+            key: started[key]
+            for key in (
+                "tool.name",
+                "tool.call.id",
+                "agent.name",
+                "tool.execution.kind",
+                "ioa_observe.agent.span_id",
+                "ioa_observe.agent.trace_id",
+                "application_id",
+            )
+            if key in started
+        }
+        attributes["event.parent.id"] = started["event.id"]
+        attributes["tool.status"] = (
+            "error" if error_message or explicit_error else "success"
+        )
+        if error is not None:
+            attributes["error.type"] = type(error).__name__
+        if is_content_tracing_enabled():
+            if "tool.input" in started:
+                attributes["tool.input"] = started["tool.input"]
+            if error_message:
+                attributes["tool.error.message"] = error_message
+            output = serialize_message_payload(result, protocol="tool")
+            if output is not None:
+                attributes["tool.output"] = output
+        emit_runtime_event(
+            build_runtime_event_attributes(
+                RuntimeEventName.TOOL_COMPLETED,
+                session_id=started["session.id"],
+                snapshot_version=next_session_event_version(started["session.id"]),
+                **attributes,
+            ),
+            span=span,
+        )
+    except Exception:
+        logger.exception("client tool.completed event failed")
