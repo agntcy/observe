@@ -29,6 +29,7 @@ from ioa_observe.sdk.tracing import (
 )
 from ioa_observe.sdk.tracing.topology import clear_topology_listeners
 
+PRECALL = pre_call_events.PRECALL_EVENT_ID_KEY
 TRACEPARENT = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
 
 
@@ -86,6 +87,30 @@ def test_tool_started_before_send_never_breaks_the_request_it_describes(monkeypa
     pre_call_events.emit_tool_started_before_send("session-1", "add", {"a": 1})
 
 
+def test_tool_started_before_send_returns_the_id_of_the_event_it_emitted(
+    realtime_events,
+):
+    event_id = pre_call_events.emit_tool_started_before_send("session-1", "add", {})
+
+    [event] = tool_started(realtime_events)
+    assert event_id == event["event.id"]
+    assert len(event_id) == 64
+
+
+def test_tool_started_before_send_returns_none_when_nothing_is_emitted(monkeypatch):
+    set_realtime_observability_enabled(False)
+
+    assert pre_call_events.emit_tool_started_before_send("s", "add", {}) is None
+
+    set_realtime_observability_enabled(True)
+    monkeypatch.setattr(
+        pre_call_events,
+        "emit_runtime_event",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")),
+    )
+    assert pre_call_events.emit_tool_started_before_send("s", "add", {}) is None
+
+
 def a2a_request(text):
     return SimpleNamespace(
         params=SimpleNamespace(
@@ -126,6 +151,36 @@ def test_a2a_send_emits_the_message_text_with_the_message_id_as_call_id(
         "parts": [{"text": "export the data"}, {"text": "second line"}],
     }
     assert "message.output" not in sent
+
+
+def test_a2a_carrier_carries_the_id_of_the_precall_tool_started_event(realtime_events):
+    request = a2a_request("export the data")
+    client = SimpleNamespace(agent_card=SimpleNamespace(name="executor"))
+
+    _emit_a2a_send_topology_event(request, client, "send_message")
+
+    carrier = request.params.metadata["observe"]
+    [sent] = [e for e in realtime_events if e["event.name"] == "a2a.message.sent"]
+    [started] = tool_started(realtime_events)
+    assert carrier[PRECALL] == started["event.id"]
+    assert carrier["event.id"] == sent["event.id"]
+    assert carrier[PRECALL] != carrier["event.id"]
+    assert started["event.parent.id"] == sent["event.id"]
+
+
+def test_a2a_carrier_has_no_precall_id_without_content_tracing(
+    realtime_events, monkeypatch
+):
+    monkeypatch.setenv("OBSERVE_TRACE_CONTENT", "false")
+    request = a2a_request("export the data")
+    client = SimpleNamespace(agent_card=SimpleNamespace(name="executor"))
+
+    _emit_a2a_send_topology_event(request, client, "send_message")
+
+    carrier = request.params.metadata["observe"]
+    assert PRECALL not in carrier
+    assert carrier["event.id"]
+    assert tool_started(realtime_events) == []
 
 
 @pytest.mark.parametrize("capture_content", [True, False])
@@ -348,6 +403,54 @@ def test_mcp_client_wrapper_stages_the_call_with_the_id_of_its_sent_event(
     assert event["tool.name"] == "add"
 
 
+def test_mcp_meta_carries_the_id_of_the_precall_tool_started_event(realtime_events):
+    mcp_instrumentation._stage_mcp_tool_call_started(
+        {"name": "add", "arguments": {"a": 1}}, "session-1", "req-1", "sent-event-id"
+    )
+    meta = {"event.id": "sent-event-id"}
+
+    mcp_instrumentation.McpInstrumentor._inject_with_staged_tool_call(
+        lambda m: m.update(traceparent=TRACEPARENT), None, (meta,), {}
+    )
+
+    [started] = tool_started(realtime_events)
+    assert meta[PRECALL] == started["event.id"]
+    assert meta["event.id"] == "sent-event-id"
+    assert meta[PRECALL] != meta["event.id"]
+    assert started["event.parent.id"] == "sent-event-id"
+
+
+def test_mcp_meta_has_no_precall_id_without_content_tracing(
+    realtime_events, monkeypatch
+):
+    monkeypatch.setenv("OBSERVE_TRACE_CONTENT", "false")
+    mcp_instrumentation._stage_mcp_tool_call_started(
+        {"name": "add", "arguments": {}}, "session-1", "req-1", "sent-event-id"
+    )
+    meta = {"event.id": "sent-event-id"}
+
+    mcp_instrumentation.McpInstrumentor._inject_with_staged_tool_call(
+        lambda m: None, None, (meta,), {}
+    )
+
+    assert PRECALL not in meta
+    assert tool_started(realtime_events) == []
+
+
+def test_mcp_meta_has_no_precall_id_when_realtime_events_are_off(realtime_events):
+    set_realtime_observability_enabled(False)
+    mcp_instrumentation._stage_mcp_tool_call_started(
+        {"name": "add", "arguments": {}}, "session-1", "req-1"
+    )
+    meta = {}
+
+    mcp_instrumentation.McpInstrumentor._inject_with_staged_tool_call(
+        lambda m: None, None, (meta,), {}
+    )
+
+    assert meta == {}
+
+
 def test_mcp_tool_call_is_emitted_once_per_request(realtime_events):
     mcp_instrumentation._stage_mcp_tool_call_started(
         {"name": "add", "arguments": {}}, "session-1", "req-1"
@@ -416,7 +519,10 @@ def test_the_mcp_library_still_injects_trace_context_where_the_hook_expects_it(
         )[1],
     )
 
+    received_params = []
+
     async def on_request(ctx, method, params):
+        received_params.append(params)
         return {}
 
     async def on_notify(ctx, method, params):
@@ -443,8 +549,10 @@ def test_the_mcp_library_still_injects_trace_context_where_the_hook_expects_it(
 
     asyncio.run(run())
 
-    assert len(tool_started(realtime_events)) == 1
+    [event] = tool_started(realtime_events)
     assert emitted_in == send_span_ids
+    # The id of the pre-call event is on the wire, in the ``_meta`` the peer receives.
+    assert received_params[0]["_meta"][PRECALL] == event["event.id"]
 
 
 PROMPT = '[{"role":"user","parts":[{"type":"text","content":"hello"}]}]'

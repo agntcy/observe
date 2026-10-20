@@ -34,7 +34,10 @@ from ..utils.const import (
     OBSERVE_ENTITY_INPUT,
 )
 from ..tracing.runtime_events import RuntimeEventName
-from ..tracing.pre_call_events import emit_tool_started_before_send
+from ..tracing.pre_call_events import (
+    PRECALL_EVENT_ID_KEY,
+    emit_tool_started_before_send,
+)
 from ..tracing.message_payloads import serialize_message_payload
 from ..tracing.context_utils import (
     _get_agent_linking_info,
@@ -279,7 +282,8 @@ def _stage_mcp_tool_call_started(
         )
 
 
-def _emit_staged_mcp_tool_call_started() -> None:
+def _emit_staged_mcp_tool_call_started(meta=None) -> None:
+    """Emit the staged ``tool.started``; when ``meta`` is the library's outgoing ``_meta`` dict, add its id."""
     pending = _PENDING_TOOL_CALL.get(None)
     if not pending:
         return
@@ -287,9 +291,11 @@ def _emit_staged_mcp_tool_call_started() -> None:
     if not is_content_tracing_enabled():
         return
     session_id, name, arguments, call_id, parent_event_id = pending
-    emit_tool_started_before_send(
+    event_id = emit_tool_started_before_send(
         session_id, name, arguments, call_id=call_id, parent_event_id=parent_event_id
     )
+    if event_id and isinstance(meta, dict):
+        meta[PRECALL_EVENT_ID_KEY] = event_id
 
 
 def _emit_mcp_receive_topology_event(
@@ -799,7 +805,8 @@ class McpInstrumentor(BaseInstrumentor):
     @staticmethod
     def _inject_with_staged_tool_call(wrapped, instance, args, kwargs):
         result = wrapped(*args, **kwargs)
-        _emit_staged_mcp_tool_call_started()
+        # The library builds the request from this dict right after the call, so it is still writable.
+        _emit_staged_mcp_tool_call_started(args[0] if args else kwargs.get("meta"))
         return result
 
     @staticmethod

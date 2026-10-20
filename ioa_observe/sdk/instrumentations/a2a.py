@@ -27,7 +27,10 @@ from ioa_observe.sdk.tracing.context_utils import (
     _get_outbound_session_id,
     _inject_outbound_context,
 )
-from ioa_observe.sdk.tracing.pre_call_events import emit_tool_started_before_send
+from ioa_observe.sdk.tracing.pre_call_events import (
+    PRECALL_EVENT_ID_KEY,
+    emit_tool_started_before_send,
+)
 from ioa_observe.sdk.tracing.message_payloads import serialize_message_payload
 from ioa_observe.sdk.tracing.topology import emit_topology_event, upsert_topology_edge
 from ioa_observe.sdk.tracing.capability_capture import record_capability_event
@@ -309,13 +312,11 @@ def _emit_a2a_send_topology_event(request, client_instance, operation: str) -> N
         source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
     )
     if event is not None:
-        metadata = dict(_safe_get_metadata(request))
         observe_meta["event.id"] = event["event.id"]
-        metadata["observe"] = observe_meta
-        _set_metadata(request, metadata)
+        _set_observe_metadata(request, observe_meta)
     # The text of the message, on the span that the outgoing trace context carries, before it is sent.
     if is_content_tracing_enabled():
-        emit_tool_started_before_send(
+        precall_event_id = emit_tool_started_before_send(
             session_id,
             f"a2a_message:{target}",
             {"text": _safe_get_message_text(request)},
@@ -323,6 +324,16 @@ def _emit_a2a_send_topology_event(request, client_instance, operation: str) -> N
             agent_name=sender,
             parent_event_id=event["event.id"] if event is not None else None,
         )
+        if precall_event_id:
+            # Next to ``event.id`` (the ``message.sent``): the id of the event that holds the content.
+            observe_meta[PRECALL_EVENT_ID_KEY] = precall_event_id
+            _set_observe_metadata(request, observe_meta)
+
+
+def _set_observe_metadata(request, observe_meta) -> None:
+    metadata = dict(_safe_get_metadata(request))
+    metadata["observe"] = observe_meta
+    _set_metadata(request, metadata)
 
 
 def _emit_a2a_receive_topology_event(params, handler_instance, operation: str) -> None:

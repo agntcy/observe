@@ -25,6 +25,10 @@ from ioa_observe.sdk.tracing.topology import next_session_event_version
 
 logger = logging.getLogger(__name__)
 
+# Carrier key (A2A ``metadata.observe``, MCP ``params._meta``) holding the ``event.id`` of the pre-call
+# ``tool.started`` event. The carrier's ``event.id`` keeps naming the ``*.message.sent`` event.
+PRECALL_EVENT_ID_KEY = "precall.event.id"
+
 
 def emit_tool_started_before_send(
     session_id: str,
@@ -34,8 +38,10 @@ def emit_tool_started_before_send(
     call_id: str | None = None,
     agent_name: str | None = None,
     parent_event_id: str | None = None,
-) -> None:
-    """Emit ``tool.started`` with the input of a call that has not been sent yet. Never raises."""
+) -> str | None:
+    """Emit ``tool.started`` with the input of a call that has not been sent yet. Never raises.
+
+    Returns the ``event.id`` of the emitted event, or ``None`` when nothing was emitted."""
     try:
         attributes: dict[str, Any] = {
             RuntimeEventAttribute.TOOL_NAME.value: tool_name,
@@ -50,7 +56,7 @@ def emit_tool_started_before_send(
         if parent_event_id:
             # The outgoing ``*.message.sent`` event of the same request, emitted just before this one.
             attributes[RuntimeEventAttribute.EVENT_PARENT_ID.value] = parent_event_id
-        emit_runtime_event(
+        event = emit_runtime_event(
             build_runtime_event_attributes(
                 RuntimeEventName.TOOL_STARTED,
                 session_id=session_id,
@@ -58,5 +64,8 @@ def emit_tool_started_before_send(
                 **attributes,
             )
         )
+        event_id = event.get("event.id") if event else None
+        return event_id if isinstance(event_id, str) and event_id else None
     except Exception:  # an event must never break the request it describes
         logger.exception("pre-call tool.started event failed")
+        return None
