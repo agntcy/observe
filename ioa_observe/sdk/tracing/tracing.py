@@ -1373,9 +1373,9 @@ def init_langchain_instrumentor():
 # wrapped to emit it once the request is on the span, and the end of the span emits it if that never happened.
 _PRE_CALL_LLM_SPAN_NAMES: set[str] = set()
 
-# Header of the outgoing LLM request that carries the ``event.id`` of its pre-call ``llm.started``, next to
-# ``precall.event.id`` of the A2A and MCP carriers.
-LLM_PRECALL_EVENT_ID_HEADER = "x-observe-precall-event-id"
+# Header of the outgoing LLM request that carries the ``event.id`` of its pre-call ``llm.started``. Named like
+# ``event.parent.id``: ``event.<role>.id``, in header form.
+LLM_PRE_CALL_EVENT_ID_HEADER = "x-observe-event-pre-call-id"
 
 
 def _emit_llm_started_after_openai_request() -> None:
@@ -1395,7 +1395,7 @@ def _emit_llm_started_after_openai_request() -> None:
                 if event_id and isinstance(call_kwargs, dict):
                     # ``call_kwargs`` is the dict the instrumentation then passes on to the client call.
                     headers = dict(call_kwargs.get("extra_headers") or {})
-                    headers[LLM_PRECALL_EVENT_ID_HEADER] = event_id
+                    headers[LLM_PRE_CALL_EVENT_ID_HEADER] = event_id
                     call_kwargs["extra_headers"] = headers
             except Exception:
                 logging.getLogger(__name__).exception("pre-call llm.started failed")
@@ -1461,28 +1461,28 @@ def emit_llm_started_for(span) -> str | None:
 # The ``event.id`` of the pre-call ``llm.started`` of the LLM call being made in this context. The LangChain
 # callback that emits the event runs before the request is built, and the HTTP client builds the request later in
 # the same context (the Traceloop handler runs inline), so a ContextVar carries the id from one to the other.
-_LLM_PRECALL_EVENT_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "observe_llm_precall_event_id", default=None
+_LLM_PRE_CALL_EVENT_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "observe_llm_pre_call_event_id", default=None
 )
 
 
-def _carry_llm_precall_event_id_in_requests() -> None:
-    """Add ``x-observe-precall-event-id`` to the requests the OpenAI client builds for a call that has a
+def _carry_llm_pre_call_event_id_in_requests() -> None:
+    """Add ``x-observe-event-pre-call-id`` to the requests the OpenAI client builds for a call that has a
     pre-call ``llm.started``. Only the OpenAI client (which LangChain's ``ChatOpenAI`` uses) is covered."""
     try:
         from openai import _base_client
         from wrapt import wrap_function_wrapper
 
         base_client = _base_client.BaseClient
-        if getattr(base_client._build_headers, "_observe_precall", False):
+        if getattr(base_client._build_headers, "_observe_pre_call_header", False):
             return
 
-        def with_precall_header(wrapped, instance, args, kwargs):
+        def with_pre_call_header(wrapped, instance, args, kwargs):
             headers = wrapped(*args, **kwargs)
             try:
-                event_id = _LLM_PRECALL_EVENT_ID.get()
+                event_id = _LLM_PRE_CALL_EVENT_ID.get()
                 if event_id:
-                    headers[LLM_PRECALL_EVENT_ID_HEADER] = event_id
+                    headers[LLM_PRE_CALL_EVENT_ID_HEADER] = event_id
             except Exception:
                 logging.getLogger(__name__).exception(
                     "could not add the pre-call llm.started id to the request"
@@ -1490,9 +1490,9 @@ def _carry_llm_precall_event_id_in_requests() -> None:
             return headers
 
         wrap_function_wrapper(
-            _base_client.__name__, "BaseClient._build_headers", with_precall_header
+            _base_client.__name__, "BaseClient._build_headers", with_pre_call_header
         )
-        base_client._build_headers._observe_precall = True
+        base_client._build_headers._observe_pre_call_header = True
     except Exception:
         logging.getLogger(__name__).debug(
             "pre-call llm.started id is not carried in requests", exc_info=True
@@ -1524,7 +1524,7 @@ def _emit_llm_started_before_the_call() -> None:
                         if holder is not None:
                             event_id = emit_llm_started_for(holder.span)
                             if event_id:
-                                _LLM_PRECALL_EVENT_ID.set(event_id)
+                                _LLM_PRE_CALL_EVENT_ID.set(event_id)
                     except Exception:
                         logging.getLogger(__name__).exception(
                             "pre-call llm.started failed"
@@ -1544,14 +1544,14 @@ def _emit_llm_started_before_the_call() -> None:
             def make_clear(original):
                 @functools.wraps(original)
                 def cleared(self, *args, **kwargs):
-                    _LLM_PRECALL_EVENT_ID.set(None)
+                    _LLM_PRE_CALL_EVENT_ID.set(None)
                     return original(self, *args, **kwargs)
 
                 cleared._observe_pre_call = True
                 return cleared
 
             setattr(TraceloopCallbackHandler, method, make_clear(original))
-        _carry_llm_precall_event_id_in_requests()
+        _carry_llm_pre_call_event_id_in_requests()
     except Exception:
         logging.getLogger(__name__).exception("could not enable pre-call llm.started")
 

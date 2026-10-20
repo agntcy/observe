@@ -51,9 +51,9 @@ def realtime_events():
 
 @pytest.fixture(autouse=True)
 def no_llm_started_id_left_over():
-    token = tracing._LLM_PRECALL_EVENT_ID.set(None)
+    token = tracing._LLM_PRE_CALL_EVENT_ID.set(None)
     yield
-    tracing._LLM_PRECALL_EVENT_ID.reset(token)
+    tracing._LLM_PRE_CALL_EVENT_ID.reset(token)
 
 
 def tool_started(events):
@@ -624,20 +624,20 @@ def test_the_openai_client_request_carries_the_llm_started_id_of_its_context(
     )
     messages = [{"role": "user", "content": "hi"}]
     try:
-        tracing._carry_llm_precall_event_id_in_requests()
-        tracing._carry_llm_precall_event_id_in_requests()
+        tracing._carry_llm_pre_call_event_id_in_requests()
+        tracing._carry_llm_pre_call_event_id_in_requests()
         client.chat.completions.create(model="m", messages=messages)
-        token = tracing._LLM_PRECALL_EVENT_ID.set("a" * 64)
+        token = tracing._LLM_PRE_CALL_EVENT_ID.set("a" * 64)
         try:
             client.chat.completions.create(model="m", messages=messages)
         finally:
-            tracing._LLM_PRECALL_EVENT_ID.reset(token)
+            tracing._LLM_PRE_CALL_EVENT_ID.reset(token)
     finally:
         server.shutdown()
 
     without, with_id = server.received_headers
-    assert tracing.LLM_PRECALL_EVENT_ID_HEADER not in without
-    assert with_id[tracing.LLM_PRECALL_EVENT_ID_HEADER] == "a" * 64
+    assert tracing.LLM_PRE_CALL_EVENT_ID_HEADER not in without
+    assert with_id[tracing.LLM_PRE_CALL_EVENT_ID_HEADER] == "a" * 64
 
 
 @pytest.mark.parametrize("method", ["on_llm_end", "on_llm_error"])
@@ -650,13 +650,13 @@ def test_the_llm_started_id_is_cleared_when_the_langchain_call_ends(
     for name in ("on_chat_model_start", "on_llm_start", "on_llm_end", "on_llm_error"):
         monkeypatch.setattr(handler.TraceloopCallbackHandler, name, lambda *a, **k: 1)
     tracing._emit_llm_started_before_the_call()
-    token = tracing._LLM_PRECALL_EVENT_ID.set("b" * 64)
+    token = tracing._LLM_PRE_CALL_EVENT_ID.set("b" * 64)
     try:
         getattr(handler.TraceloopCallbackHandler, method)(object())
 
-        assert tracing._LLM_PRECALL_EVENT_ID.get() is None
+        assert tracing._LLM_PRE_CALL_EVENT_ID.get() is None
     finally:
-        tracing._LLM_PRECALL_EVENT_ID.reset(token)
+        tracing._LLM_PRE_CALL_EVENT_ID.reset(token)
 
 
 @pytest.mark.parametrize("use_async", [True, False], ids=["ainvoke", "invoke"])
@@ -695,7 +695,7 @@ def test_langchain_chat_request_carries_the_id_of_its_llm_started(
         server.shutdown()
 
     [request_headers] = server.received_headers
-    carried = request_headers[tracing.LLM_PRECALL_EVENT_ID_HEADER]
+    carried = request_headers[tracing.LLM_PRE_CALL_EVENT_ID_HEADER]
     started = [e for e in llm_started(realtime_events) if e["event.id"] == carried]
     assert len(started) == 1
     assert "Where is the train to Luminos?" in started[0]["llm.input"]
@@ -793,7 +793,7 @@ def test_raw_openai_client_emits_llm_started_with_the_prompt_before_the_request_
     # The request carries the id of that event, so it can be read back with one lookup by id.
     [request_headers] = server.received_headers
     assert (
-        request_headers[tracing.LLM_PRECALL_EVENT_ID_HEADER]
+        request_headers[tracing.LLM_PRE_CALL_EVENT_ID_HEADER]
         == started_before[0]["event.id"]
     )
     # Span processors left over from other tests in the same process each add their own events at the end of
