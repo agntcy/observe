@@ -49,6 +49,13 @@ def realtime_events():
         kv_store.store.clear()
 
 
+@pytest.fixture(autouse=True)
+def no_llm_started_id_left_over():
+    token = tracing._LLM_PRECALL_EVENT_ID.set(None)
+    yield
+    tracing._LLM_PRECALL_EVENT_ID.reset(token)
+
+
 def tool_started(events):
     return [e for e in events if e["event.name"] == "tool.started"]
 
@@ -497,6 +504,26 @@ def test_llm_started_is_emitted_with_the_prompt_before_the_call_ends(
     assert span.get_span_context().span_id in tracer_wrapper._active_llm_spans
 
 
+def test_emit_llm_started_for_returns_the_id_of_the_event_it_emitted(
+    realtime_events, tracer_wrapper
+):
+    span = llm_span(
+        **{
+            "gen_ai.operation.name": "chat",
+            "gen_ai.input.messages": PROMPT,
+            "session.id": "session-1",
+        }
+    )
+
+    first = tracing.emit_llm_started_for(span)
+    second = tracing.emit_llm_started_for(span)
+
+    [event] = llm_started(realtime_events)
+    assert first == event["event.id"]
+    assert second is None
+    assert tracing.emit_llm_started_for(llm_span(**{"session.id": "s"})) is None
+
+
 def test_llm_started_is_emitted_once_per_span(realtime_events, tracer_wrapper):
     span = llm_span(
         **{
@@ -585,12 +612,104 @@ def test_a_failing_llm_started_does_not_break_the_langchain_callback(
     assert result == "original-result"
 
 
+def test_the_openai_client_request_carries_the_llm_started_id_of_its_context(
+    monkeypatch,
+):
+    openai = pytest.importorskip("openai")
+    server = serve_chat_completions(lambda: None)
+    client = openai.OpenAI(
+        base_url=f"http://127.0.0.1:{server.server_address[1]}/v1",
+        api_key="k",
+        max_retries=0,
+    )
+    messages = [{"role": "user", "content": "hi"}]
+    try:
+        tracing._carry_llm_precall_event_id_in_requests()
+        tracing._carry_llm_precall_event_id_in_requests()
+        client.chat.completions.create(model="m", messages=messages)
+        token = tracing._LLM_PRECALL_EVENT_ID.set("a" * 64)
+        try:
+            client.chat.completions.create(model="m", messages=messages)
+        finally:
+            tracing._LLM_PRECALL_EVENT_ID.reset(token)
+    finally:
+        server.shutdown()
+
+    without, with_id = server.received_headers
+    assert tracing.LLM_PRECALL_EVENT_ID_HEADER not in without
+    assert with_id[tracing.LLM_PRECALL_EVENT_ID_HEADER] == "a" * 64
+
+
+@pytest.mark.parametrize("method", ["on_llm_end", "on_llm_error"])
+def test_the_llm_started_id_is_cleared_when_the_langchain_call_ends(
+    monkeypatch, tracer_wrapper, method
+):
+    handler = pytest.importorskip(
+        "opentelemetry.instrumentation.langchain.callback_handler"
+    )
+    for name in ("on_chat_model_start", "on_llm_start", "on_llm_end", "on_llm_error"):
+        monkeypatch.setattr(handler.TraceloopCallbackHandler, name, lambda *a, **k: 1)
+    tracing._emit_llm_started_before_the_call()
+    token = tracing._LLM_PRECALL_EVENT_ID.set("b" * 64)
+    try:
+        getattr(handler.TraceloopCallbackHandler, method)(object())
+
+        assert tracing._LLM_PRECALL_EVENT_ID.get() is None
+    finally:
+        tracing._LLM_PRECALL_EVENT_ID.reset(token)
+
+
+@pytest.mark.parametrize("use_async", [True, False], ids=["ainvoke", "invoke"])
+def test_langchain_chat_request_carries_the_id_of_its_llm_started(
+    realtime_events, use_async
+):
+    pytest.importorskip("openai")
+    pytest.importorskip("opentelemetry.instrumentation.langchain")
+    chat_openai = pytest.importorskip("langchain_openai").ChatOpenAI
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from ioa_observe.sdk import Observe
+    from ioa_observe.sdk.tracing import session_start
+
+    server = serve_chat_completions(lambda: None)
+    llm = chat_openai(
+        model="m",
+        base_url=f"http://127.0.0.1:{server.server_address[1]}/v1",
+        api_key="k",
+        max_retries=0,
+    )
+    try:
+        Observe.init(
+            app_name="pre-call-langchain",
+            exporter=InMemorySpanExporter(),
+            realtime_observability_enabled=True,
+        )
+        with session_start():
+            if use_async:
+                asyncio.run(llm.ainvoke("Where is the train to Luminos?"))
+            else:
+                llm.invoke("Where is the train to Luminos?")
+    finally:
+        server.shutdown()
+
+    [request_headers] = server.received_headers
+    carried = request_headers[tracing.LLM_PRECALL_EVENT_ID_HEADER]
+    started = [e for e in llm_started(realtime_events) if e["event.id"] == carried]
+    assert len(started) == 1
+    assert "Where is the train to Luminos?" in started[0]["llm.input"]
+
+
 def serve_chat_completions(on_request):
     """A local OpenAI-compatible server; ``on_request`` is called when a request arrives, before it is answered."""
+
+    received_headers = []
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_POST(self):
             self.rfile.read(int(self.headers.get("content-length", 0)))
+            received_headers.append({k.lower(): v for k, v in self.headers.items()})
             on_request()
             body = json.dumps(
                 {
@@ -621,6 +740,7 @@ def serve_chat_completions(on_request):
             pass
 
     server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    server.received_headers = received_headers
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
 
@@ -670,6 +790,12 @@ def test_raw_openai_client_emits_llm_started_with_the_prompt_before_the_request_
     started_before = [e for e in at_arrival if e["event.name"] == "llm.started"]
     assert len(started_before) == 1
     assert "Where is the train to Luminos?" in started_before[0]["llm.input"]
+    # The request carries the id of that event, so it can be read back with one lookup by id.
+    [request_headers] = server.received_headers
+    assert (
+        request_headers[tracing.LLM_PRECALL_EVENT_ID_HEADER]
+        == started_before[0]["event.id"]
+    )
     # Span processors left over from other tests in the same process each add their own events at the end of
     # the span, so only the order for this call is asserted, not how many times each event appears.
     call_id = started_before[0]["llm.call.id"]
