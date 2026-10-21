@@ -14,6 +14,10 @@ processors:
   batch: {}
 
 exporters:
+  otlp/event-exporter:
+    endpoint: "http://host.docker.internal:4417"   # host:port event-exporter is listening on
+    tls:
+      insecure: true            # event-exporter serves plain gRPC, no TLS
   clickhouse:
     endpoint: "tcp://clickhouse-server:9000"
     database: "default"
@@ -32,4 +36,4 @@ service:
 
     logs:
       receivers: [otlp]
-      exporters: [clickhouse]
+      exporters: [otlp/event-exporter, clickhouse]
