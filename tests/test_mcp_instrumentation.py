@@ -34,6 +34,9 @@ from ioa_observe.sdk.tracing.topology import clear_topology_listeners
 
 @pytest.fixture(autouse=True)
 def reset_mcp_realtime_state(monkeypatch):
+    from ioa_observe.sdk.tracing import runtime_event_emitter
+
+    monkeypatch.setattr(runtime_event_emitter, "_emit_to_otel_logs", lambda *args: None)
     monkeypatch.setattr(TracerWrapper, "endpoint", None)
     clear_runtime_event_listeners()
     clear_topology_listeners()
@@ -44,6 +47,147 @@ def reset_mcp_realtime_state(monkeypatch):
     clear_topology_listeners()
     with kv_store._lock:
         kv_store.store.clear()
+
+
+def test_mcp_initialization_identifies_provider_and_generates_request_correlation():
+    types = pytest.importorskip("mcp.types")
+    from ioa_observe.sdk.instrumentations.mcp import _emit_mcp_receive_topology_event
+
+    events = []
+    register_runtime_event_listener(events.append)
+    session = SimpleNamespace(_write_stream=SimpleNamespace(name="mcp"))
+    provider = TracerProvider()
+    patched = McpInstrumentor().patch_mcp_client(provider.get_tracer(__name__))
+
+    async def initialized(request):
+        return SimpleNamespace(
+            serverInfo=SimpleNamespace(name="travel-tools", version="1")
+        )
+
+    async def listed(request):
+        return types.ListToolsResult(tools=[])
+
+    async def run():
+        token = attach(set_value("session.id", "identity-session"))
+        try:
+            await patched(
+                initialized,
+                session,
+                (
+                    SimpleNamespace(
+                        root=SimpleNamespace(method="initialize", params={})
+                    ),
+                ),
+                {},
+            )
+            request = types.ClientRequest(types.ListToolsRequest())
+            for _ in range(2):
+                await patched(listed, session, (request,), {})
+                meta = request.root.params.meta
+                if hasattr(meta, "model_dump"):
+                    meta = meta.model_dump(by_alias=True, exclude_none=True)
+                _emit_mcp_receive_topology_event(meta, "tools/list", message_id="2")
+        finally:
+            detach(token)
+
+    asyncio.run(run())
+    [initialized_event] = [
+        event
+        for event in events
+        if event["event.name"] == "mcp.message.sent"
+        and event["operation.name"] == "initialize"
+    ]
+    assert initialized_event["target.agent"] == "mcp"
+    listed_events = [
+        event
+        for event in events
+        if event["event.name"] == "mcp.message.sent"
+        and event["operation.name"] == "tools/list"
+    ]
+    assert [event["target.agent"] for event in listed_events] == ["travel-tools"] * 2
+    assert len({event["message.id"] for event in listed_events}) == 2
+    received = [
+        event for event in events if event["event.name"] == "mcp.message.received"
+    ]
+    assert [event["message.id"] for event in received] == [
+        event["message.id"] for event in listed_events
+    ]
+    discovered = [
+        event for event in events if event["event.name"] == "mcp.tools.discovered"
+    ]
+    assert [event["capability.provider.id"] for event in discovered] == [
+        "travel-tools"
+    ] * 2
+
+
+@pytest.mark.parametrize("transport_identity", [True, False])
+def test_mcp_transport_identity_takes_priority_over_initialized_name(
+    transport_identity,
+):
+    from ioa_observe.sdk.instrumentations.mcp import _extract_mcp_peer_name
+
+    endpoint = "https://travel-tools.test/mcp"
+    session = SimpleNamespace(_observe_server_info={"name": "travel-tools"})
+    if transport_identity:
+        session._write_stream = SimpleNamespace(observe_peer_name=endpoint)
+    else:
+        session.url = endpoint
+    assert _extract_mcp_peer_name(session) == endpoint
+
+
+@pytest.mark.parametrize("nested", [True, False])
+def test_mcp_pending_tool_state_is_restored_after_request(nested):
+    events = []
+    register_runtime_event_listener(events.append)
+    session = SimpleNamespace(_write_stream=SimpleNamespace(observe_peer_name="tools"))
+    provider = TracerProvider()
+    wrapper = McpInstrumentor().patch_mcp_client(provider.get_tracer(__name__))
+    original_pending = {"outer": "preserved"}
+
+    def request(call_id):
+        return SimpleNamespace(
+            root=SimpleNamespace(
+                method="tools/call",
+                id=call_id,
+                params={"name": call_id, "arguments": {}},
+            )
+        )
+
+    async def nested_request(request):
+        McpInstrumentor._inject_with_staged_tool_call(lambda: None, None, (), {})
+        return SimpleNamespace(isError=False, content=[])
+
+    async def outer_request(_request):
+        outer_pending = _PENDING_TOOL_CALL.get()
+        if nested:
+            await wrapper(nested_request, session, (request("inner"),), {})
+            assert _PENDING_TOOL_CALL.get() is outer_pending
+            McpInstrumentor._inject_with_staged_tool_call(lambda: None, None, (), {})
+        return SimpleNamespace(isError=False, content=[])
+
+    async def invoke():
+        session_token = attach(set_value("session.id", "session"))
+        pending_token = _PENDING_TOOL_CALL.set(original_pending)
+        try:
+            await wrapper(outer_request, session, (request("outer"),), {})
+            assert _PENDING_TOOL_CALL.get() is original_pending
+        finally:
+            _PENDING_TOOL_CALL.reset(pending_token)
+            detach(session_token)
+
+    try:
+        asyncio.run(invoke())
+    finally:
+        provider.shutdown()
+    started = [event for event in events if event["event.name"] == "tool.started"]
+    completed = [event for event in events if event["event.name"] == "tool.completed"]
+    from importlib.util import find_spec
+
+    expected = 2 if nested else int(find_spec("mcp.shared.jsonrpc_dispatcher") is None)
+    assert len(started) == len(completed) == expected
+    assert {event["tool.call.id"] for event in completed} == {
+        event["tool.call.id"] for event in started
+    }
 
 
 def test_patch_mcp_client_injects_realtime_protocol_metadata_and_events():
@@ -217,6 +361,20 @@ def test_mcp_message_payloads_and_completion(monkeypatch, capture_content, outco
             )
     tool_events = [event for event in events if event["event.name"] == "tool.started"]
     assert len(tool_events) == (1 if capture_content else 0)
+    tool_completions = [
+        event for event in events if event["event.name"] == "tool.completed"
+    ]
+    assert len(tool_completions) == len(tool_events)
+    if tool_events:
+        assert (
+            tool_completions[0]["tool.call.id"]
+            == tool_events[0]["tool.call.id"]
+            == "req-payload"
+        )
+        assert tool_completions[0]["span.id"] == tool_events[0]["span.id"]
+        assert tool_completions[0]["tool.status"] == (
+            "success" if outcome == "success" else "error"
+        )
 
 
 @pytest.mark.parametrize("capture_content", [True, False])
@@ -456,7 +614,14 @@ def test_mcp_http_tool_lifecycle_preserves_request_session_and_trace(
         logger_provider.shutdown()
     assert OpenTelemetryMiddleware.__call__ is original_middleware
 
-    tool_events = [event for event in events if event["event.name"].startswith("tool.")]
+    all_tool_events = [
+        event for event in events if event["event.name"].startswith("tool.")
+    ]
+    tool_events = [
+        event
+        for event in all_tool_events
+        if event.get("tool.execution.kind") != "client"
+    ]
     assert [event["event.name"] for event in tool_events] == [
         "tool.started",
         "tool.completed",
@@ -496,9 +661,9 @@ def test_mcp_http_tool_lifecycle_preserves_request_session_and_trace(
         if item.log_record.event_name.startswith("tool.")
     ]
     assert [record.event_name for record in tool_logs] == [
-        event["event.name"] for event in tool_events
+        event["event.name"] for event in all_tool_events
     ]
-    for record, event in zip(tool_logs, tool_events):
+    for record, event in zip(tool_logs, all_tool_events):
         assert record.attributes["session.id"] == event["session.id"]
         assert record.attributes["tool.name"] == event["tool.name"]
         assert format(record.trace_id, "032x") == event["trace.id"]
@@ -696,14 +861,18 @@ def test_mcp_sdk_metadata_shapes_and_writer_preserve_request_span(
     if shape in ("jsonrpc", "dict"):
         assert wire[0]["params"]["other"] == "kept"
     if shape in ("typed", "ping", "dict"):
-        assert "message.id" not in sent  # Native SDK IDs are optional at send_request.
+        assert sent["message.id"] == meta["observe.message.id"]
+        assert len(sent["message.id"]) == 32
     else:
         assert sent["message.id"] == "req-1"
     assert not any(key.startswith("source.") for key in meta)
 
 
 @pytest.mark.parametrize("with_params", [True, False])
-def test_mcp_actual_base_session_serializes_meta_and_progress_tokens(with_params):
+@pytest.mark.parametrize("tool_call", [True, False])
+def test_mcp_actual_base_session_serializes_meta_and_progress_tokens(
+    with_params, tool_call
+):
     types = pytest.importorskip("mcp.types")
     import anyio
     from mcp.client.session import ClientSession
@@ -719,8 +888,17 @@ def test_mcp_actual_base_session_serializes_meta_and_progress_tokens(with_params
             async def send(self, item):
                 request = item.message.root
                 wire.append(request.model_dump(by_alias=True, exclude_none=True))
+                if tool_call:
+                    assert (
+                        len([e for e in events if e["event.name"] == "tool.started"])
+                        == 1
+                    )
                 await session._response_streams[request.id].send(
-                    types.JSONRPCResponse(jsonrpc="2.0", id=request.id, result={})
+                    types.JSONRPCResponse(
+                        jsonrpc="2.0",
+                        id=request.id,
+                        result={"isError": False, "content": []} if tool_call else {},
+                    )
                 )
 
         read_writer, read_stream = anyio.create_memory_object_stream(1)
@@ -729,7 +907,15 @@ def test_mcp_actual_base_session_serializes_meta_and_progress_tokens(with_params
             InstrumentedStreamWriter(Sink(), tracer, peer_name="mcp://receiver"),
         )
         request = types.ClientRequest(
-            types.PingRequest(
+            types.CallToolRequest(
+                params=types.CallToolRequestParams(
+                    name="add",
+                    arguments={"a": 1},
+                    _meta={"custom": "kept"} if with_params else None,
+                )
+            )
+            if tool_call
+            else types.PingRequest(
                 params=(
                     types.RequestParams(_meta={"custom": "kept"})
                     if with_params
@@ -742,13 +928,14 @@ def test_mcp_actual_base_session_serializes_meta_and_progress_tokens(with_params
             pass
 
         patched = McpInstrumentor().patch_mcp_client(tracer)
+        result_type = types.CallToolResult if tool_call else types.EmptyResult
         result = await patched(
             session.send_request,
             session,
-            (request, types.EmptyResult),
+            (request, result_type),
             {"progress_callback": progress},
         )
-        assert isinstance(result, types.EmptyResult)
+        assert isinstance(result, result_type)
         await read_writer.aclose()
         await read_stream.aclose()
 
@@ -768,9 +955,19 @@ def test_mcp_actual_base_session_serializes_meta_and_progress_tokens(with_params
     meta = wire[0]["params"]["_meta"]
     assert meta["progressToken"] == wire[0]["id"]
     assert meta["session.id"] == "session"
+    assert meta["observe.message.id"] == sent["message.id"]
     if with_params:
         assert meta["custom"] == "kept"
     assert meta["traceparent"].split("-")[1:3] == [sent["trace.id"], sent["span.id"]]
+    if tool_call:
+        [started] = [e for e in events if e["event.name"] == "tool.started"]
+        [completed] = [e for e in events if e["event.name"] == "tool.completed"]
+        assert (
+            started["tool.call.id"] == completed["tool.call.id"] == sent["message.id"]
+        )
+        assert started["span.id"] == completed["span.id"] == sent["span.id"]
+        assert completed["event.parent.id"] == started["event.id"]
+        assert completed["tool.status"] == "success"
 
 
 def test_mcp_stream_writer_does_not_change_responses_or_notifications():
@@ -845,14 +1042,37 @@ def test_mcp_standalone_stream_writer_keeps_preinjected_context_or_creates_one(
         assert wire_meta["traceparent"] != incoming
 
 
-def test_mcp_uninstrument_restores_actual_base_session_send_request(monkeypatch):
+@pytest.mark.parametrize("native_client_context", [True, False])
+def test_mcp_uninstrument_restores_actual_base_session_send_request(
+    monkeypatch, native_client_context
+):
     pytest.importorskip("mcp.shared.session")
+    import sys
+    from importlib.machinery import ModuleSpec
+    from types import ModuleType
+
     from mcp.shared.session import BaseSession
     from ioa_observe.sdk.instrumentations import mcp as instrumentation
 
+    dispatcher = ModuleType("mcp.shared.jsonrpc_dispatcher")
+    dispatcher.__spec__ = ModuleSpec(dispatcher.__name__, loader=None)
+    dispatcher.inject_trace_context = lambda: None
+    original_inject = dispatcher.inject_trace_context
+    if native_client_context:
+        import mcp.shared
+
+        monkeypatch.setitem(sys.modules, dispatcher.__name__, dispatcher)
+        monkeypatch.setattr(mcp.shared, "jsonrpc_dispatcher", dispatcher, raising=False)
+
     # Isolate this test from transport post-import hooks and other instrumentors.
     monkeypatch.setattr(
-        instrumentation, "register_post_import_hook", lambda *args: None
+        instrumentation,
+        "register_post_import_hook",
+        lambda callback, name: (
+            callback(dispatcher)
+            if native_client_context and name == dispatcher.__name__
+            else None
+        ),
     )
     original = BaseSession.send_request
     real_unwrap = instrumentation.unwrap
@@ -861,7 +1081,7 @@ def test_mcp_uninstrument_restores_actual_base_session_send_request(monkeypatch)
         "unwrap",
         lambda module, attribute: (
             real_unwrap(module, attribute)
-            if module == "mcp.shared.session.BaseSession"
+            if module in {"mcp.shared.session.BaseSession", dispatcher.__name__}
             else None
         ),
     )
@@ -869,6 +1089,9 @@ def test_mcp_uninstrument_restores_actual_base_session_send_request(monkeypatch)
     try:
         instrumentor._instrument()
         assert BaseSession.send_request is not original
+        if native_client_context:
+            assert dispatcher.inject_trace_context is not original_inject
     finally:
         instrumentor._uninstrument()
     assert BaseSession.send_request is original
+    assert dispatcher.inject_trace_context is original_inject

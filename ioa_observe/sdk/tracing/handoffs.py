@@ -9,7 +9,23 @@ import json
 import threading
 from typing import Any
 
+from opentelemetry.context import get_value
+
 from ioa_observe.sdk.client import kv_store
+
+INCOMING_HANDOFF = "ioa_observe.incoming_handoff"
+
+
+def incoming_handoff(session_id: str, target_agent: str) -> dict[str, Any] | None:
+    reference = get_value(INCOMING_HANDOFF)
+    if (
+        isinstance(reference, dict)
+        and reference.get("session_id") == session_id
+        and reference.get("target_agent") == target_agent
+        and not reference.get("consumed")
+    ):
+        return reference
+    return None
 
 
 @dataclass(frozen=True)

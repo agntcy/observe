@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import threading
+import uuid
 from http import HTTPStatus
 
 from opentelemetry.context import get_value
@@ -34,7 +35,10 @@ from ..utils.const import (
     OBSERVE_ENTITY_INPUT,
 )
 from ..tracing.runtime_events import RuntimeEventName
-from ..tracing.pre_call_events import emit_tool_started_before_send
+from ..tracing.pre_call_events import (
+    emit_tool_started_before_send,
+    emit_tool_completed_after_send,
+)
 from ..tracing.message_payloads import serialize_message_payload
 from ..tracing.context_utils import (
     _get_agent_linking_info,
@@ -78,12 +82,14 @@ def _set_request_meta(request, params, meta):
     from mcp.types import JSONRPCRequest, RequestParams
 
     if params is None:
-        params = (
-            RequestParams()
-            if hasattr(type(request), "model_fields")
-            and not isinstance(request, JSONRPCRequest)
-            else {}
-        )
+        if hasattr(type(request), "model_fields") and not isinstance(
+            request, JSONRPCRequest
+        ):
+            data = request.model_dump(by_alias=True, exclude_none=True)
+            data["params"] = {"_meta": meta}
+            request.params = type(request).model_validate(data).params
+            return
+        params = {}
         if isinstance(request, dict):
             request["params"] = params
         else:
@@ -170,16 +176,45 @@ def _infer_mcp_peer_name(args, kwargs) -> str | None:
 
 
 def _extract_mcp_peer_name(instance) -> str | None:
+    fallback = None
     for attr in ("_write_stream", "write_stream", "_read_stream", "read_stream"):
         peer_name = _safe_stringify_mcp_peer(getattr(instance, attr, None))
-        if peer_name:
+        if peer_name in {"mcp", "unknown"}:
+            fallback = peer_name
+        elif peer_name:
             return peer_name
 
+    peer_name = _safe_stringify_mcp_peer(instance)
+    if peer_name in {"mcp", "unknown"}:
+        fallback = peer_name
+    elif peer_name:
+        return peer_name
+    server_info = getattr(instance, "_observe_server_info", None)
+    if server_info:
+        return server_info["name"]
     for value in getattr(instance, "__dict__", {}).values():
         peer_name = _safe_stringify_mcp_peer(value)
-        if peer_name:
+        if peer_name in {"mcp", "unknown"}:
+            fallback = peer_name
+        elif peer_name:
             return peer_name
-    return None
+    return fallback
+
+
+def _capture_mcp_server_info(instance, result):
+    info = _request_field(result, "serverInfo") or _request_field(result, "server_info")
+    if info is None:
+        metadata = _request_field(result, "meta") or _request_field(result, "_meta")
+        if hasattr(metadata, "model_dump"):
+            metadata = metadata.model_dump(by_alias=True, exclude_none=True)
+        if isinstance(metadata, dict):
+            info = metadata.get("io.modelcontextprotocol/serverInfo")
+    name = _request_field(info, "name") if info is not None else None
+    if isinstance(name, str) and name:
+        try:
+            instance._observe_server_info = {"name": name}
+        except (AttributeError, TypeError):
+            logging.warning("Unable to cache MCP server identity", exc_info=True)
 
 
 def _mcp_message_input(params) -> str | None:
@@ -253,7 +288,7 @@ _PENDING_TOOL_CALL: contextvars.ContextVar = contextvars.ContextVar(
 
 def _stage_mcp_tool_call_started(
     params, session_id: str, request_id, parent_event_id: str | None = None
-) -> None:
+) -> dict[str, Any] | None:
     """Remember the tool and its arguments until the MCP library injects its trace context.
 
     The library opens its own ``MCP send`` span and injects the traceparent that the request carries
@@ -268,15 +303,17 @@ def _stage_mcp_tool_call_started(
         data = dump(mode="json", by_alias=True) if callable(dump) else {}
     name = data.get("name")
     if isinstance(name, str) and name:
-        _PENDING_TOOL_CALL.set(
-            (
-                session_id,
-                name,
-                data.get("arguments") or {},
-                str(request_id) if request_id is not None else None,
-                parent_event_id,
-            )
-        )
+        pending = {
+            "session_id": session_id,
+            "name": name,
+            "arguments": data.get("arguments") or {},
+            "call_id": str(request_id) if request_id is not None else None,
+            "parent_event_id": parent_event_id,
+            "started": None,
+            "span": None,
+        }
+        _PENDING_TOOL_CALL.set(pending)
+        return pending
 
 
 def _emit_staged_mcp_tool_call_started() -> None:
@@ -286,9 +323,13 @@ def _emit_staged_mcp_tool_call_started() -> None:
     _PENDING_TOOL_CALL.set(None)
     if not is_content_tracing_enabled():
         return
-    session_id, name, arguments, call_id, parent_event_id = pending
-    emit_tool_started_before_send(
-        session_id, name, arguments, call_id=call_id, parent_event_id=parent_event_id
+    pending["span"] = get_current_span()
+    pending["started"] = emit_tool_started_before_send(
+        pending["session_id"],
+        pending["name"],
+        pending["arguments"],
+        call_id=pending["call_id"],
+        parent_event_id=pending["parent_event_id"],
     )
 
 
@@ -307,6 +348,7 @@ def _emit_mcp_receive_topology_event(
     target = observe_meta.get("target_agent") or _safe_get_current_actor_name()
     sequence = _safe_int(observe_meta.get("agent_sequence"))
     fork_id = observe_meta.get("fork_id")
+    message_id = observe_meta.get("observe.message.id") or message_id
 
     upsert_topology_edge(
         session_id,
@@ -373,6 +415,7 @@ class McpInstrumentor(BaseInstrumentor):
         self._capture_server_tools = True
         self._server_tools_wrapped = set()
         self._server_context_wrapped = False
+        self._client_context_wrapped = False
         native_server_context = find_spec("mcp.server._otel") is not None
 
         def instrument_server_context(module):
@@ -389,12 +432,17 @@ class McpInstrumentor(BaseInstrumentor):
 
         def instrument_dispatcher(module):
             # The library owns the span of an outgoing request and injects its trace context inside it.
-            if hasattr(module, "inject_trace_context"):
+            if (
+                self._capture_server_tools
+                and not self._client_context_wrapped
+                and hasattr(module, "inject_trace_context")
+            ):
                 wrap_function_wrapper(
                     module.__name__,
                     "inject_trace_context",
                     self._inject_with_staged_tool_call,
                 )
+                self._client_context_wrapped = True
 
         register_post_import_hook(
             instrument_dispatcher, "mcp.shared.jsonrpc_dispatcher"
@@ -518,6 +566,9 @@ class McpInstrumentor(BaseInstrumentor):
         self._capture_server_tools = False
         from sys import modules
 
+        if self._client_context_wrapped and "mcp.shared.jsonrpc_dispatcher" in modules:
+            unwrap("mcp.shared.jsonrpc_dispatcher", "inject_trace_context")
+        self._client_context_wrapped = False
         if self._server_context_wrapped and "mcp.server._otel" in modules:
             unwrap("mcp.server._otel.OpenTelemetryMiddleware", "__call__")
         self._server_context_wrapped = False
@@ -670,6 +721,8 @@ class McpInstrumentor(BaseInstrumentor):
         return traced_method
 
     def patch_mcp_client(self, tracer: Tracer):
+        native_client_context = find_spec("mcp.shared.jsonrpc_dispatcher") is not None
+
         async def traced_method(wrapped, instance, args, kwargs):
             from ioa_observe.sdk.client import kv_store
 
@@ -741,30 +794,41 @@ class McpInstrumentor(BaseInstrumentor):
                     observe_meta["target_agent"] = target_agent
 
                 message_input = _mcp_message_input(params if params is not None else {})
+                message_id = (
+                    str(request_id) if request_id is not None else uuid.uuid4().hex
+                )
+                observe_meta["observe.message.id"] = message_id
                 sent = _emit_mcp_send_topology_event(
                     observe_meta,
                     str(method or "send_request"),
-                    message_id=str(request_id) if request_id is not None else None,
+                    message_id=message_id,
                     message_input=message_input,
                 )
 
-                if method == "tools/call" and session_id:
-                    _stage_mcp_tool_call_started(
-                        params, session_id, request_id, observe_meta.get("event.id")
-                    )
-
-                # Inject observe metadata into request params._meta
-                if observe_meta and request_root is not None:
-                    _set_request_meta(request_root, params, observe_meta)
-
+                pending_token = _PENDING_TOOL_CALL.set(None)
+                pending_tool = None
                 try:
+                    if method == "tools/call" and session_id:
+                        pending_tool = _stage_mcp_tool_call_started(
+                            params, session_id, message_id, observe_meta.get("event.id")
+                        )
+                    if observe_meta and request_root is not None:
+                        _set_request_meta(request_root, params, observe_meta)
+                    if not native_client_context:
+                        _emit_staged_mcp_tool_call_started()
                     result = await wrapped(*args, **kwargs)
+                    if method in {"initialize", "tools/list", "tools/call"}:
+                        _capture_mcp_server_info(instance, result)
                     if method == "tools/list":
+                        server_info = getattr(instance, "_observe_server_info", None)
                         record_capability_event(
                             "mcp.tools.discovered",
                             result,
                             provider_id=_extract_mcp_peer_name(instance),
                             source="client-discovered",
+                            attributes={"mcp.server.name": server_info["name"]}
+                            if server_info
+                            else None,
                         )
                     try:
                         span.set_attribute(
@@ -786,13 +850,25 @@ class McpInstrumentor(BaseInstrumentor):
                                 span.set_attribute(ERROR_TYPE, error_type)
                     else:
                         span.set_status(Status(StatusCode.OK))
+                    if pending_tool:
+                        emit_tool_completed_after_send(
+                            pending_tool["started"],
+                            result=result,
+                            span=pending_tool["span"],
+                        )
                     _emit_mcp_completed_event(sent, message_input, result)
                     return result
-                except Exception as e:
+                except BaseException as e:
+                    if pending_tool:
+                        emit_tool_completed_after_send(
+                            pending_tool["started"], error=e, span=pending_tool["span"]
+                        )
                     span.set_attribute(ERROR_TYPE, type(e).__name__)
                     span.record_exception(e)
                     span.set_status(Status(StatusCode.ERROR, str(e)))
                     raise
+                finally:
+                    _PENDING_TOOL_CALL.reset(pending_token)
 
         return traced_method
 
@@ -814,6 +890,7 @@ class McpInstrumentor(BaseInstrumentor):
                     ]
                 },
                 source="server-published",
+                provider_id=instance.name,
                 attributes={"mcp.server.name": instance.name},
             )
         except Exception:
