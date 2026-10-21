@@ -824,9 +824,14 @@ def test_llm_completion_uses_model_attributes_added_after_start(
 def test_llm_events_capture_messages(
     runtime_events, monkeypatch, message_format, late_input, capture_content
 ):
+    from ioa_observe.sdk.tracing import tracing
     from ioa_observe.sdk.tracing.tracing import TracerWrapper
 
     monkeypatch.setattr(TracerWrapper, "enable_content_tracing", capture_content)
+    # The span below is named like the OpenAI instrumentation's span. When that instrumentation is
+    # installed its span names are deferred (llm.started is emitted once the request is set), but
+    # this test sets the attributes itself and expects llm.started when the span starts.
+    monkeypatch.setattr(tracing, "_PRE_CALL_LLM_SPAN_NAMES", set())
     prompt = '[{"role":"user","content":"Hello"}]'
     completion = '[{"role":"assistant","content":"Hi"}]'
 
