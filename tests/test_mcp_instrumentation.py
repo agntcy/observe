@@ -137,6 +137,7 @@ def test_mcp_transport_identity_takes_priority_over_initialized_name(
 
 @pytest.mark.parametrize("nested", [True, False])
 def test_mcp_pending_tool_state_is_restored_after_request(nested):
+    pytest.importorskip("mcp")
     events = []
     register_runtime_event_listener(events.append)
     session = SimpleNamespace(_write_stream=SimpleNamespace(observe_peer_name="tools"))
@@ -191,6 +192,7 @@ def test_mcp_pending_tool_state_is_restored_after_request(nested):
 
 
 def test_patch_mcp_client_injects_realtime_protocol_metadata_and_events():
+    pytest.importorskip("mcp")
     runtime_events = []
     register_runtime_event_listener(runtime_events.append)
 
