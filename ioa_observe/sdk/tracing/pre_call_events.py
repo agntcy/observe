@@ -39,6 +39,7 @@ def emit_tool_started_before_send(
     call_id: str | None = None,
     agent_name: str | None = None,
     parent_event_id: str | None = None,
+    tool_type: str | None = None,
 ) -> dict[str, Any] | None:
     """Emit ``tool.started`` with the input of a call that has not been sent yet. Never raises."""
     try:
@@ -48,6 +49,8 @@ def emit_tool_started_before_send(
             if isinstance(tool_input, str)
             else json.dumps(tool_input, sort_keys=True, default=str),
         }
+        if tool_type is not None:
+            attributes[RuntimeEventAttribute.TOOL_TYPE.value] = tool_type
         if call_id:
             attributes["tool.call.id"] = call_id
         if agent_name:
@@ -93,6 +96,7 @@ def emit_tool_completed_after_send(
             key: started[key]
             for key in (
                 "tool.name",
+                RuntimeEventAttribute.TOOL_TYPE.value,
                 "tool.call.id",
                 "agent.name",
                 "tool.execution.kind",

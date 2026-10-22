@@ -159,6 +159,36 @@ ORDER BY Timestamp ASC;
 
 Source events must have been emitted and ingested for this lookup to return rows.
 
+An A2A handler's stored agent-card name identifies the receiving agent, rather
+than the service hosting it. With valid propagated source-agent IDs, the matching
+decorated agent's `topology.node.started` event points to `a2a.message.received`
+via `event.parent.id`. The source-agent IDs also establish an invocation
+link with `topology.edge.evidence=transport:a2a` and confidence `1.0`; absent or
+invalid source context does not create an exact link.
+
+Nested A2A client/transport wrappers emit one logical message lifecycle.
+Independent calls and retries still emit their own events. `a2a.message.completed`
+means the call returned or its response stream ended normally, not that an
+asynchronous remote task finished. Failed or abandoned calls do not emit it.
+
+MCP requests carry an Observe correlation ID in `_meta["observe.message.id"]`.
+This uses the native request ID when already available; otherwise it is generated
+before sending. Both ends use it for `message.id`, independently of JSON-RPC IDs
+assigned later by the SDK or reused on another connection. Transport identity
+remains the preferred provider identity; the initialized server name is a fallback
+when the transport exposes no useful peer. Discovered definitions also expose
+`mcp.server.name` when known. A server name alone is not globally unique.
+
+With content capture enabled, outbound A2A messages and MCP tool calls emit
+synthetic `tool.started` / `tool.completed` pairs marked
+`tool.execution.kind=client`. The pair shares a call ID and local span, and the
+completion references the start through `event.parent.id`. Errors, cancellation,
+and explicitly closed incomplete streams close the synthetic tool as an error,
+without fabricating a successful message completion. These are client
+observations, not additional server executions. External normalizers should
+preserve this distinction; the current materializer aggregates tool observations
+by name rather than counting unique remote executions.
+
 #### Capturing MCP tool definitions and A2A cards
 
 The existing MCP and A2A instrumentors automatically emit structured definitions
@@ -182,7 +212,10 @@ Existing message metadata and trace correlation are unchanged.
 For A2A, the instrumentor also emits the client's stored target card when sending
 and the handler's stored local card when receiving, when those cards are available.
 These additional `a2a.agent_card` events share the message event's real session and
-current trace/span context, plus `message.id` and `operation.name`. Startup and
+current trace/span context, plus `message.id` and `operation.name`, and carry
+`capability.observation.kind=message-context`. Their `capability.source` describes
+which side supplied the stored card, not a fresh network discovery or publication.
+Repeated identical cards are valid observations. Startup and
 discovery observations are retained separately; their absent execution IDs are
 not replaced with guessed IDs. No full cards are added to transport metadata.
 

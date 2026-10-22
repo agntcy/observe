@@ -60,6 +60,7 @@ class RuntimeEventAttribute(str, Enum):
     AGENT_INPUT = "agent.input"
     AGENT_OUTPUT = "agent.output"
     TOOL_NAME = "tool.name"
+    TOOL_TYPE = "tool.type"
     TOOL_INPUT = "tool.input"
     TOOL_OUTPUT = "tool.output"
     TOOL_STATUS = "tool.status"

@@ -305,7 +305,8 @@ def _capture_a2a_response(original, operation: str, *, streaming: bool = False):
         started = {
             "event.id": captured["tool_event_id"],
             "session.id": captured["session_id"],
-            "tool.name": f"a2a_message:{captured['target']}",
+            "tool.name": captured["target"],
+            "tool.type": "a2a",
             "tool.call.id": captured["message_id"] or captured["parent_event_id"],
             "agent.name": captured["source"],
             "tool.execution.kind": "client",
@@ -435,11 +436,12 @@ def _emit_a2a_send_topology_event(request, client_instance, operation: str) -> N
     if is_content_tracing_enabled():
         started = emit_tool_started_before_send(
             session_id,
-            f"a2a_message:{target}",
+            target,
             {"text": _safe_get_message_text(request)},
             call_id=message_id or (event["event.id"] if event is not None else None),
             agent_name=sender,
             parent_event_id=event["event.id"] if event is not None else None,
+            tool_type="a2a",
         )
         if started is not None:
             observe_meta["tool.event.id"] = started["event.id"]
