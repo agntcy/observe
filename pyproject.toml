@@ -46,6 +46,7 @@ dependencies = [
     "opentelemetry-semantic-conventions>=0.58b0",
     "opentelemetry-semantic-conventions-ai>=0.4.11",
     "opentelemetry-util-http>=0.58b0",
+    "protobuf>=7.36.2",
     "langgraph>=0.3.2",
     "langchain>=0.3.19",
     "langchain-openai>=0.3.8",

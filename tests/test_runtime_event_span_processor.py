@@ -31,6 +31,9 @@ class MemoryLogExporter(LogRecordExporter):
     def shutdown(self):
         pass
 
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        return True
+
 
 def test_processor_exports_correlated_event_logs_without_replacing_global_provider():
     global_logger_provider = get_logger_provider()

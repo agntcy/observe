@@ -7,6 +7,8 @@ import re
 import pytest
 from openai import OpenAI
 from opentelemetry.context import attach, Context
+from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+from opentelemetry.sdk._logs.export import LogRecordExportResult
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider, ReadableSpan
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, BatchSpanProcessor
@@ -19,6 +21,16 @@ from ioa_observe.sdk.tracing.tracing import init_tracer_provider, TracerWrapper
 @pytest.fixture()
 def in_memory_span_exporter() -> InMemorySpanExporter:
     return InMemorySpanExporter()
+
+
+@pytest.fixture(autouse=True)
+def no_network_log_export(monkeypatch):
+    # Logs (including runtime events) are exported to the hosted Observe API by
+    # default. The OTLP exporter retries connection errors with backoff and would
+    # block each emit, so keep tests offline.
+    monkeypatch.setattr(
+        OTLPLogExporter, "export", lambda self, batch: LogRecordExportResult.SUCCESS
+    )
 
 
 @pytest.fixture
