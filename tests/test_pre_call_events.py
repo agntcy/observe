@@ -67,6 +67,7 @@ def test_tool_started_before_send_carries_the_input_call_id_and_agent(realtime_e
 
     [event] = tool_started(realtime_events)
     assert event["tool.name"] == "add"
+    assert "tool.type" not in event
     assert json.loads(event["tool.input"]) == {"a": 1, "b": 2}
     assert event["tool.call.id"] == "call-7"
     assert event["agent.name"] == "planner"
@@ -78,6 +79,24 @@ def test_tool_started_before_send_keeps_a_string_input_as_is(realtime_events):
 
     [event] = tool_started(realtime_events)
     assert event["tool.input"] == "plain text"
+
+
+@pytest.mark.parametrize("tool_type", [None, "a2a"])
+def test_tool_completion_preserves_optional_type(realtime_events, tool_type):
+    started = pre_call_events.emit_tool_started_before_send(
+        "session-1", "executor", {}, tool_type=tool_type
+    )
+    pre_call_events.emit_tool_completed_after_send(started, result="done")
+
+    [completed] = [
+        event for event in realtime_events if event["event.name"] == "tool.completed"
+    ]
+    for event in (started, completed):
+        assert event["tool.name"] == "executor"
+        if tool_type is None:
+            assert "tool.type" not in event
+        else:
+            assert event["tool.type"] == tool_type
 
 
 def test_tool_started_before_send_never_breaks_the_request_it_describes(monkeypatch):
@@ -176,12 +195,24 @@ def test_a2a_incoming_handoff_is_validated_consumed_and_request_local(
     asyncio.run(invoke())
 
 
-def test_a2a_synthetic_tool_start_has_matching_completion(realtime_events):
+@pytest.mark.parametrize("streaming", [False, True])
+def test_a2a_synthetic_tool_start_has_matching_completion(realtime_events, streaming):
     request = a2a_request("hello")
     client = SimpleNamespace(name="executor")
 
     async def send(instance, request):
         return {"answer": "done"}
+
+    async def stream(instance, request):
+        yield {"answer": "done"}
+
+    async def invoke():
+        wrapped = _capture_a2a_response(
+            stream if streaming else send, "send_message", streaming=streaming
+        )
+        if streaming:
+            return [item async for item in wrapped(client, request)]
+        return await wrapped(client, request)
 
     from opentelemetry.trace.propagation.tracecontext import (
         TraceContextTextMapPropagator,
@@ -190,13 +221,15 @@ def test_a2a_synthetic_tool_start_has_matching_completion(realtime_events):
     with TracerProvider().get_tracer(__name__).start_as_current_span("send"):
         TraceContextTextMapPropagator().inject(request.params.metadata["observe"])
         _emit_a2a_send_topology_event(request, client, "send_message")
-        asyncio.run(_capture_a2a_response(send, "send_message")(client, request))
+        asyncio.run(invoke())
 
     [started] = tool_started(realtime_events)
     [completed] = [
         event for event in realtime_events if event["event.name"] == "tool.completed"
     ]
     assert completed["tool.call.id"] == started["tool.call.id"]
+    assert completed["tool.name"] == started["tool.name"] == "executor"
+    assert completed["tool.type"] == started["tool.type"] == "a2a"
     assert completed["span.id"] == started["span.id"]
     assert completed["trace.id"] == started["trace.id"]
     assert completed["tool.status"] == "success"
@@ -290,7 +323,8 @@ def test_a2a_send_emits_the_message_text_with_the_message_id_as_call_id(
     )
 
     [event] = tool_started(realtime_events)
-    assert event["tool.name"] == "a2a_message:executor"
+    assert event["tool.name"] == "executor"
+    assert event["tool.type"] == "a2a"
     assert json.loads(event["tool.input"]) == {"text": "export the data\nsecond line"}
     assert event["tool.call.id"] == "msg-123"
     assert event["session.id"] == "session-123"
@@ -405,6 +439,8 @@ def test_a2a_failed_calls_do_not_emit_completion(
     [completed] = [e for e in realtime_events if e["event.name"] == "tool.completed"]
     assert completed["event.parent.id"] == started["event.id"]
     assert completed["tool.status"] == "error"
+    assert completed["tool.name"] == started["tool.name"] == "executor"
+    assert completed["tool.type"] == started["tool.type"] == "a2a"
     assert completed["error.type"] == error_type.__name__
 
 

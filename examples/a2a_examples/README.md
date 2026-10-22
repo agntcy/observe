@@ -59,6 +59,14 @@ proxy inspection and end-to-end Analytics correlation remain unverified.
 These examples print full request metadata, including baggage. Use only demo
 data and avoid exposing sensitive metadata in shared logs.
 
+### Tool runtime logs
+
+With real-time observability and content tracing enabled, outgoing A2A calls
+emit `tool.started` and `tool.completed` logs with `tool.name` set to the target
+agent's name and `tool.type` set to `a2a`. This replaces the former
+`a2a_message:` prefix in `tool.name`; consumers should use `tool.type` to
+identify A2A tool calls. Call IDs and trace/span correlation are unchanged.
+
 ## A2A over SLIM example
 
 You need to have an instance of the SLIM gateway running locally to have this working:
