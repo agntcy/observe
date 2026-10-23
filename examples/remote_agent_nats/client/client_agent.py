@@ -153,7 +153,6 @@ async def node_remote_nats(state: GraphState, nc: nats.NATS) -> Dict[str, Any]:
 
     messages = convert_to_openai_messages(state["messages"])
 
-    # payload to send to autogen server at /runs endpoint
     payload = {
         "agent_id": "remote_agent",
         "input": {"messages": messages},
