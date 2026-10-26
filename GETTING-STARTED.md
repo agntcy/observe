@@ -176,8 +176,16 @@ This uses the native request ID when already available; otherwise it is generate
 before sending. Both ends use it for `message.id`, independently of JSON-RPC IDs
 assigned later by the SDK or reused on another connection. Transport identity
 remains the preferred provider identity; the initialized server name is a fallback
-when the transport exposes no useful peer. Discovered definitions also expose
-`mcp.server.name` when known. A server name alone is not globally unique.
+when the transport exposes no useful peer. MCP sent, received, and completed
+message events, as well as discovered definitions, expose `mcp.server.name` when
+known from the server's initialization response or server-info metadata. The
+client propagates that name in request `_meta` so both ends can group by the same
+server name, independently of transport identity or whether content capture is
+enabled. Requests sent before the name is learned omit it; the initialization
+completion can already include the newly learned name. Reusing a request with a
+different connection does not reuse its previous server name.
+A server name alone is not globally unique and does not identify an individual
+client; use the existing `source.agent` and trace/session IDs for caller grouping.
 
 With content capture enabled, outbound A2A messages and MCP tool calls emit
 synthetic `tool.started` / `tool.completed` pairs marked
@@ -189,20 +197,24 @@ observations, not additional server executions. External normalizers should
 preserve this distinction; the current materializer aggregates tool observations
 by name rather than counting unique remote executions.
 
-#### Capturing MCP tool definitions and A2A cards
+#### Capturing MCP tool definitions, A2A cards, and LLM tool presentations
 
-The existing MCP and A2A instrumentors automatically emit structured definitions
+The MCP, A2A, and OpenAI instrumentations automatically emit structured definitions
 through the **runtime-log stream**, alongside message and topology events. No new
 decorators or application mapping code are required:
 
 | Runtime event | Captured content |
 |------------|------------------|
 | `mcp.tools.discovered` | Full `tools/list` response, including schemas, annotations, metadata, and pagination cursor |
-| `mcp.tools.published` | FastMCP's published tool definitions |
 | `a2a.agent_card` | Registered or discovered agent card, including skills and supported authenticated/extended card responses |
+| `llm.tools.presented` | Tools/functions and selection controls in the serialized OpenAI-compatible model request |
+
+MCP definitions are captured only when an instrumented client receives a
+`tools/list` response. Server-side tool listing emits no capability event;
+instrumenting only the MCP server does not capture its tool inventory.
 
 Event attributes contain `capability.content` (JSON), `capability.source`
-(`server-published` or `client-discovered`), `capability.provider.id` when available,
+(`server-published`, `client-discovered`, or `llm-presented`), `capability.provider.id` when available,
 and `capability.capture.state`. When available, the current session and local span
 are preserved. Registration/discovery before a session has no `session.id`;
 capture never creates a synthetic session or span. These definitions use
@@ -249,8 +261,29 @@ External normalizers must accept these event names, decode `capability.content`,
 and allow session-independent definitions; this repository does not own their
 `normalized_events` projection. The execution materializer reads but ignores
 capability definitions rather than treating them as topology or tool activity.
-This capture does not map definitions to LLM presentations or add a separate
-evidence store.
+
+With OpenAI instrumentation enabled and `openai>=1.0`, `llm.tools.presented`
+captures the final serialized `tools` and legacy `functions`, plus `tool_choice`, `function_call`,
+and `parallel_tool_calls` when present. It observes Chat Completions, Completions,
+and Responses requests from synchronous and asynchronous OpenAI clients, including
+streaming calls and OpenAI-compatible endpoints. Application filtering and
+`extra_body` overrides are reflected in the captured definitions. Explicit empty
+tool lists are captured; requests without either definition field emit no
+presentation event. Each SDK-built request attempt, including retries, can emit
+an observation before sending; it is not proof of provider receipt or tool use.
+
+Presentation events include the requested model as `llm.name`, `operation.name`,
+and the active model span ID as `llm.call.id` when available. They share the current
+trace/span and real session context without creating synthetic spans or sessions.
+Some versions of the Responses API instrumentation create the model span only
+after sending. In that case, the presentation retains the current caller context
+but omits `llm.call.id`; it is not falsely attributed to a future model span.
+Prompts, authorization headers, and unrelated request fields are not copied.
+The same content controls, payload limit, and redaction apply, with function
+`parameters` preserved as JSON Schema. Schema defaults and free-text descriptions
+may contain sensitive data; disable content capture when necessary.
+This does not automatically map presented tools back to MCP definitions or add a
+separate evidence store. Other model SDKs are not covered.
 
 #### In-process (no backend) consumption
 

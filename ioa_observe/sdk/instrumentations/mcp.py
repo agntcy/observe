@@ -272,6 +272,7 @@ def _emit_mcp_send_topology_event(
         sequence=sequence,
         fork_id=fork_id,
         protocol="mcp",
+        mcp_server_name=observe_meta.get("mcp.server.name"),
         message_input=message_input,
         source_agent_span_id=observe_meta.get("last_agent_span_id"),
         source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
@@ -377,6 +378,7 @@ def _emit_mcp_receive_topology_event(
         sequence=sequence,
         fork_id=fork_id,
         protocol="mcp",
+        mcp_server_name=observe_meta.get("mcp.server.name"),
         message_input=message_input,
         source_agent_span_id=observe_meta.get("last_agent_span_id"),
         source_agent_trace_id=observe_meta.get("last_agent_trace_id"),
@@ -384,7 +386,7 @@ def _emit_mcp_receive_topology_event(
     )
 
 
-def _emit_mcp_completed_event(sent, message_input, result) -> None:
+def _emit_mcp_completed_event(sent, message_input, result, *, server_name=None) -> None:
     if sent is None:
         return
     emit_topology_event(
@@ -397,6 +399,7 @@ def _emit_mcp_completed_event(sent, message_input, result) -> None:
         sequence=sent.get("sequence"),
         fork_id=sent.get("fork.id"),
         protocol="mcp",
+        mcp_server_name=server_name or sent.get("mcp.server.name"),
         source_agent_span_id=sent.get("source.agent.span.id"),
         source_agent_trace_id=sent.get("source.agent.trace.id"),
         parent_event_id=sent["event.id"],
@@ -412,14 +415,13 @@ class McpInstrumentor(BaseInstrumentor):
     def _instrument(self, **kwargs):
         tracer_provider = kwargs.get("tracer_provider")
         tracer = get_tracer(__name__, __version__, tracer_provider)
-        self._capture_server_tools = True
-        self._server_tools_wrapped = set()
+        self._instrumentation_active = True
         self._server_context_wrapped = False
         self._client_context_wrapped = False
         native_server_context = find_spec("mcp.server._otel") is not None
 
         def instrument_server_context(module):
-            if self._capture_server_tools and not self._server_context_wrapped:
+            if self._instrumentation_active and not self._server_context_wrapped:
                 wrap_function_wrapper(
                     module.__name__,
                     "OpenTelemetryMiddleware.__call__",
@@ -433,7 +435,7 @@ class McpInstrumentor(BaseInstrumentor):
         def instrument_dispatcher(module):
             # The library owns the span of an outgoing request and injects its trace context inside it.
             if (
-                self._capture_server_tools
+                self._instrumentation_active
                 and not self._client_context_wrapped
                 and hasattr(module, "inject_trace_context")
             ):
@@ -447,32 +449,6 @@ class McpInstrumentor(BaseInstrumentor):
         register_post_import_hook(
             instrument_dispatcher, "mcp.shared.jsonrpc_dispatcher"
         )
-
-        def instrument_server_tools(module, class_name):
-            server_class = getattr(module, class_name, None)
-            target = (module.__name__, class_name)
-            if (
-                self._capture_server_tools
-                and target not in self._server_tools_wrapped
-                and hasattr(server_class, "list_tools")
-            ):
-                wrap_function_wrapper(
-                    module.__name__,
-                    f"{class_name}.list_tools",
-                    self._server_tools_wrapper,
-                )
-                self._server_tools_wrapped.add(target)
-
-        for module_name, class_name in (
-            ("mcp.server.fastmcp", "FastMCP"),
-            ("mcp.server.mcpserver", "MCPServer"),
-        ):
-            register_post_import_hook(
-                lambda module, class_name=class_name: instrument_server_tools(
-                    module, class_name
-                ),
-                module_name,
-            )
 
         def wrap_if_present(module_name, attribute, wrapper):
             module = __import__(module_name, fromlist=[attribute.split(".", 1)[0]])
@@ -563,7 +539,7 @@ class McpInstrumentor(BaseInstrumentor):
             )
 
     def _uninstrument(self, **kwargs):
-        self._capture_server_tools = False
+        self._instrumentation_active = False
         from sys import modules
 
         if self._client_context_wrapped and "mcp.shared.jsonrpc_dispatcher" in modules:
@@ -572,10 +548,6 @@ class McpInstrumentor(BaseInstrumentor):
         if self._server_context_wrapped and "mcp.server._otel" in modules:
             unwrap("mcp.server._otel.OpenTelemetryMiddleware", "__call__")
         self._server_context_wrapped = False
-        for module_name, class_name in self._server_tools_wrapped:
-            if module_name in modules:
-                unwrap(f"{module_name}.{class_name}", "list_tools")
-        self._server_tools_wrapped.clear()
         if find_spec("mcp.shared.session"):
             unwrap("mcp.shared.session.BaseSession", "send_request")
         elif find_spec("mcp.client.session"):
@@ -793,6 +765,14 @@ class McpInstrumentor(BaseInstrumentor):
                 if target_agent:
                     observe_meta["target_agent"] = target_agent
 
+                server_name = _request_field(
+                    getattr(instance, "_observe_server_info", None), "name"
+                )
+                if isinstance(server_name, str) and server_name:
+                    observe_meta["mcp.server.name"] = server_name
+                else:
+                    observe_meta.pop("mcp.server.name", None)
+
                 message_input = _mcp_message_input(params if params is not None else {})
                 message_id = (
                     str(request_id) if request_id is not None else uuid.uuid4().hex
@@ -856,7 +836,14 @@ class McpInstrumentor(BaseInstrumentor):
                             result=result,
                             span=pending_tool["span"],
                         )
-                    _emit_mcp_completed_event(sent, message_input, result)
+                    _emit_mcp_completed_event(
+                        sent,
+                        message_input,
+                        result,
+                        server_name=_request_field(
+                            getattr(instance, "_observe_server_info", None), "name"
+                        ),
+                    )
                     return result
                 except BaseException as e:
                     if pending_tool:
@@ -877,25 +864,6 @@ class McpInstrumentor(BaseInstrumentor):
         result = wrapped(*args, **kwargs)
         _emit_staged_mcp_tool_call_started()
         return result
-
-    @staticmethod
-    async def _server_tools_wrapper(wrapped, instance, args, kwargs):
-        tools = await wrapped(*args, **kwargs)
-        try:
-            record_capability_event(
-                "mcp.tools.published",
-                {
-                    "tools": [
-                        tool.model_dump(mode="json", by_alias=True) for tool in tools
-                    ]
-                },
-                source="server-published",
-                provider_id=instance.name,
-                attributes={"mcp.server.name": instance.name},
-            )
-        except Exception:
-            logging.warning("Unable to capture MCP server tool definitions")
-        return tools
 
 
 def get_error_type(error_message):

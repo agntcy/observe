@@ -26,6 +26,7 @@ class RuntimeEventName(str, Enum):
     TOOL_COMPLETED = "tool.completed"
     LLM_STARTED = "llm.started"
     LLM_COMPLETED = "llm.completed"
+    LLM_TOOLS_PRESENTED = "llm.tools.presented"
     A2A_MESSAGE_SENT = "a2a.message.sent"
     A2A_MESSAGE_RECEIVED = "a2a.message.received"
     A2A_MESSAGE_COMPLETED = "a2a.message.completed"
@@ -35,15 +36,14 @@ class RuntimeEventName(str, Enum):
     MCP_MESSAGE_RECEIVED = "mcp.message.received"
     MCP_MESSAGE_COMPLETED = "mcp.message.completed"
     MCP_TOOLS_DISCOVERED = "mcp.tools.discovered"
-    MCP_TOOLS_PUBLISHED = "mcp.tools.published"
     A2A_AGENT_CARD = "a2a.agent_card"
 
 
 CAPABILITY_EVENT_NAMES = frozenset(
     {
         RuntimeEventName.MCP_TOOLS_DISCOVERED.value,
-        RuntimeEventName.MCP_TOOLS_PUBLISHED.value,
         RuntimeEventName.A2A_AGENT_CARD.value,
+        RuntimeEventName.LLM_TOOLS_PRESENTED.value,
     }
 )
 

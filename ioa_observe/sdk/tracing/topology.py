@@ -409,6 +409,9 @@ def _runtime_attributes_for_event(
         payload["network.protocol.name"] = attributes["protocol"]
     if "operation" in attributes:
         payload["operation.name"] = attributes["operation"]
+    server_name = attributes.get("mcp_server_name")
+    if isinstance(server_name, str) and server_name:
+        payload["mcp.server.name"] = server_name
     if "parent_event_id" in attributes:
         payload[RuntimeEventAttribute.EVENT_PARENT_ID.value] = attributes[
             "parent_event_id"

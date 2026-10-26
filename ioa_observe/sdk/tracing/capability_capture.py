@@ -1,7 +1,7 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-"""Shared serialization and content controls for MCP/A2A definition events."""
+"""Shared serialization and content controls for capability definition events."""
 
 import json
 import logging
@@ -54,7 +54,9 @@ def _redact(value, *, schema=False):
                 "[REDACTED]"
                 if not schema and re.sub(r"[^a-z]", "", key.lower()) in _SECRET_FIELDS
                 else _redact(
-                    item, schema=schema or key in {"inputSchema", "outputSchema"}
+                    item,
+                    schema=schema
+                    or key in {"inputSchema", "outputSchema", "parameters"},
                 )
             )
             for key, item in value.items()
