@@ -313,6 +313,233 @@ def test_a2a_receive_links_the_target_agent_to_the_sender(
     assert started["event.parent.id"] == received["event.id"]
 
 
+@pytest.mark.parametrize(
+    "display_name", ["Schedule Agent", "Schedule Agent - east", None]
+)
+@pytest.mark.parametrize("valid_source", [False, True])
+@pytest.mark.parametrize("async_entry", [False, True])
+def test_a2a_card_names_only_the_receiving_entry_agent(
+    realtime_events, monkeypatch, display_name, valid_source, async_entry
+):
+    pytest.importorskip("a2a")
+    from a2a.server.request_handlers import DefaultRequestHandler
+    from ioa_observe.sdk.decorators import agent, tool
+    from ioa_observe.sdk.instrumentations import a2a
+
+    request = a2a_request("hello")
+    if valid_source:
+        request.params.metadata["observe"].update(
+            {
+                "last_agent_span_id": "0000000000000123",
+                "last_agent_trace_id": "00000000000000000000000000000456",
+            }
+        )
+
+    @agent(name="handler_work")
+    def handler_work():
+        pass
+
+    @agent(name="calendar_agent")
+    def nested():
+        return "done"
+
+    @tool(name="prepare")
+    def prepare():
+        pass
+
+    @agent(name="schedule_agent")
+    def sync_entry():
+        return nested()
+
+    @agent(name="schedule_agent")
+    async def asynchronous_entry():
+        return nested()
+
+    async def execute(params, queue):
+        prepare()
+        for _ in range(2):
+            if async_entry:
+                await asynchronous_entry()
+            else:
+                sync_entry()
+
+    async def receive(self, params, context):
+        handler_work()
+        await self.agent_executor.execute(params, None)
+
+    monkeypatch.setattr(DefaultRequestHandler, "on_message_send", receive)
+    monkeypatch.setattr(a2a, "_original_methods", {})
+    instrumentor = a2a.A2AInstrumentor()
+    instrumentor._instrument_server_handler()
+    handler = SimpleNamespace(
+        _agent_card=SimpleNamespace(name=display_name),
+        agent_executor=SimpleNamespace(execute=execute),
+        name="incidental-handler-name",
+    )
+    try:
+        asyncio.run(
+            DefaultRequestHandler.on_message_send(handler, request.params, None)
+        )
+    finally:
+        instrumentor._uninstrument()
+
+    entry_name = display_name or "schedule_agent"
+    starts = [
+        e["agent.name"]
+        for e in realtime_events
+        if e["event.name"] == "topology.node.started"
+    ]
+    assert starts == [
+        "handler_work",
+        entry_name,
+        "calendar_agent",
+        "schedule_agent",
+        "calendar_agent",
+    ]
+    completed = [
+        e["agent.name"]
+        for e in realtime_events
+        if e["event.name"] == "topology.node.completed"
+    ]
+    assert completed == [
+        "handler_work",
+        "calendar_agent",
+        entry_name,
+        "calendar_agent",
+        "schedule_agent",
+    ]
+    edges = [e for e in realtime_events if e["event.name"] == "topology.edge.updated"]
+    assert any(e["target.agent"] == entry_name for e in edges)
+    if valid_source and display_name:
+        assert any(
+            e["target.agent"] == display_name
+            and e["topology.edge.kind"] == "agent_handoff"
+            and e["topology.edge.evidence"] == "transport:a2a"
+            for e in edges
+        )
+    assert handler._agent_card.name == display_name
+    assert handler.agent_executor.execute is execute
+
+
+def test_a2a_entry_names_are_isolated_between_concurrent_requests(
+    realtime_events, monkeypatch
+):
+    pytest.importorskip("a2a")
+    from a2a.server.request_handlers import DefaultRequestHandler
+    from ioa_observe.sdk.decorators import agent
+    from ioa_observe.sdk.instrumentations import a2a
+
+    @agent(name="local_agent")
+    async def entry():
+        await asyncio.sleep(0)
+
+    class Executor:
+        async def execute(self, params, queue):
+            await asyncio.sleep(0)
+            await asyncio.create_task(entry())
+
+    executor = Executor()
+    original_execute = executor.execute.__func__
+
+    async def receive(self, params, context):
+        await self.agent_executor.execute(params=params, queue=None)
+
+    monkeypatch.setattr(DefaultRequestHandler, "on_message_send", receive)
+    monkeypatch.setattr(a2a, "_original_methods", {})
+    instrumentor = a2a.A2AInstrumentor()
+    instrumentor._instrument_server_handler()
+    handlers = [
+        SimpleNamespace(_agent_card=SimpleNamespace(name=name), agent_executor=executor)
+        for name in ("Schedule Agent - east", "Schedule Agent - west")
+    ]
+
+    async def invoke():
+        await asyncio.gather(
+            *(
+                DefaultRequestHandler.on_message_send(
+                    handler, a2a_request("hello").params, None
+                )
+                for handler in handlers
+            )
+        )
+        token = context.attach(context.set_value("session.id", "session-123"))
+        try:
+            await entry()
+        finally:
+            context.detach(token)
+
+    try:
+        asyncio.run(invoke())
+    finally:
+        instrumentor._uninstrument()
+    assert executor.execute.__func__ is original_execute
+    assert "execute" not in vars(executor)
+    names = [
+        e["agent.name"]
+        for e in realtime_events
+        if e["event.name"] == "topology.node.started"
+    ]
+    assert sorted(names) == [
+        "Schedule Agent - east",
+        "Schedule Agent - west",
+        "local_agent",
+    ]
+
+
+@pytest.mark.parametrize("outcome", ["return", "error", "cancel"])
+def test_a2a_entry_name_expires_before_detached_work(realtime_events, outcome):
+    from ioa_observe.sdk.decorators import agent
+    from ioa_observe.sdk.instrumentations import a2a
+
+    @agent(name="local_agent")
+    async def entry():
+        pass
+
+    async def invoke():
+        gate = asyncio.Event()
+        detached = []
+
+        async def late_work():
+            await gate.wait()
+            await entry()
+
+        async def execute(params, queue):
+            detached.append(asyncio.create_task(late_work()))
+            if outcome == "error":
+                raise RuntimeError("failed")
+            if outcome == "cancel":
+                raise asyncio.CancelledError()
+
+        handler = SimpleNamespace(
+            _agent_card=SimpleNamespace(name="Published Agent"),
+            agent_executor=SimpleNamespace(execute=execute),
+        )
+        params = a2a_request("hello").params
+        token = context.attach(context.set_value("session.id", "session-123"))
+        try:
+            with a2a._receive_agent_scope(params, handler, "on_message_send"):
+                if outcome == "return":
+                    await handler.agent_executor.execute(params, None)
+                else:
+                    with pytest.raises(
+                        RuntimeError if outcome == "error" else asyncio.CancelledError
+                    ):
+                        await handler.agent_executor.execute(params, None)
+            gate.set()
+            await asyncio.gather(*detached)
+        finally:
+            context.detach(token)
+
+    try:
+        asyncio.run(invoke())
+    finally:
+        a2a.A2AInstrumentor()._uninstrument()
+    [started] = [
+        e for e in realtime_events if e["event.name"] == "topology.node.started"
+    ]
+    assert started["agent.name"] == "local_agent"
+
+
 def test_a2a_send_emits_the_message_text_with_the_message_id_as_call_id(
     realtime_events,
 ):

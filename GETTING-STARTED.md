@@ -159,12 +159,22 @@ ORDER BY Timestamp ASC;
 
 Source events must have been emitted and ingested for this lookup to return rows.
 
-An A2A handler's stored agent-card name identifies the receiving agent, rather
-than the service hosting it. With valid propagated source-agent IDs, the matching
-decorated agent's `topology.node.started` event points to `a2a.message.received`
-via `event.parent.id`. The source-agent IDs also establish an invocation
-link with `topology.edge.evidence=transport:a2a` and confidence `1.0`; absent or
-invalid source context does not create an exact link.
+Inside A2A `AgentExecutor.execute`, the first decorated agent uses the receiving
+card's name for its telemetry, even if its decorator declares a different name.
+For example, a card named `Schedule Agent - east` produces entry-agent node and
+handoff events with that exact name, without changing application code. Handler
+work outside execution, tools, nested agents, and subsequent agent invocations
+keep their declared names. The override is request-local and expires when the
+executor returns, raises, or is cancelled. Decorated preparation work inside the
+executor counts as the first agent; if no receiving name is available, the
+declared name is used.
+
+Naming does not require source-agent IDs and does not introduce event rewriting
+or materializer aliases. With valid propagated source-agent context, the matching
+entry agent's `topology.node.started` points to `a2a.message.received` via
+`event.parent.id`, and its handoff uses `topology.edge.evidence=transport:a2a`
+and confidence `1.0`. Missing or invalid source context does not create an exact
+link; the existing context-propagation rules still apply.
 
 Nested A2A client/transport wrappers emit one logical message lifecycle.
 Independent calls and retries still emit their own events. `a2a.message.completed`

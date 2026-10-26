@@ -40,6 +40,7 @@ _kv_lock = threading.RLock()  # Add thread-safety for kv_store operations
 
 # Track original methods for uninstrumentation
 _original_methods = {}
+_executor_name_methods = []
 _active_sends = contextvars.ContextVar("observe_a2a_active_sends", default=())
 
 
@@ -511,6 +512,25 @@ def _receive_agent_scope(params, handler, operation):
     from opentelemetry import context
     from ioa_observe.sdk.tracing.handoffs import INCOMING_HANDOFF
 
+    executor = getattr(handler, "agent_executor", None)
+    if executor is not None:
+        _instrument_executor_name(executor)
+        receiver_name = None
+        for field in ("agent_card", "_agent_card", "_card"):
+            card = getattr(handler, field, None)
+            name = (
+                card.get("name")
+                if isinstance(card, dict)
+                else getattr(card, "name", None)
+            )
+            if isinstance(name, str) and name:
+                receiver_name = name
+                break
+        metadata = dict(_safe_get_metadata(params))
+        observe_meta = _safe_get_observe_meta(params)
+        observe_meta["receiver_name"] = receiver_name
+        metadata["observe"] = observe_meta
+        _set_metadata(params, metadata)
     event = _emit_a2a_receive_topology_event(params, handler, operation)
     metadata = _safe_get_observe_meta(params)
     reference = {
@@ -548,6 +568,38 @@ def _receive_agent_scope(params, handler, operation):
         yield
     finally:
         context.detach(token)
+
+
+def _instrument_executor_name(executor):
+    from opentelemetry import context
+    from ioa_observe.sdk.tracing.handoffs import A2A_ENTRY_NAME
+
+    with _kv_lock:
+        original = executor.execute
+        if getattr(original, "_observe_a2a_entry_name", False):
+            return
+        signature = inspect.signature(original)
+        request_parameter = next(iter(signature.parameters))
+
+        @functools.wraps(original)
+        async def execute(*args, **kwargs):
+            request = signature.bind(*args, **kwargs).arguments[request_parameter]
+            metadata = getattr(request, "metadata", None) or _safe_get_metadata(request)
+            entry = {
+                "name": metadata.get("observe", {}).get("receiver_name"),
+                "available": True,
+            }
+            token = context.attach(context.set_value(A2A_ENTRY_NAME, entry))
+            try:
+                return await original(*args, **kwargs)
+            finally:
+                entry["available"] = False
+                context.detach(token)
+
+        execute._observe_a2a_entry_name = True
+        owned = "execute" in vars(executor)
+        executor.execute = execute
+        _executor_name_methods.append((executor, original, owned))
 
 
 def _inject_observe_metadata(request, span_name: str):
@@ -1507,6 +1559,13 @@ class A2AInstrumentor(BaseInstrumentor):
 
     def _uninstrument(self, **kwargs):
         import importlib
+
+        for executor, original, owned in reversed(_executor_name_methods):
+            if owned:
+                executor.execute = original
+            else:
+                delattr(executor, "execute")
+        _executor_name_methods.clear()
 
         for cls, method, original, owned in reversed(
             getattr(self, "_card_methods", [])
