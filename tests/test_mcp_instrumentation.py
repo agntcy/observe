@@ -98,6 +98,14 @@ def test_mcp_initialization_identifies_provider_and_generates_request_correlatio
         and event["operation.name"] == "initialize"
     ]
     assert initialized_event["target.agent"] == "mcp"
+    assert "mcp.server.name" not in initialized_event
+    [initialized_completion] = [
+        event
+        for event in events
+        if event["event.name"] == "mcp.message.completed"
+        and event["operation.name"] == "initialize"
+    ]
+    assert initialized_completion["mcp.server.name"] == "travel-tools"
     listed_events = [
         event
         for event in events
@@ -105,6 +113,7 @@ def test_mcp_initialization_identifies_provider_and_generates_request_correlatio
         and event["operation.name"] == "tools/list"
     ]
     assert [event["target.agent"] for event in listed_events] == ["travel-tools"] * 2
+    assert [event["mcp.server.name"] for event in listed_events] == ["travel-tools"] * 2
     assert len({event["message.id"] for event in listed_events}) == 2
     received = [
         event for event in events if event["event.name"] == "mcp.message.received"
@@ -112,6 +121,7 @@ def test_mcp_initialization_identifies_provider_and_generates_request_correlatio
     assert [event["message.id"] for event in received] == [
         event["message.id"] for event in listed_events
     ]
+    assert [event["mcp.server.name"] for event in received] == ["travel-tools"] * 2
     discovered = [
         event for event in events if event["event.name"] == "mcp.tools.discovered"
     ]
@@ -133,6 +143,81 @@ def test_mcp_transport_identity_takes_priority_over_initialized_name(
     else:
         session.url = endpoint
     assert _extract_mcp_peer_name(session) == endpoint
+
+
+def test_mcp_message_server_names_are_connection_scoped_and_propagated():
+    pytest.importorskip("mcp.types")
+    from ioa_observe.sdk.instrumentations.mcp import _emit_mcp_receive_topology_event
+
+    events = []
+    register_runtime_event_listener(events.append)
+    provider = TracerProvider()
+    patched = McpInstrumentor().patch_mcp_client(provider.get_tracer(__name__))
+
+    async def call(server_name, session_id):
+        session = SimpleNamespace(
+            _write_stream=SimpleNamespace(observe_peer_name="https://shared.test/mcp")
+        )
+        if server_name:
+            session._observe_server_info = {"name": server_name}
+        request = {
+            "method": "ping",
+            "id": session_id,
+            "params": {
+                "_meta": {"mcp.server.name": "stale-server", "custom": "preserved"}
+            },
+        }
+
+        async def respond(argument):
+            await asyncio.sleep(0)
+            meta = argument["params"]["_meta"]
+            assert meta["custom"] == "preserved"
+            assert meta.get("mcp.server.name") == server_name
+            _emit_mcp_receive_topology_event(meta, "ping", message_id=session_id)
+            return SimpleNamespace(isError=False, content=[])
+
+        token = attach(set_value("session.id", session_id))
+        try:
+            await patched(respond, session, (request,), {})
+        finally:
+            detach(token)
+
+    async def run():
+        await asyncio.gather(
+            call("math", "math-session"),
+            call("travel", "travel-session"),
+            call(None, "unknown-session"),
+        )
+
+    try:
+        asyncio.run(run())
+    finally:
+        provider.shutdown()
+
+    for session_id, name in (
+        ("math-session", "math"),
+        ("travel-session", "travel"),
+        ("unknown-session", None),
+    ):
+        messages = [
+            event
+            for event in events
+            if event["event.name"].startswith("mcp.message.")
+            and event["session.id"] == session_id
+        ]
+        assert [event["event.name"] for event in messages] == [
+            "mcp.message.sent",
+            "mcp.message.received",
+            "mcp.message.completed",
+        ]
+        for event in messages:
+            assert event.get("mcp.server.name") == name
+            assert event["target.agent"] == "https://shared.test/mcp"
+            assert event["message.id"] == session_id
+            assert event["trace.id"] == messages[0]["trace.id"]
+            assert event["span.id"] == messages[0]["span.id"]
+        assert messages[1]["event.parent.id"] == messages[0]["event.id"]
+        assert messages[2]["event.parent.id"] == messages[0]["event.id"]
 
 
 @pytest.mark.parametrize("nested", [True, False])
@@ -309,7 +394,8 @@ def test_mcp_message_payloads_and_completion(monkeypatch, capture_content, outco
         content=[types.TextContent(type="text", text="result")],
     )
     session = SimpleNamespace(
-        _write_stream=SimpleNamespace(observe_peer_name="mcp://lookup")
+        _write_stream=SimpleNamespace(observe_peer_name="mcp://lookup"),
+        _observe_server_info={"name": "lookup-server"},
     )
 
     async def wrapped(argument):
@@ -344,6 +430,7 @@ def test_mcp_message_payloads_and_completion(monkeypatch, capture_content, outco
     assert params["_meta"]["custom"] == "kept"
     assert params["_meta"]["event.id"] == sent["event.id"]
     for event in [sent, *completed]:
+        assert event["mcp.server.name"] == "lookup-server"
         assert ("message.input" in event) is capture_content
         if capture_content:
             assert json.loads(event["message.input"]) == {
@@ -393,6 +480,7 @@ def test_mcp_native_server_receive_payload(monkeypatch, capture_content):
             "source_agent": "planner",
             "target_agent": "mcp://server",
             "event.id": "sent-event",
+            "mcp.server.name": "lookup-server",
         },
     )
 
@@ -419,6 +507,7 @@ def test_mcp_native_server_receive_payload(monkeypatch, capture_content):
         event for event in events if event["event.name"] == "mcp.message.received"
     ]
     assert received["event.parent.id"] == "sent-event"
+    assert received["mcp.server.name"] == "lookup-server"
     assert ("message.input" in received) is capture_content
     if capture_content:
         assert json.loads(received["message.input"]) == request_context.params
@@ -691,6 +780,7 @@ def test_mcp_stream_reader_restores_tool_session_without_leaking_context(
         "fork_id": "fork-one",
         "fork_parent_seq": "1",
         "fork_branch_index": "1",
+        "mcp.server.name": "stream-server",
     }
     request = types.JSONRPCRequest(
         method="tools/call",
@@ -738,6 +828,7 @@ def test_mcp_stream_reader_restores_tool_session_without_leaking_context(
     [received] = [
         event for event in events if event["event.name"] == "mcp.message.received"
     ]
+    assert received["mcp.server.name"] == "stream-server"
     assert ("message.input" in received) is capture_content
     if capture_content:
         assert json.loads(received["message.input"]) == {

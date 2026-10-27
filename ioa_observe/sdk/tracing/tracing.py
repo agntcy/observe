@@ -1277,6 +1277,11 @@ def init_openai_instrumentor(
             if not instrumentor.is_instrumented_by_opentelemetry:
                 instrumentor.instrument()
                 _emit_llm_started_after_openai_request()
+            from ioa_observe.sdk.instrumentations.openai import (
+                instrument_openai_tool_presentations,
+            )
+
+            instrument_openai_tool_presentations()
         return True
 
     except Exception as e:

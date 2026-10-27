@@ -51,6 +51,7 @@ from ioa_observe.sdk.tracing.handoffs import (
     consume_handoff_signals,
     extract_handoff_signal,
     incoming_handoff,
+    receiving_agent_name,
     record_handoff_signal,
 )
 from ioa_observe.sdk.tracing.runtime_events import (
@@ -849,7 +850,7 @@ def entity_method(
         # Unwrap StructuredTool if present
         fn = _unwrap_structured_tool(fn)
         is_async = _is_async_method(fn)
-        entity_name = name or _get_original_function_name(fn)
+        declared_name = name or _get_original_function_name(fn)
         if is_async:
             if _is_async_generator(fn):
 
@@ -860,6 +861,11 @@ def entity_method(
                             yield item
                         return
 
+                    entity_name = (
+                        receiving_agent_name(declared_name)
+                        if tlp_span_kind == ObserveSpanKindValues.AGENT
+                        else declared_name
+                    )
                     _entity_input = _compute_entity_input_json(args, kwargs)
                     span, ctx, ctx_token = _setup_span(
                         entity_name,
@@ -884,6 +890,11 @@ def entity_method(
                     if not TracerWrapper.verify_initialized():
                         return await fn(*args, **kwargs)
 
+                    entity_name = (
+                        receiving_agent_name(declared_name)
+                        if tlp_span_kind == ObserveSpanKindValues.AGENT
+                        else declared_name
+                    )
                     _entity_input = _compute_entity_input_json(args, kwargs)
                     span, ctx, ctx_token = _setup_span(
                         entity_name,
@@ -983,6 +994,11 @@ def entity_method(
                 if not TracerWrapper.verify_initialized():
                     return fn(*args, **kwargs)
 
+                entity_name = (
+                    receiving_agent_name(declared_name)
+                    if tlp_span_kind == ObserveSpanKindValues.AGENT
+                    else declared_name
+                )
                 _entity_input = _compute_entity_input_json(args, kwargs)
                 span, ctx, ctx_token = _setup_span(
                     entity_name,

@@ -14,6 +14,18 @@ from opentelemetry.context import get_value
 from ioa_observe.sdk.client import kv_store
 
 INCOMING_HANDOFF = "ioa_observe.incoming_handoff"
+A2A_ENTRY_NAME = "ioa_observe.a2a_entry_name"
+
+
+def receiving_agent_name(default_name: str) -> str:
+    entry = get_value(A2A_ENTRY_NAME)
+    with _pending_lock:
+        if isinstance(entry, dict) and entry.get("available"):
+            name = entry.get("name")
+            if isinstance(name, str) and name:
+                entry["available"] = False
+                return name
+    return default_name
 
 
 def incoming_handoff(session_id: str, target_agent: str) -> dict[str, Any] | None:
