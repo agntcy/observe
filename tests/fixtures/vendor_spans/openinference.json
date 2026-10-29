@@ -1,0 +1,55 @@
+[
+ {
+  "name": "get_weather",
+  "kind": "INTERNAL",
+  "scope": "rec",
+  "attributes": {
+   "input.value": "{\"city\": \"London\"}",
+   "input.mime_type": "application/json",
+   "tool.name": "get_weather",
+   "tool.parameters": "{\"type\": \"object\", \"title\": \"get_weather\", \"properties\": {\"city\": {\"type\": \"string\"}}, \"required\": [\"city\"]}",
+   "session.id": "sess-1",
+   "output.value": "{\"temp\": 18}",
+   "output.mime_type": "application/json",
+   "openinference.span.kind": "TOOL"
+  }
+ },
+ {
+  "name": "ChatCompletion",
+  "kind": "INTERNAL",
+  "scope": "openinference.instrumentation.openai",
+  "attributes": {
+   "llm.provider": "openai",
+   "llm.system": "openai",
+   "input.value": "{\"model\": \"gpt-4o-mini\", \"messages\": [{\"role\": \"user\", \"content\": \"Weather?\"}]}",
+   "input.mime_type": "application/json",
+   "output.value": "{\"id\":\"chatcmpl-1\",\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"It is cloudy.\",\"role\":\"assistant\"}}],\"created\":1,\"model\":\"gpt-4o-mini\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":4,\"prompt_tokens\":5,\"total_tokens\":9}}",
+   "output.mime_type": "application/json",
+   "session.id": "sess-1",
+   "llm.invocation_parameters": "{\"model\": \"gpt-4o-mini\"}",
+   "llm.input_messages.0.message.role": "user",
+   "llm.input_messages.0.message.content": "Weather?",
+   "llm.model_name": "gpt-4o-mini",
+   "llm.token_count.total": 9,
+   "llm.token_count.prompt": 5,
+   "llm.token_count.completion": 4,
+   "llm.output_messages.0.message.role": "assistant",
+   "llm.output_messages.0.message.content": "It is cloudy.",
+   "llm.finish_reason": "stop",
+   "openinference.span.kind": "LLM"
+  }
+ },
+ {
+  "name": "weather_agent",
+  "kind": "INTERNAL",
+  "scope": "rec",
+  "attributes": {
+   "input.value": "{}",
+   "input.mime_type": "application/json",
+   "session.id": "sess-1",
+   "output.value": "{\"id\": \"chatcmpl-1\", \"choices\": [{\"finish_reason\": \"stop\", \"index\": 0, \"logprobs\": null, \"message\": {\"content\": \"It is cloudy.\", \"refusal\": null, \"role\": \"assistant\", \"annotations\": null, \"audio\": null, \"function_call\": null, \"tool_calls\": null}}], \"created\": 1, \"model\": \"gpt-4o-mini\", \"object\": \"chat.completion\", \"metadata\": null, \"moderation\": null, \"service_tier\": null, \"system_fingerprint\": null, \"usage\": {\"completion_tokens\": 4, \"prompt_tokens\": 5, \"total_tokens\": 9, \"completion_tokens_details\": null, \"prompt_tokens_details\": null}}",
+   "output.mime_type": "application/json",
+   "openinference.span.kind": "AGENT"
+  }
+ }
+]

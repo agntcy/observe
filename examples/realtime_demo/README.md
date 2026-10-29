@@ -75,6 +75,41 @@ Attributes added later are available only on completion events. Protocol and
 capability events, session lifecycle events, and topology edges are not inferred
 by this mapper.
 
+## Vendor SDKs (Traceloop, OpenInference, Langfuse)
+
+`RuntimeEventSpanProcessor` first runs span normalizers
+(`ioa_observe/sdk/tracing/span_normalizers.py`) that add canonical `gen_ai.*`
+attributes derived from vendor-specific ones. Existing `gen_ai.*` values are never
+overwritten.
+
+| SDK | Detected by | Mapped from |
+|---|---|---|
+| Traceloop / OpenLLMetry | `traceloop.span.kind`, `llm.request.type` | `traceloop.entity.*`, `traceloop.association.properties.session_id`, `gen_ai.prompt.N.*` |
+| OpenInference | `openinference.span.kind` | `session.id`, `tool.name`, `input.value`/`output.value`, `llm.*` |
+| Langfuse v3+ | `langfuse.observation.type` | `langfuse.session.id`, `langfuse.observation.*` |
+
+A session id is also taken from `session.id`, `thread_id` or `conversation_id`
+when `gen_ai.conversation.id` is absent. Model spans without a provider get
+`gen_ai.provider.name="unknown"`. Pass `normalizers=()` to disable this, or your
+own sequence to extend it.
+
+### Derived events
+
+Third-party SDKs never call Observe's topology helpers, so the processor also
+infers (disable with `derive_events=False`):
+
+| Event | Inferred from |
+|---|---|
+| `topology.session.started` / `.completed` | first span seen for a session / the session's last open span ending (a later span starts a new session cycle) |
+| `topology.edge.updated` | an `invoke_agent` span nested under a different agent's span (`evidence=parent_span`, `confidence=0.8`) |
+| `llm.tools.presented` | `gen_ai.tool.definitions` on a model span (honors content-tracing and size limits) |
+
+Run the offline example (no collector needed):
+
+```bash
+uv run python examples/realtime_demo/vendor_sdks_otel.py
+```
+
 ## How it maps to production
 
 In production the materializer lives **downstream** and consumes the same OTel

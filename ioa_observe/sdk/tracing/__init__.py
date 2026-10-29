@@ -28,6 +28,11 @@ from ioa_observe.sdk.tracing.runtime_event_processor import (
     SpanLifecycle,
     SpanLifecycleObservation,
 )
+from ioa_observe.sdk.tracing.span_normalizers import (
+    DEFAULT_NORMALIZERS,
+    SpanAttributeNormalizer,
+    normalize_span_attributes,
+)
 from ioa_observe.sdk.tracing.topology import (
     get_live_topology_snapshot,
     record_session_completed,
@@ -53,6 +58,9 @@ __all__ = [
     "RuntimeEventSpanProcessor",
     "SpanLifecycle",
     "SpanLifecycleObservation",
+    "DEFAULT_NORMALIZERS",
+    "SpanAttributeNormalizer",
+    "normalize_span_attributes",
     "get_live_topology_snapshot",
     "record_session_completed",
 ]

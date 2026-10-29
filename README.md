@@ -58,6 +58,30 @@ with session_start() as session_id:
 
 For comprehensive integration examples with LangGraph, LlamaIndex, and other frameworks, see the [Getting Started Guide](GETTING-STARTED.md).
 
+## Real-time events from third-party SDKs
+
+Add `RuntimeEventSpanProcessor` to any OTel `TracerProvider` to turn spans from
+Traceloop/OpenLLMetry, OpenInference, Langfuse or plain `gen_ai.*` instrumentation
+into Observe runtime events (`llm.*`, `tool.*`, `topology.node.*`, plus inferred `topology.session.*`,
+`topology.edge.updated` and `llm.tools.presented`), exported
+asynchronously as OTel logs. Vendor attributes are normalized automatically.
+
+```python
+from opentelemetry.sdk.trace import TracerProvider
+from ioa_observe.sdk.tracing import RuntimeEventSpanProcessor
+
+provider = TracerProvider()  # your existing provider
+provider.add_span_processor(
+    RuntimeEventSpanProcessor(endpoint="http://localhost:4318/v1/logs")
+)
+```
+
+Spans need a session id (`gen_ai.conversation.id`, `session.id`, Traceloop's
+`session_id` association property, or `langfuse.session.id`); spans without one
+are skipped. See [examples/realtime_demo](examples/realtime_demo/README.md) for
+the supported vendor attributes, `normalizers=` customization and a runnable
+offline example.
+
 ## Schema
 
 The AGNTCY observability schema is an extension of the OTel LLM Semantic Conventions for Generative AI systems.
