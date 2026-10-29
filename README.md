@@ -80,7 +80,9 @@ Spans need a session id (`gen_ai.conversation.id`, `session.id`, Traceloop's
 `session_id` association property, or `langfuse.session.id`); spans without one
 are skipped. See [examples/realtime_demo](examples/realtime_demo/README.md) for
 the supported vendor attributes, `normalizers=` customization and a runnable
-offline example.
+offline example. Some events (MCP/A2A/SLIM, start events for some SDKs, exact
+handoff edges) cannot be produced from third-party spans; see
+[Limitations](examples/realtime_demo/README.md#limitations-with-third-party-sdks).
 
 ## Schema
 
