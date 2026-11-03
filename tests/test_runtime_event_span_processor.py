@@ -44,6 +44,7 @@ def test_processor_exports_correlated_event_logs_without_replacing_global_provid
         exporter=exporter,
         resource=resource,
         schedule_delay_millis=10,
+        derive_events=False,
     )
     provider.add_span_processor(processor)
     tracer = provider.get_tracer("third.party.genai", "1.2.3")
@@ -132,7 +133,7 @@ def test_processor_exports_agent_attribution_and_content(
 ):
     exporter = MemoryLogExporter()
     provider = TracerProvider()
-    processor = RuntimeEventSpanProcessor(exporter=exporter)
+    processor = RuntimeEventSpanProcessor(exporter=exporter, derive_events=False)
     provider.add_span_processor(processor)
     tracer = provider.get_tracer("third.party.genai")
     is_tool = operation == "execute_tool"

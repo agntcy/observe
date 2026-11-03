@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Mapping, Sequence
@@ -25,6 +26,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor
 from opentelemetry.trace import Span, SpanKind
 
+from ioa_observe.sdk.tracing.capability_capture import build_capability_attributes
 from ioa_observe.sdk.tracing.runtime_events import (
     GEN_AI_MODEL_OPERATIONS,
     RuntimeEvent,
@@ -32,6 +34,11 @@ from ioa_observe.sdk.tracing.runtime_events import (
     RuntimeEventName,
     identify_runtime_event,
     span_correlation_attributes,
+)
+from ioa_observe.sdk.tracing.span_normalizers import (
+    DEFAULT_NORMALIZERS,
+    SpanAttributeNormalizer,
+    normalize_span_attributes,
 )
 from ioa_observe.sdk.tracing.tool_results import tool_error_message
 
@@ -62,6 +69,7 @@ class SpanLifecycleObservation:
     resource_attributes: Mapping[str, Any]
     observed_time: datetime
     trace_flags: int = 0
+    parent_span_id: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -97,6 +105,9 @@ class SpanLifecycleObservation:
             trace_id=span_context.trace_id,
             span_id=span_context.span_id,
             trace_flags=int(span_context.trace_flags),
+            parent_span_id=(
+                span.parent.span_id if getattr(span, "parent", None) else None
+            ),
             instrumentation_scope=InstrumentationScope(
                 name=scope.name,
                 version=scope.version,
@@ -223,6 +234,9 @@ class RuntimeEventSpanProcessor(SpanProcessor):
         max_queue_size: int = 2_048,
         schedule_delay_millis: float = 100,
         export_timeout_millis: float = 30_000,
+        normalizers: Sequence[SpanAttributeNormalizer] = DEFAULT_NORMALIZERS,
+        derive_events: bool = True,
+        backfill_start_events: bool = True,
     ) -> None:
         if emitter is not None and any(
             (
@@ -253,8 +267,12 @@ class RuntimeEventSpanProcessor(SpanProcessor):
                 export_timeout_millis=export_timeout_millis,
             )
         )
+        self._normalizers = tuple(normalizers)
         self._lock = RLock()
         self._versions: dict[str, int] = {}
+        self._deriver = _DerivedEventTracker() if derive_events else None
+        self._backfill_start_events = backfill_start_events
+        self._started: set[int] = set()
         self._shutdown = False
 
     def on_start(
@@ -280,22 +298,63 @@ class RuntimeEventSpanProcessor(SpanProcessor):
             self._shutdown = True
         self._emitter.shutdown()
 
+    def _observe(
+        self,
+        lifecycle: SpanLifecycle,
+        span: Span | ReadableSpan,
+    ) -> SpanLifecycleObservation:
+        observation = SpanLifecycleObservation.from_span(lifecycle, span)
+        if self._normalizers:
+            observation = replace(
+                observation,
+                attributes=normalize_span_attributes(
+                    observation.attributes,
+                    observation.name,
+                    self._normalizers,
+                ),
+            )
+        return observation
+
     def _map_and_enqueue(
         self,
         lifecycle: SpanLifecycle,
         span: Span | ReadableSpan,
     ) -> None:
         try:
-            observation = SpanLifecycleObservation.from_span(lifecycle, span)
+            observation = self._observe(lifecycle, span)
             session_id = observation.attributes.get("gen_ai.conversation.id")
             if not isinstance(session_id, str) or not session_id:
+                self._started.discard(observation.span_id)
                 return
 
             with self._lock:
                 if self._shutdown:
                     return
                 version = self._versions.get(session_id, 0) + 1
-                events = self._mapper(observation, version)
+                is_start = lifecycle is SpanLifecycle.START
+                span_id = observation.span_id
+                backfill: tuple[RuntimeEvent, ...] = ()
+                if (
+                    not is_start
+                    and self._backfill_start_events
+                    and span_id not in self._started
+                ):
+                    # The SDK set its attributes after span start, so on_start
+                    # could not be mapped. Rebuild it from the finished span.
+                    backfill = tuple(
+                        self._mapper(self._observe(SpanLifecycle.START, span), version)
+                    )
+                mapped = tuple(self._mapper(observation, version + len(backfill)))
+                if is_start and mapped:
+                    self._started.add(span_id)
+                elif not is_start:
+                    self._started.discard(span_id)
+                events = (*backfill, *mapped)
+                if self._deriver is not None:
+                    before, after = self._deriver.derive(
+                        observation, session_id, mapped
+                    )
+                    events = (*before, *events, *after)
                 if not events:
                     return
                 sequenced_events = tuple(
@@ -307,6 +366,217 @@ class RuntimeEventSpanProcessor(SpanProcessor):
                     self._versions[session_id] = event.snapshot_version
         except Exception:
             _logger.exception("Failed to map span lifecycle to a runtime event")
+
+
+def _parse_tool_definitions(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return None
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return None
+
+
+@dataclass
+class _OpenSpan:
+    session_id: str
+    owner_agent: str | None
+    parent_span_id: int | None = None
+    tools_presented: bool = False
+
+
+class _DerivedEventTracker:
+    """Derive session, edge and tool-presentation events from span structure.
+
+    Third-party SDKs never call Observe's topology helpers, so these events are
+    inferred: a session starts when its first span is seen and completes when
+    its last open span ends; an edge is a child agent span under an agent span.
+    """
+
+    EDGE_CONFIDENCE = 0.8
+
+    def __init__(self) -> None:
+        self._open: dict[int, _OpenSpan] = {}
+        self._open_count: dict[str, int] = {}
+        self._edges: dict[str, set[tuple[str, str]]] = {}
+        # Agents that ended before their ancestor agent's name was known, keyed
+        # by the span that will resolve them (SDKs may set names after start).
+        self._pending: dict[int, list[str]] = {}
+
+    def derive(
+        self,
+        observation: SpanLifecycleObservation,
+        session_id: str,
+        mapped: Sequence[RuntimeEvent],
+    ) -> tuple[tuple[RuntimeEvent, ...], tuple[RuntimeEvent, ...]]:
+        before: list[RuntimeEvent] = []
+        after: list[RuntimeEvent] = []
+        attrs = observation.attributes
+        operation = attrs.get("gen_ai.operation.name")
+        is_start = observation.lifecycle is SpanLifecycle.START
+
+        if is_start:
+            if session_id not in self._open_count:
+                before.append(
+                    self._event(
+                        RuntimeEventName.TOPOLOGY_SESSION_STARTED,
+                        observation,
+                        session_id,
+                    )
+                )
+            parent = self._open.get(observation.parent_span_id)
+            parent_agent = parent.owner_agent if parent else None
+            agent = self._agent_name(operation, attrs) if mapped else None
+            self._open[observation.span_id] = _OpenSpan(
+                session_id, agent or parent_agent, observation.parent_span_id
+            )
+            self._open_count[session_id] = self._open_count.get(session_id, 0) + 1
+            if agent and parent_agent and agent != parent_agent:
+                seen = self._edges.setdefault(session_id, set())
+                if (parent_agent, agent) not in seen:
+                    seen.add((parent_agent, agent))
+                    after.append(
+                        self._edge_event(observation, session_id, parent_agent, agent)
+                    )
+
+        state = self._open.get(observation.span_id)
+        if (
+            mapped
+            and operation in GEN_AI_MODEL_OPERATIONS
+            and (state is None or not state.tools_presented)
+        ):
+            tools = _parse_tool_definitions(attrs.get("gen_ai.tool.definitions"))
+            if tools:
+                if state is not None:
+                    state.tools_presented = True
+                after.append(
+                    self._tools_event(observation, session_id, operation, tools)
+                )
+
+        if not is_start and state is not None:
+            after.extend(self._resolve_pending(observation, session_id, state, mapped))
+            del self._open[observation.span_id]
+            remaining = self._open_count.get(session_id, 1) - 1
+            if remaining > 0:
+                self._open_count[session_id] = remaining
+            else:
+                self._open_count.pop(session_id, None)
+                self._edges.pop(session_id, None)
+                after.append(
+                    self._event(
+                        RuntimeEventName.TOPOLOGY_SESSION_COMPLETED,
+                        observation,
+                        session_id,
+                    )
+                )
+        return tuple(before), tuple(after)
+
+    def _resolve_pending(
+        self,
+        observation: SpanLifecycleObservation,
+        session_id: str,
+        state: _OpenSpan,
+        mapped: Sequence[RuntimeEvent],
+    ) -> list[RuntimeEvent]:
+        agent = (
+            self._agent_name(
+                observation.attributes.get("gen_ai.operation.name"),
+                observation.attributes,
+            )
+            if mapped
+            else None
+        )
+        children = self._pending.pop(observation.span_id, [])
+        events: list[RuntimeEvent] = []
+        seen = self._edges.setdefault(session_id, set())
+        if agent:
+            for child in children:
+                if child != agent and (agent, child) not in seen:
+                    seen.add((agent, child))
+                    events.append(
+                        self._edge_event(observation, session_id, agent, child)
+                    )
+            children = [agent]
+        if children and state.parent_span_id in self._open:
+            self._pending.setdefault(state.parent_span_id, []).extend(children)
+        return events
+
+    @staticmethod
+    def _agent_name(operation: Any, attrs: Mapping[str, Any]) -> str | None:
+        name = attrs.get("gen_ai.agent.name")
+        if operation == "invoke_agent" and isinstance(name, str) and name:
+            return name
+        return None
+
+    @staticmethod
+    def _event(
+        name: RuntimeEventName,
+        observation: SpanLifecycleObservation,
+        session_id: str,
+        attributes: Mapping[str, Any] | None = None,
+    ) -> RuntimeEvent:
+        event = RuntimeEvent(
+            name=name,
+            session_id=session_id,
+            snapshot_version=1,
+            event_time=observation.observed_time,
+            attributes=dict(attributes or {}),
+            trace_id=observation.trace_id,
+            span_id=observation.span_id,
+            trace_flags=observation.trace_flags,
+            instrumentation_scope_name=observation.instrumentation_scope.name,
+            instrumentation_scope_version=observation.instrumentation_scope.version,
+        )
+        event.to_otel_attributes()
+        return event
+
+    def _edge_event(
+        self,
+        observation: SpanLifecycleObservation,
+        session_id: str,
+        source: str,
+        target: str,
+    ) -> RuntimeEvent:
+        return self._event(
+            RuntimeEventName.TOPOLOGY_EDGE_UPDATED,
+            observation,
+            session_id,
+            {
+                RuntimeEventAttribute.SOURCE_AGENT.value: source,
+                RuntimeEventAttribute.TARGET_AGENT.value: target,
+                "topology.edge.id": f"agent_handoff:{source}->{target}",
+                "topology.edge.kind": "agent_handoff",
+                "topology.edge.status": "started",
+                "topology.edge.evidence": "parent_span",
+                "topology.edge.confidence": self.EDGE_CONFIDENCE,
+                "operation.name": "invoke_agent",
+            },
+        )
+
+    def _tools_event(
+        self,
+        observation: SpanLifecycleObservation,
+        session_id: str,
+        operation: str,
+        tools: Any,
+    ) -> RuntimeEvent:
+        attributes = build_capability_attributes(
+            {"tools": tools},
+            source="llm-presented",
+            attributes={
+                "operation.name": operation,
+                "llm.name": observation.attributes.get("gen_ai.request.model"),
+                "llm.call.id": f"{observation.span_id:016x}",
+            },
+        )
+        return self._event(
+            RuntimeEventName.LLM_TOOLS_PRESENTED,
+            observation,
+            session_id,
+            attributes,
+        )
 
 
 class GenAIRuntimeEventMapper:

@@ -1,0 +1,37 @@
+[
+ {
+  "name": "get_weather",
+  "kind": "INTERNAL",
+  "scope": "langfuse-sdk",
+  "attributes": {
+   "session.id": "sess-1",
+   "langfuse.observation.input": "{\"city\": \"London\"}",
+   "langfuse.observation.type": "tool",
+   "langfuse.observation.output": "{\"temp\": 18}"
+  }
+ },
+ {
+  "name": "chat",
+  "kind": "INTERNAL",
+  "scope": "langfuse-sdk",
+  "attributes": {
+   "session.id": "sess-1",
+   "langfuse.observation.input": "[{\"role\": \"user\", \"content\": \"Weather?\"}]",
+   "langfuse.observation.model.name": "gpt-4o-mini",
+   "langfuse.observation.type": "generation",
+   "langfuse.observation.output": "It is cloudy."
+  }
+ },
+ {
+  "name": "weather_agent",
+  "kind": "INTERNAL",
+  "scope": "langfuse-sdk",
+  "attributes": {
+   "session.id": "sess-1",
+   "langfuse.internal.is_app_root": true,
+   "langfuse.observation.input": "{\"q\": \"Weather?\"}",
+   "langfuse.observation.type": "agent",
+   "langfuse.observation.output": "It is cloudy."
+  }
+ }
+]

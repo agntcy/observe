@@ -68,18 +68,14 @@ def _redact(value, *, schema=False):
     return value
 
 
-def record_capability_event(
-    name,
+def build_capability_attributes(
     content,
     *,
     provider_id=None,
     source,
     attributes=None,
-    session_id=None,
 ):
-    """Record full structured content without changing application behavior."""
-    if not is_tracing_enabled():
-        return
+    """Build capability attributes, honoring content-tracing and size limits."""
     event_attributes = {"capability.source": source, **(attributes or {})}
     try:
         provider_id = safe_provider_url(provider_id)
@@ -106,8 +102,26 @@ def record_capability_event(
         else:
             event_attributes["capability.capture.state"] = "disabled"
     except Exception:
-        _logger.warning("Unable to serialize capability definition for %s", name)
+        _logger.warning("Unable to serialize capability definition")
         event_attributes["capability.capture.state"] = "unavailable"
+    return event_attributes
+
+
+def record_capability_event(
+    name,
+    content,
+    *,
+    provider_id=None,
+    source,
+    attributes=None,
+    session_id=None,
+):
+    """Record full structured content without changing application behavior."""
+    if not is_tracing_enabled():
+        return
+    event_attributes = build_capability_attributes(
+        content, provider_id=provider_id, source=source, attributes=attributes
+    )
     try:
         session_id = session_id or get_value("session.id")
         emit_runtime_event(
